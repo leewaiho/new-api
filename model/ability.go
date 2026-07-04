@@ -105,7 +105,7 @@ func getChannelQuery(group string, model string, retry int) (*gorm.DB, error) {
 	return channelQuery, nil
 }
 
-func GetChannel(group string, model string, retry int, requestPath string) (*Channel, error) {
+func GetChannel(group string, model string, retry int, requestPath string, expectedAPIType *int) (*Channel, error) {
 	var abilities []Ability
 
 	var err error = nil
@@ -122,6 +122,7 @@ func GetChannel(group string, model string, retry int, requestPath string) (*Cha
 		return nil, err
 	}
 	abilities = filterAbilitiesByRequestPath(abilities, requestPath)
+	abilities = filterAbilitiesByExpectedAPIType(abilities, expectedAPIType)
 	channel := Channel{}
 	if len(abilities) > 0 {
 		// Randomly choose one
@@ -188,6 +189,58 @@ func filterAbilitiesByRequestPath(abilities []Ability, requestPath string) []Abi
 		if config != nil && config.SupportsPath(requestPath) {
 			filtered = append(filtered, ability)
 		}
+	}
+	return filtered
+}
+
+// filterAbilitiesByExpectedAPIType prefers abilities whose channel's native API type
+// matches the client's expected API type. Advanced Custom channels are always kept.
+// If no ability matches, the original list is returned as a fallback.
+func filterAbilitiesByExpectedAPIType(abilities []Ability, expectedAPIType *int) []Ability {
+	if expectedAPIType == nil || len(abilities) == 0 {
+		return abilities
+	}
+
+	channelIds := make([]int, 0, len(abilities))
+	seen := make(map[int]struct{}, len(abilities))
+	for _, ability := range abilities {
+		if _, ok := seen[ability.ChannelId]; ok {
+			continue
+		}
+		seen[ability.ChannelId] = struct{}{}
+		channelIds = append(channelIds, ability.ChannelId)
+	}
+
+	var channels []*Channel
+	if err := DB.Where("id IN ?", channelIds).Find(&channels).Error; err != nil {
+		return abilities
+	}
+
+	advancedCustomIds := make(map[int]struct{})
+	matchedIds := make(map[int]struct{})
+	for _, channel := range channels {
+		if channel.Type == constant.ChannelTypeAdvancedCustom {
+			advancedCustomIds[channel.Id] = struct{}{}
+			continue
+		}
+		if apiType, ok := common.ChannelType2APIType(channel.Type); ok && apiType == *expectedAPIType {
+			matchedIds[channel.Id] = struct{}{}
+		}
+	}
+
+	filtered := make([]Ability, 0, len(abilities))
+	for _, ability := range abilities {
+		if _, ok := advancedCustomIds[ability.ChannelId]; ok {
+			filtered = append(filtered, ability)
+			continue
+		}
+		if _, ok := matchedIds[ability.ChannelId]; ok {
+			filtered = append(filtered, ability)
+		}
+	}
+
+	if len(filtered) == 0 {
+		return abilities
 	}
 	return filtered
 }
