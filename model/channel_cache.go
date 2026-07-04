@@ -111,10 +111,10 @@ func SyncChannelCache(frequency int) {
 	}
 }
 
-func GetRandomSatisfiedChannel(group string, model string, retry int, requestPath string) (*Channel, error) {
+func GetRandomSatisfiedChannel(group string, model string, retry int, requestPath string, expectedAPIType *int) (*Channel, error) {
 	// if memory cache is disabled, get channel directly from database
 	if !common.MemoryCacheEnabled {
-		return GetChannel(group, model, retry, requestPath)
+		return GetChannel(group, model, retry, requestPath, expectedAPIType)
 	}
 
 	channelSyncLock.RLock()
@@ -132,6 +132,8 @@ func GetRandomSatisfiedChannel(group string, model string, retry int, requestPat
 	if len(channels) == 0 {
 		return nil, nil
 	}
+
+	channels = filterChannelsByExpectedAPIType(channels, expectedAPIType)
 
 	if len(channels) == 1 {
 		if channel, ok := channelsIDM[channels[0]]; ok {
@@ -232,6 +234,38 @@ func filterChannelsByRequestPathAndModel(channels []int, requestPath string, mod
 		if config := channel2advancedCustomConfig[channelId]; config != nil && config.SupportsPathForModel(requestPath, model) {
 			filtered = append(filtered, channelId)
 		}
+	}
+	return filtered
+}
+
+// filterChannelsByExpectedAPIType prefers channels whose native API type matches
+// the client's expected API type. Advanced Custom channels are always kept because
+// they can be configured to handle multiple protocols. If no channel matches,
+// the original list is returned as a fallback.
+func filterChannelsByExpectedAPIType(channels []int, expectedAPIType *int) []int {
+	if expectedAPIType == nil || len(channels) == 0 {
+		return channels
+	}
+
+	filtered := make([]int, 0, len(channels))
+	for _, channelId := range channels {
+		channel, ok := channelsIDM[channelId]
+		if !ok {
+			// keep it so the downstream consistency error is raised as before
+			filtered = append(filtered, channelId)
+			continue
+		}
+		if channel.Type == constant.ChannelTypeAdvancedCustom {
+			filtered = append(filtered, channelId)
+			continue
+		}
+		if apiType, ok := common.ChannelType2APIType(channel.Type); ok && apiType == *expectedAPIType {
+			filtered = append(filtered, channelId)
+		}
+	}
+
+	if len(filtered) == 0 {
+		return channels
 	}
 	return filtered
 }
