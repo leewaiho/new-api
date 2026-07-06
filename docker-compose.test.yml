@@ -1,0 +1,74 @@
+# Test environment (:3011)
+# Uses the :test image built from release/test branch via GHCR.
+#
+# Usage:
+#   docker compose -f docker-compose.test.yml up -d
+#
+# To refresh the database from production (:3010):
+#   ./scripts/deploy/sync-db-from-prod.sh
+#
+# Stop & clean:
+#   docker compose -f docker-compose.test.yml down -v
+
+services:
+  new-api-test:
+    image: ghcr.io/leewaiho/new-api:test
+    container_name: new-api-test
+    restart: unless-stopped
+    command: --log-dir /app/logs
+    ports:
+      - "3011:3000"
+    volumes:
+      - ./data:/data
+      - ./logs:/app/logs
+    environment:
+      - SQL_DSN=postgresql://newapi:testpass123@postgres-test:5432/newapi
+      - REDIS_CONN_STRING=redis://redis-test:6379
+      - TZ=Asia/Shanghai
+      - ERROR_LOG_ENABLED=true
+      - BATCH_UPDATE_ENABLED=true
+      - NODE_NAME=new-api-test
+    depends_on:
+      redis-test:
+        condition: service_started
+      postgres-test:
+        condition: service_healthy
+    networks:
+      - test-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:3000/api/status | grep -o '\"success\":\s*true' || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  redis-test:
+    image: redis:7-alpine
+    container_name: new-api-test-redis
+    restart: unless-stopped
+    networks:
+      - test-network
+
+  postgres-test:
+    image: postgres:16-alpine
+    container_name: new-api-test-pg
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: newapi
+      POSTGRES_PASSWORD: testpass123
+      POSTGRES_DB: newapi
+    volumes:
+      - test_pg_data:/var/lib/postgresql/data
+    networks:
+      - test-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U newapi -d newapi"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  test_pg_data:
+
+networks:
+  test-network:
+    driver: bridge
