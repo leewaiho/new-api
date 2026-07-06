@@ -36,6 +36,7 @@ import {
 import { JsonEditor } from '@/components/json-editor'
 import { TagInput } from '@/components/tag-input'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Collapsible,
   CollapsibleContent,
@@ -84,7 +85,7 @@ import { safeJsonParse } from '@/features/system-settings/utils/json-parser'
 import { createModel, updateModel, getModel, getVendors } from '../../api'
 import { getNameRuleOptions, ENDPOINT_TEMPLATES } from '../../constants'
 import { modelsQueryKeys, vendorsQueryKeys, parseModelTags } from '../../lib'
-import type { Model } from '../../types'
+import type { Model, ModelInputModality } from '../../types'
 
 // Extended schema for ratio configuration (internal form state only)
 const extendedModelFormSchema = z.object({
@@ -95,6 +96,11 @@ const extendedModelFormSchema = z.object({
   tags: z.array(z.string()),
   vendor_id: z.number().optional(),
   endpoints: z.string(),
+  input_modalities: z.array(z.enum(['text', 'image'])),
+  output_modalities: z.array(z.string()),
+  capabilities: z.array(z.string()),
+  context_length: z.number().optional(),
+  max_output_tokens: z.number().optional(),
   name_rule: z.number(),
   status: z.boolean(),
   sync_official: z.boolean(),
@@ -111,6 +117,23 @@ type ExtendedModelFormValues = z.infer<typeof extendedModelFormSchema>
 
 type PricingMode = 'per-token' | 'per-request'
 type PricingSubMode = 'ratio' | 'price'
+
+const inputModalityOptions: Array<{
+  value: ModelInputModality
+  label: string
+  description: string
+}> = [
+  {
+    value: 'text',
+    label: 'Text',
+    description: 'Accept text prompts.',
+  },
+  {
+    value: 'image',
+    label: 'Image',
+    description: 'Accept image inputs for vision-capable models.',
+  },
+]
 
 type ModelMutateDrawerProps = {
   open: boolean
@@ -234,6 +257,11 @@ export function ModelMutateDrawer({
       tags: [],
       vendor_id: undefined,
       endpoints: '',
+      input_modalities: [],
+      output_modalities: [],
+      capabilities: [],
+      context_length: undefined,
+      max_output_tokens: undefined,
       name_rule: 0,
       status: true,
       sync_official: true,
@@ -294,6 +322,11 @@ export function ModelMutateDrawer({
         tags: parseModelTags(model.tags),
         vendor_id: model.vendor_id,
         endpoints: model.endpoints || '',
+        input_modalities: model.input_modalities || [],
+        output_modalities: model.output_modalities || [],
+        capabilities: model.capabilities || [],
+        context_length: model.context_length,
+        max_output_tokens: model.max_output_tokens,
         name_rule: model.name_rule || 0,
         status: model.status === 1,
         sync_official: model.sync_official === 1,
@@ -398,6 +431,11 @@ export function ModelMutateDrawer({
         tags: [],
         vendor_id: undefined,
         endpoints: '',
+        input_modalities: [],
+        output_modalities: [],
+        capabilities: [],
+        context_length: undefined,
+        max_output_tokens: undefined,
         name_rule: 0,
         status: true,
         sync_official: true,
@@ -723,6 +761,55 @@ export function ModelMutateDrawer({
                         {...field}
                       />
                     </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name='input_modalities'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Input Modalities')}</FormLabel>
+                    <div className='grid gap-3 sm:grid-cols-2'>
+                      {inputModalityOptions.map((option) => {
+                        const checked = field.value?.includes(option.value)
+                        return (
+                          <label
+                            key={option.value}
+                            className='border-input bg-background hover:bg-accent/40 flex cursor-pointer items-start gap-3 rounded-md border p-3 transition-colors'
+                          >
+                            <Checkbox
+                              checked={checked}
+                              onCheckedChange={(nextChecked) => {
+                                const current = field.value || []
+                                field.onChange(
+                                  nextChecked
+                                    ? [...current, option.value]
+                                    : current.filter(
+                                        (value) => value !== option.value
+                                      )
+                                )
+                              }}
+                            />
+                            <span className='grid gap-1 text-sm'>
+                              <span className='font-medium'>
+                                {t(option.label)}
+                              </span>
+                              <span className='text-muted-foreground text-xs'>
+                                {t(option.description)}
+                              </span>
+                            </span>
+                          </label>
+                        )
+                      })}
+                    </div>
+                    <FormDescription>
+                      {t(
+                        'Leave empty when the model input modalities are unknown. Do not select image unless the model supports image input.'
+                      )}
+                    </FormDescription>
                     <FormMessage />
                   </FormItem>
                 )}

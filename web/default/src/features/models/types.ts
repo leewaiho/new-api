@@ -30,6 +30,8 @@ export interface BoundChannel {
   type: number
 }
 
+export type ModelInputModality = 'text' | 'image'
+
 /**
  * Model entity from API
  */
@@ -41,6 +43,11 @@ export interface Model {
   tags?: string
   vendor_id?: number
   endpoints?: string
+  input_modalities?: ModelInputModality[]
+  output_modalities?: string[]
+  capabilities?: string[]
+  context_length?: number
+  max_output_tokens?: number
   status: number
   sync_official: number
   created_time: number

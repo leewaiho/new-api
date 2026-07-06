@@ -218,6 +218,9 @@ export const STATIC_I18N_KEYS = [
   // Models constants
   'Exact Match',
   'Prefix Match',
+  'Text',
+  'Accept text prompts.',
+  'Accept image inputs for vision-capable models.',
   'Contains Match',
   'Suffix Match',
   'Exact',

@@ -166,6 +166,12 @@ func buildOpenAIModel(modelName string, ownerByModel map[string]string) dto.Open
 		oaiModel.OwnedBy = owner
 	}
 	oaiModel.SupportedEndpointTypes = model.GetModelSupportEndpointTypes(modelName)
+	metadata := model.GetModelDiscoveryMetadata(modelName)
+	oaiModel.InputModalities = metadata.InputModalities
+	oaiModel.OutputModalities = metadata.OutputModalities
+	oaiModel.Capabilities = metadata.Capabilities
+	oaiModel.ContextLength = metadata.ContextLength
+	oaiModel.MaxOutputTokens = metadata.MaxOutputTokens
 	return oaiModel
 }
 

@@ -1,7 +1,6 @@
 package model
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -35,6 +34,11 @@ type Pricing struct {
 	SupportedEndpointTypes []constant.EndpointType `json:"supported_endpoint_types"`
 	BillingMode            string                  `json:"billing_mode,omitempty"`
 	BillingExpr            string                  `json:"billing_expr,omitempty"`
+	InputModalities        []string                `json:"input_modalities,omitempty"`
+	OutputModalities       []string                `json:"output_modalities,omitempty"`
+	Capabilities           []string                `json:"capabilities,omitempty"`
+	ContextLength          int                     `json:"context_length,omitempty"`
+	MaxOutputTokens        int                     `json:"max_output_tokens,omitempty"`
 	PricingVersion         string                  `json:"pricing_version,omitempty"`
 }
 
@@ -56,6 +60,8 @@ var (
 	modelEnableGroups     = make(map[string][]string)
 	modelQuotaTypeMap     = make(map[string]int)
 	modelEnableGroupsLock = sync.RWMutex{}
+	modelMetadataMap      = make(map[string]ModelDiscoveryMetadata)
+	modelMetadataLock     = sync.RWMutex{}
 )
 
 var (
@@ -83,6 +89,9 @@ func InvalidatePricingCache() {
 
 	pricingMap = nil
 	vendorsList = nil
+	modelMetadataLock.Lock()
+	modelMetadataMap = make(map[string]ModelDiscoveryMetadata)
+	modelMetadataLock.Unlock()
 	lastGetPricingTime = time.Time{}
 }
 
@@ -93,6 +102,18 @@ func GetVendors() []PricingVendor {
 		GetPricing()
 	}
 	return vendorsList
+}
+
+func GetModelDiscoveryMetadata(model string) ModelDiscoveryMetadata {
+	if model == "" {
+		return ModelDiscoveryMetadata{}
+	}
+	if time.Since(lastGetPricingTime) > time.Minute*1 || len(pricingMap) == 0 {
+		GetPricing()
+	}
+	modelMetadataLock.RLock()
+	defer modelMetadataLock.RUnlock()
+	return modelMetadataMap[model]
 }
 
 func GetModelSupportEndpointTypes(model string) []constant.EndpointType {
@@ -220,7 +241,7 @@ func updatePricing() {
 			continue
 		}
 		var raw map[string]interface{}
-		if err := json.Unmarshal([]byte(meta.Endpoints), &raw); err == nil {
+		if err := common.Unmarshal([]byte(meta.Endpoints), &raw); err == nil {
 			endpoints := make([]string, 0, len(raw))
 			for k, v := range raw {
 				switch v.(type) {
@@ -264,7 +285,7 @@ func updatePricing() {
 			continue
 		}
 		var raw map[string]interface{}
-		if err := json.Unmarshal([]byte(meta.Endpoints), &raw); err == nil {
+		if err := common.Unmarshal([]byte(meta.Endpoints), &raw); err == nil {
 			for k, v := range raw {
 				switch val := v.(type) {
 				case string:
@@ -303,6 +324,12 @@ func updatePricing() {
 			pricing.Icon = meta.Icon
 			pricing.Tags = meta.Tags
 			pricing.VendorID = meta.VendorID
+			discoveryMetadata := meta.DiscoveryMetadata()
+			pricing.InputModalities = discoveryMetadata.InputModalities
+			pricing.OutputModalities = discoveryMetadata.OutputModalities
+			pricing.Capabilities = discoveryMetadata.Capabilities
+			pricing.ContextLength = discoveryMetadata.ContextLength
+			pricing.MaxOutputTokens = discoveryMetadata.MaxOutputTokens
 		}
 		modelPrice, findPrice := ratio_setting.GetModelPrice(model, false)
 		if findPrice {
@@ -346,6 +373,22 @@ func updatePricing() {
 	}
 
 	// 刷新缓存映射，供高并发快速查询
+	modelMetadataLock.Lock()
+	modelMetadataMap = make(map[string]ModelDiscoveryMetadata)
+	for _, p := range pricingMap {
+		metadata := ModelDiscoveryMetadata{
+			InputModalities:  p.InputModalities,
+			OutputModalities: p.OutputModalities,
+			Capabilities:     p.Capabilities,
+			ContextLength:    p.ContextLength,
+			MaxOutputTokens:  p.MaxOutputTokens,
+		}
+		if !metadata.IsEmpty() {
+			modelMetadataMap[p.ModelName] = metadata
+		}
+	}
+	modelMetadataLock.Unlock()
+
 	modelEnableGroupsLock.Lock()
 	modelEnableGroups = make(map[string][]string)
 	modelQuotaTypeMap = make(map[string]int)
