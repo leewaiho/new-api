@@ -331,6 +331,26 @@ export const ADVANCED_CUSTOM_TEMPLATE_OPTIONS: AdvancedCustomTemplateOption[] =
         ],
       },
     },
+    {
+      value: 'coding_plan_claude_and_openai',
+      label: 'Coding Plan: Claude Messages + OpenAI Chat',
+      config: {
+        advanced_routes: [
+          {
+            incoming_path: '/v1/messages',
+            upstream_path: '/v1/messages',
+            converter: 'none',
+            auth: apiKeyHeaderAuth(),
+          },
+          {
+            incoming_path: '/v1/chat/completions',
+            upstream_path: '/v1/chat/completions',
+            converter: 'none',
+            auth: bearerHeaderAuth(),
+          },
+        ],
+      },
+    },
   ]
 
 export function cloneAdvancedCustomConfig(
@@ -871,4 +891,86 @@ function validateRouteAuth(
     return 'Auth value is required'
   }
   return null
+}
+
+
+export interface DualEndpointConfigInput {
+  anthropicBaseURL: string
+  openaiBaseURL: string
+  enableAnthropicMessages?: boolean
+  enableOpenAIChat?: boolean
+  enableOpenAIResponses?: boolean
+  anthropicAuthMode?: 'bearer' | 'x-api-key'
+  openaiAuthMode?: 'bearer' | 'x-api-key'
+  customPathSuffixes?: {
+    anthropicMessages?: string
+    openaiChat?: string
+    openaiResponses?: string
+  }
+}
+
+function stripTrailingSlash(s: string): string {
+  return s.replace(/\/+$/, '')
+}
+
+function joinURL(base: string, path: string): string {
+  const b = stripTrailingSlash(base)
+  const p = path.startsWith('/') ? path : `/${path}`
+  return `${b}${p}`
+}
+
+function buildAuthForMode(
+  mode: 'bearer' | 'x-api-key' | undefined
+): AdvancedCustomRouteAuth {
+  if (mode === 'x-api-key') {
+    return {
+      type: 'header',
+      name: 'x-api-key',
+      value: '{api_key}',
+    }
+  }
+  return {
+    type: 'header',
+    name: 'Authorization',
+    value: 'Bearer {api_key}',
+  }
+}
+
+export function createDualEndpointConfig(
+  input: DualEndpointConfigInput
+): AdvancedCustomConfig {
+  const routes: AdvancedCustomRoute[] = []
+  const suffixes = input.customPathSuffixes || {}
+
+  if (input.enableAnthropicMessages !== false) {
+    const suffix = suffixes.anthropicMessages || '/v1/messages'
+    routes.push({
+      incoming_path: '/v1/messages',
+      upstream_path: joinURL(input.anthropicBaseURL, suffix),
+      converter: 'none',
+      auth: buildAuthForMode(input.anthropicAuthMode),
+    })
+  }
+
+  if (input.enableOpenAIChat !== false) {
+    const suffix = suffixes.openaiChat || '/chat/completions'
+    routes.push({
+      incoming_path: '/v1/chat/completions',
+      upstream_path: joinURL(input.openaiBaseURL, suffix),
+      converter: 'none',
+      auth: buildAuthForMode(input.openaiAuthMode),
+    })
+  }
+
+  if (input.enableOpenAIResponses) {
+    const suffix = suffixes.openaiResponses || '/responses'
+    routes.push({
+      incoming_path: '/v1/responses',
+      upstream_path: joinURL(input.openaiBaseURL, suffix),
+      converter: 'none',
+      auth: buildAuthForMode(input.openaiAuthMode),
+    })
+  }
+
+  return { advanced_routes: routes }
 }

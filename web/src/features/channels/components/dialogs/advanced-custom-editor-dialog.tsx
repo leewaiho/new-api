@@ -37,7 +37,14 @@ import { JsonCodeEditor } from '@/components/json-code-editor'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover'
 import {
   Popover,
   PopoverContent,
@@ -74,6 +81,7 @@ import {
   buildAdvancedCustomAuth,
   createAdvancedCustomConfig,
   createAdvancedCustomRoute,
+  createDualEndpointConfig,
   getAdvancedCustomAuthMode,
   getAdvancedCustomConverterDefaults,
   getAdvancedCustomConverterOptions,
@@ -607,6 +615,17 @@ export function AdvancedCustomEditorDialog({
           >
             {t('Append Template')}
           </Button>
+
+          <div className='bg-border mx-1 h-5 w-px' />
+
+          <DualEndpointQuickSetup
+            onApply={(generatedConfig) => {
+              const normalized = normalizeAdvancedCustomConfig(generatedConfig)
+              setConfig(normalized)
+              setRouteKeys(createRouteKeys(normalized.advanced_routes?.length || 0))
+              toast.success(t('Quick setup applied'))
+            }}
+          />
         </div>
       </div>
 
@@ -1432,5 +1451,207 @@ function FieldBlock({
       <span className={cn('text-sm font-medium', labelClassName)}>{label}</span>
       {children}
     </div>
+  )
+}
+
+function DualEndpointQuickSetup({
+  onApply,
+}: {
+  onApply: (config: AdvancedCustomConfig) => void
+}) {
+  const { t } = useTranslation()
+  const [open, setOpen] = useState(false)
+  const [anthropicBaseURL, setAnthropicBaseURL] = useState('')
+  const [openaiBaseURL, setOpenAIBaseURL] = useState('')
+  const [enableAnthropic, setEnableAnthropic] = useState(true)
+  const [enableOpenAIChat, setEnableOpenAIChat] = useState(true)
+  const [enableOpenAIResponses, setEnableOpenAIResponses] = useState(false)
+  const [anthropicAuth, setAnthropicAuth] = useState<'bearer' | 'x-api-key'>(
+    'x-api-key'
+  )
+  const [openaiAuth, setOpenaiAuth] = useState<'bearer' | 'x-api-key'>('bearer')
+  const [error, setError] = useState('')
+
+  const handleApply = () => {
+    setError('')
+    if (enableAnthropic && !anthropicBaseURL.trim()) {
+      setError(t('Anthropic-compatible Base URL is required'))
+      return
+    }
+    if (
+      (enableOpenAIChat || enableOpenAIResponses) &&
+      !openaiBaseURL.trim()
+    ) {
+      setError(t('OpenAI-compatible Base URL is required'))
+      return
+    }
+    if (!enableAnthropic && !enableOpenAIChat && !enableOpenAIResponses) {
+      setError(t('Enable at least one endpoint'))
+      return
+    }
+    const generated = createDualEndpointConfig({
+      anthropicBaseURL: anthropicBaseURL.trim(),
+      openaiBaseURL: openaiBaseURL.trim(),
+      enableAnthropicMessages: enableAnthropic,
+      enableOpenAIChat,
+      enableOpenAIResponses,
+      anthropicAuthMode: anthropicAuth,
+      openaiAuthMode: openaiAuth,
+    })
+    onApply(generated)
+    setOpen(false)
+  }
+
+  const handleOpenChange = (nextOpen: boolean) => {
+    setOpen(nextOpen)
+    if (!nextOpen) {
+      setError('')
+    }
+  }
+
+  return (
+    <Popover open={open} onOpenChange={handleOpenChange}>
+      <PopoverTrigger
+        render={
+          <Button type='button' variant='outline' size='sm' />
+        }
+      >
+        {t('Quick Setup')}
+      </PopoverTrigger>
+      <PopoverContent
+        align='end'
+        className='w-[420px] p-4'
+        sideOffset={8}
+      >
+        <div className='flex flex-col gap-3'>
+          <div className='flex flex-col gap-1'>
+            <div className='text-sm font-medium'>
+              {t('Dual-endpoint quick setup')}
+            </div>
+            <p className='text-muted-foreground text-xs leading-relaxed'>
+              {t(
+                'Enter the Anthropic-compatible and OpenAI-compatible base URLs. Routes are generated automatically.'
+              )}
+            </p>
+          </div>
+
+          <div className='flex flex-col gap-1.5'>
+            <Label htmlFor='qs-anthropic-base'>
+              {t('Anthropic-compatible Base URL')}
+            </Label>
+            <Input
+              id='qs-anthropic-base'
+              value={anthropicBaseURL}
+              onChange={(event) => setAnthropicBaseURL(event.target.value)}
+              placeholder='https://api.example.com/anthropic'
+              disabled={!enableAnthropic}
+            />
+          </div>
+
+          <div className='flex flex-col gap-1.5'>
+            <Label htmlFor='qs-openai-base'>
+              {t('OpenAI-compatible Base URL')}
+            </Label>
+            <Input
+              id='qs-openai-base'
+              value={openaiBaseURL}
+              onChange={(event) => setOpenAIBaseURL(event.target.value)}
+              placeholder='https://api.example.com/openai'
+              disabled={!enableOpenAIChat && !enableOpenAIResponses}
+            />
+          </div>
+
+          <div className='flex flex-col gap-1.5'>
+            <Label className='text-xs font-medium'>
+              {t('Endpoints to enable')}
+            </Label>
+            <div className='flex flex-col gap-1.5'>
+              <label className='flex items-center gap-2 text-sm'>
+                <Checkbox
+                  checked={enableAnthropic}
+                  onCheckedChange={(value) => setEnableAnthropic(value === true)}
+                />
+                <span>{t('Claude Messages (/v1/messages)')}</span>
+              </label>
+              <label className='flex items-center gap-2 text-sm'>
+                <Checkbox
+                  checked={enableOpenAIChat}
+                  onCheckedChange={(value) => setEnableOpenAIChat(value === true)}
+                />
+                <span>{t('OpenAI Chat Completions (/v1/chat/completions)')}</span>
+              </label>
+              <label className='flex items-center gap-2 text-sm'>
+                <Checkbox
+                  checked={enableOpenAIResponses}
+                  onCheckedChange={(value) =>
+                    setEnableOpenAIResponses(value === true)
+                  }
+                />
+                <span>{t('OpenAI Responses (/v1/responses)')}</span>
+              </label>
+            </div>
+          </div>
+
+          <div className='grid grid-cols-2 gap-3'>
+            <div className='flex flex-col gap-1.5'>
+              <Label className='text-xs font-medium'>
+                {t('Anthropic auth')}
+              </Label>
+              <Select
+                value={anthropicAuth}
+                onValueChange={(value) =>
+                  setAnthropicAuth(value as 'bearer' | 'x-api-key')
+                }
+              >
+                <SelectTrigger className='h-8 w-full'>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value='x-api-key'>x-api-key</SelectItem>
+                  <SelectItem value='bearer'>Bearer</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className='flex flex-col gap-1.5'>
+              <Label className='text-xs font-medium'>
+                {t('OpenAI auth')}
+              </Label>
+              <Select
+                value={openaiAuth}
+                onValueChange={(value) =>
+                  setOpenaiAuth(value as 'bearer' | 'x-api-key')
+                }
+              >
+                <SelectTrigger className='h-8 w-full'>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value='bearer'>Bearer</SelectItem>
+                  <SelectItem value='x-api-key'>x-api-key</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          {error ? (
+            <p className='text-destructive text-xs'>{error}</p>
+          ) : null}
+
+          <div className='flex justify-end gap-2 pt-1'>
+            <Button
+              type='button'
+              variant='ghost'
+              size='sm'
+              onClick={() => handleOpenChange(false)}
+            >
+              {t('Cancel')}
+            </Button>
+            <Button type='button' size='sm' onClick={handleApply}>
+              {t('Apply')}
+            </Button>
+          </div>
+        </div>
+      </PopoverContent>
+    </Popover>
   )
 }
