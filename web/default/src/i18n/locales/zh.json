@@ -1950,7 +1950,7 @@
     "footer.columns.related.links.oneApi": "One API",
     "footer.columns.related.title": "相关项目",
     "footer.defaultCopyright": "版权所有。",
-    "footer.new\u0061pi.projectAttributionSuffix": "版权所有，由项目贡献者设计与开发。",
+    "footer.newapi.projectAttributionSuffix": "版权所有，由项目贡献者设计与开发。",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "对于 2025 年 5 月 10 日之后添加的渠道，在部署时无需从模型名称中移除 \".\"",
     "For private deployments, format: https://fastgpt.run/api/openapi": "对于私有部署，格式为：https://fastgpt.run/api/openapi",
     "Force a syntactically valid JSON response": "强制返回语法合法的 JSON",
@@ -4977,6 +4977,21 @@
     "Zero retention": "零数据保留",
     "Zhipu": "智谱",
     "Zhipu V4": "智谱 V4",
-    "Zoom": "缩放"
+    "Zoom": "缩放",
+    "Quick Setup": "快速配置",
+    "Quick setup applied": "快速配置已应用",
+    "Dual-endpoint quick setup": "双端点快速配置",
+    "Enter the Anthropic-compatible and OpenAI-compatible base URLs. Routes are generated automatically.": "输入 Anthropic 兼容和 OpenAI 兼容的 Base URL，路由将自动生成。",
+    "Anthropic-compatible Base URL": "Anthropic 兼容 Base URL",
+    "Anthropic-compatible Base URL is required": "Anthropic 兼容 Base URL 为必填",
+    "OpenAI-compatible Base URL": "OpenAI 兼容 Base URL",
+    "OpenAI-compatible Base URL is required": "OpenAI 兼容 Base URL 为必填",
+    "Endpoints to enable": "启用的端点",
+    "Enable at least one endpoint": "至少启用一个端点",
+    "Claude Messages (/v1/messages)": "Claude Messages (/v1/messages)",
+    "OpenAI Chat Completions (/v1/chat/completions)": "OpenAI Chat Completions (/v1/chat/completions)",
+    "OpenAI Responses (/v1/responses)": "OpenAI Responses (/v1/responses)",
+    "Anthropic auth": "Anthropic 鉴权",
+    "OpenAI auth": "OpenAI 鉴权"
   }
 }
