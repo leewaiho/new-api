@@ -21,6 +21,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestValidateChannelRejectsNilChannel(t *testing.T) {
+	err := validateChannel(nil, true)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "channel cannot be empty")
+
+	err = validateChannel(nil, false)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "channel cannot be empty")
+}
+
 func TestValidateChannelProxy(t *testing.T) {
 	tests := []struct {
 		name    string
