@@ -4992,6 +4992,8 @@
     "OpenAI Chat Completions (/v1/chat/completions)": "OpenAI Chat Completions (/v1/chat/completions)",
     "OpenAI Responses (/v1/responses)": "OpenAI Responses (/v1/responses)",
     "Anthropic auth": "Anthropic 鉴权",
-    "OpenAI auth": "OpenAI 鉴权"
+    "OpenAI auth": "OpenAI 鉴权",
+    "Select endpoint to fetch from": "选择要从哪个端点获取模型列表",
+    "Select an endpoint": "选择一个端点"
   }
 }

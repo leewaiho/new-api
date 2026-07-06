@@ -17,6 +17,7 @@ import (
 	relaychannel "github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/gemini"
 	"github.com/QuantumNous/new-api/relay/channel/ollama"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
 
@@ -233,7 +234,7 @@ func FetchUpstreamModels(c *gin.Context) {
 		return
 	}
 
-	ids, err := fetchChannelUpstreamModelIDs(channel)
+	ids, err := fetchChannelUpstreamModelIDs(channel, c.Query("fetch_url"))
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
@@ -1224,6 +1225,9 @@ func FetchModels(c *gin.Context) {
 
 	client := &http.Client{}
 	url := fmt.Sprintf("%s/v1/models", baseURL)
+	if req.Type == constant.ChannelTypeAdvancedCustom && relaycommon.BaseUrlHasVersionPrefix(baseURL) {
+		url = fmt.Sprintf("%s/models", baseURL)
+	}
 
 	request, err := http.NewRequest("GET", url, nil)
 	if err != nil {

@@ -746,3 +746,48 @@ export function createDualEndpointConfig(
 
   return { advanced_routes: routes }
 }
+
+
+export function extractACFetchURLs(
+  config: AdvancedCustomConfig | null | undefined,
+  channelBaseURL: string
+): string[] {
+  if (!config?.advanced_routes) return []
+  const urls: string[] = []
+  for (const route of config.advanced_routes) {
+    if (
+      route.incoming_path !== '/v1/chat/completions' &&
+      route.incoming_path !== '/v1/responses'
+    ) {
+      continue
+    }
+    const upstream = route.upstream_path?.trim()
+    if (!upstream) continue
+
+    let fullURL: string
+    if (
+      upstream.startsWith('http://') ||
+      upstream.startsWith('https://')
+    ) {
+      fullURL = upstream
+    } else {
+      const base = (channelBaseURL || '').replace(/\/+$/, '')
+      if (!base) continue
+      fullURL = base + '/' + upstream.replace(/^\/+/, '')
+    }
+
+    try {
+      const parsed = new URL(fullURL)
+      const pathParts = parsed.pathname.split('/').filter(Boolean)
+      if (pathParts.length === 0) continue
+      pathParts.pop()
+      pathParts.push('models')
+      parsed.pathname = '/' + pathParts.join('/')
+      urls.push(parsed.toString())
+    } catch {
+      // skip invalid URLs
+    }
+  }
+  return [...new Set(urls)]
+}
+

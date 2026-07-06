@@ -4992,6 +4992,8 @@
     "OpenAI Chat Completions (/v1/chat/completions)": "OpenAI Chat Completions (/v1/chat/completions)",
     "OpenAI Responses (/v1/responses)": "OpenAI Responses (/v1/responses)",
     "Anthropic auth": "Anthropic auth",
-    "OpenAI auth": "OpenAI auth"
+    "OpenAI auth": "OpenAI auth",
+    "Select endpoint to fetch from": "Select endpoint to fetch from",
+    "Select an endpoint": "Select an endpoint"
   }
 }
