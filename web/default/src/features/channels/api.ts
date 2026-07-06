@@ -240,10 +240,14 @@ export async function updateChannelBalance(
  * Fetch available models from upstream provider
  */
 export async function fetchUpstreamModels(
-  id: number
+  id: number,
+  fetchURL?: string
 ): Promise<FetchModelsResponse> {
+  const query = fetchURL
+    ? `?fetch_url=${encodeURIComponent(fetchURL)}`
+    : ''
   const res = await api.get(
-    `/api/channel/fetch_models/${id}`,
+    `/api/channel/fetch_models/${id}${query}`,
     channelActionConfig()
   )
   return res.data
