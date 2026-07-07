@@ -4977,6 +4977,25 @@
     "Zero retention": "Zero retention",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Create, edit, delete and initialize model vendors.": "Create, edit, delete and initialize model vendors.",
+    "Initialize Volcengine CodingPlan": "Initialize Volcengine CodingPlan",
+    "This vendor has linked models. Delete anyway?": "This vendor has linked models. Delete anyway?",
+    "Delete this vendor?": "Delete this vendor?",
+    "Failed to initialize catalog": "Failed to initialize catalog",
+    "Volcengine CodingPlan catalog initialized": "Volcengine CodingPlan catalog initialized",
+    "No vendors found": "No vendors found",
+    "Import from Vendor Catalog": "Import from Vendor Catalog",
+    "Import locally maintained vendor model catalog into this channel.": "Import locally maintained vendor model catalog into this channel.",
+    "Import Mode": "Import Mode",
+    "Append missing models": "Append missing models",
+    "Replace with vendor catalog": "Replace with vendor catalog",
+    "Apply Import": "Apply Import",
+    "Failed to import vendor models": "Failed to import vendor models",
+    "Vendor models imported": "Vendor models imported",
+    "Keep Models": "Keep Models",
+    "Result Models": "Result Models",
+    "Select vendor to preview changes": "Select vendor to preview changes",
+    "Save channel before importing vendor catalog": "Save channel before importing vendor catalog"
   }
 }

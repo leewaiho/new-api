@@ -24,6 +24,7 @@ import type {
   GetModelResponse,
   GetVendorsResponse,
   GetVendorResponse,
+  EnsureVolcengineCodingPlanCatalogResponse,
   Model,
   Vendor,
   SearchModelsParams,
@@ -137,6 +138,14 @@ export async function searchVendors(params: {
   page_size?: number
 }): Promise<GetVendorsResponse> {
   const res = await api.get('/api/vendors/search', { params })
+  return res.data
+}
+
+/**
+ * Ensure built-in Volcengine CodingPlan vendor catalog exists.
+ */
+export async function ensureVolcengineCodingPlanCatalog(): Promise<EnsureVolcengineCodingPlanCatalogResponse> {
+  const res = await api.post('/api/vendors/catalogs/volcengine-codingplan')
   return res.data
 }
 

@@ -65,6 +65,7 @@ export interface Vendor {
   status: number
   created_time: number
   updated_time: number
+  model_count?: number
 }
 
 /**
@@ -146,6 +147,18 @@ export interface GetVendorsResponse {
 /**
  * Get vendor response
  */
+export interface EnsureVolcengineCodingPlanCatalogResponse {
+  success: boolean
+  message?: string
+  data?: {
+    vendor: Vendor
+    created_vendor: boolean
+    created_models: string[]
+    updated_models: string[]
+    model_count: number
+  }
+}
+
 export interface GetVendorResponse {
   success: boolean
   message?: string
