@@ -21,9 +21,9 @@ import (
 )
 
 type listModelsResponse struct {
-	Success bool               `json:"success"`
-	Data    []dto.OpenAIModels `json:"data"`
-	Object  string             `json:"object"`
+	Success bool                      `json:"success"`
+	Data    []dto.NewAPIModelListItem `json:"data"`
+	Object  string                    `json:"object"`
 }
 
 type userModelsResponse struct {
@@ -338,7 +338,7 @@ func TestPricingAndListModelsExposeModelMetadata(t *testing.T) {
 	ListModels(ctx, constant.ChannelTypeOpenAI)
 
 	payload := decodeListModelsPayload(t, recorder)
-	var listed *dto.OpenAIModels
+	var listed *dto.NewAPIModelListItem
 	for i := range payload.Data {
 		if payload.Data[i].Id == "zz-metadata-model" {
 			listed = &payload.Data[i]

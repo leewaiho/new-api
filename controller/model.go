@@ -150,7 +150,7 @@ func getPreferredModelOwners(modelNames []string, groups []string) map[string]st
 	return owners
 }
 
-func buildOpenAIModel(modelName string, ownerByModel map[string]string) dto.OpenAIModels {
+func buildNewAPIModelListItem(modelName string, ownerByModel map[string]string) dto.NewAPIModelListItem {
 	var oaiModel dto.OpenAIModels
 	if staticModel, ok := openAIModelsMap[modelName]; ok {
 		oaiModel = staticModel
@@ -166,13 +166,14 @@ func buildOpenAIModel(modelName string, ownerByModel map[string]string) dto.Open
 		oaiModel.OwnedBy = owner
 	}
 	oaiModel.SupportedEndpointTypes = model.GetModelSupportEndpointTypes(modelName)
+	item := dto.NewAPIModelListItem{OpenAIModels: oaiModel}
 	metadata := model.GetModelDiscoveryMetadata(modelName)
-	oaiModel.InputModalities = metadata.InputModalities
-	oaiModel.OutputModalities = metadata.OutputModalities
-	oaiModel.Capabilities = metadata.Capabilities
-	oaiModel.ContextLength = metadata.ContextLength
-	oaiModel.MaxOutputTokens = metadata.MaxOutputTokens
-	return oaiModel
+	item.InputModalities = metadata.InputModalities
+	item.OutputModalities = metadata.OutputModalities
+	item.Capabilities = metadata.Capabilities
+	item.ContextLength = metadata.ContextLength
+	item.MaxOutputTokens = metadata.MaxOutputTokens
+	return item
 }
 
 type modelListGroups struct {
@@ -278,9 +279,9 @@ func ListModels(c *gin.Context, modelType int) {
 	if len(ownerGroups) > 0 {
 		ownerByModel = getPreferredModelOwners(userModelNames, ownerGroups)
 	}
-	userOpenAiModels := make([]dto.OpenAIModels, 0, len(userModelNames))
+	userOpenAiModels := make([]dto.NewAPIModelListItem, 0, len(userModelNames))
 	for _, modelName := range userModelNames {
-		userOpenAiModels = append(userOpenAiModels, buildOpenAIModel(modelName, ownerByModel))
+		userOpenAiModels = append(userOpenAiModels, buildNewAPIModelListItem(modelName, ownerByModel))
 	}
 
 	switch modelType {
