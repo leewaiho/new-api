@@ -75,7 +75,8 @@ const (
 )
 
 type AdvancedCustomConfig struct {
-	Routes []AdvancedCustomRoute `json:"advanced_routes,omitempty"`
+	Routes         []AdvancedCustomRoute `json:"advanced_routes,omitempty"`
+	ModelFetchURLs []string              `json:"model_fetch_urls,omitempty"`
 }
 
 type AdvancedCustomRoute struct {
@@ -165,6 +166,16 @@ func (c *AdvancedCustomConfig) Validate() error {
 		return fmt.Errorf("advanced_custom requires at least one route")
 	}
 
+	for i, fetchURL := range c.ModelFetchURLs {
+		fetchURL = strings.TrimSpace(fetchURL)
+		if fetchURL == "" {
+			continue
+		}
+		if err := validateAdvancedCustomModelFetchURL(i, fetchURL); err != nil {
+			return err
+		}
+	}
+
 	seenPaths := make(map[string]struct{}, len(c.Routes))
 	for i := range c.Routes {
 		route := c.Routes[i]
@@ -207,6 +218,24 @@ func (c *AdvancedCustomConfig) Validate() error {
 		}
 	}
 
+	return nil
+}
+
+func validateAdvancedCustomModelFetchURL(index int, fetchURL string) error {
+	if strings.HasPrefix(fetchURL, "/") {
+		if strings.HasPrefix(fetchURL, "//") {
+			return fmt.Errorf("advanced_custom.model_fetch_urls[%d] must be a full URL or a path starting with /", index)
+		}
+		return nil
+	}
+
+	parsedURL, err := url.Parse(fetchURL)
+	if err != nil || parsedURL.Scheme == "" || parsedURL.Host == "" {
+		return fmt.Errorf("advanced_custom.model_fetch_urls[%d] must be a full URL or a path starting with /", index)
+	}
+	if !strings.EqualFold(parsedURL.Scheme, "http") && !strings.EqualFold(parsedURL.Scheme, "https") {
+		return fmt.Errorf("advanced_custom.model_fetch_urls[%d] must use http or https", index)
+	}
 	return nil
 }
 

@@ -265,6 +265,12 @@ func deriveACModelsURL(channel *model.Channel) string {
 	if acConfig == nil {
 		return ""
 	}
+	for _, fetchURL := range acConfig.ModelFetchURLs {
+		fetchURL = strings.TrimSpace(fetchURL)
+		if fetchURL != "" {
+			return fetchURL
+		}
+	}
 	for _, route := range acConfig.Routes {
 		if route.IncomingPath != "/v1/chat/completions" && route.IncomingPath != "/v1/responses" {
 			continue
