@@ -285,6 +285,37 @@ export async function applyChannelVendorCatalogModels(params: {
 }
 
 /**
+ * Preview importing models from a local vendor catalog.
+ */
+export async function previewChannelVendorCatalogModels(
+  channelId: number,
+  vendorId: number,
+  mode: VendorCatalogImportMode = 'append'
+): Promise<ChannelVendorCatalogImportResponse> {
+  const res = await api.get(
+    `/api/channel/${channelId}/vendor_models/preview`,
+    channelActionConfig({ params: { vendor_id: vendorId, mode } })
+  )
+  return res.data
+}
+
+/**
+ * Apply models from a local vendor catalog to a channel.
+ */
+export async function applyChannelVendorCatalogModels(params: {
+  channel_id: number
+  vendor_id: number
+  mode: VendorCatalogImportMode
+}): Promise<ChannelVendorCatalogImportResponse> {
+  const res = await api.post(
+    '/api/channel/vendor_models/apply',
+    params,
+    channelActionConfig()
+  )
+  return res.data
+}
+
+/**
  * Copy/clone a channel
  */
 export async function copyChannel(
