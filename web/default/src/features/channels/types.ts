@@ -111,6 +111,7 @@ export interface ChannelOtherSettings {
 
 export interface AdvancedCustomConfig {
   advanced_routes?: AdvancedCustomRoute[]
+  model_fetch_urls?: string[]
 }
 
 export interface AdvancedCustomRoute {

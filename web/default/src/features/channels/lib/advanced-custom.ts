@@ -430,8 +430,18 @@ export function normalizeAdvancedCustomConfig(
   const routes = Array.isArray(config.advanced_routes)
     ? config.advanced_routes.map(normalizeAdvancedCustomRoute)
     : []
+  const modelFetchURLs = Array.isArray(config.model_fetch_urls)
+    ? Array.from(
+        new Set(
+          config.model_fetch_urls
+            .map((url) => (typeof url === 'string' ? url.trim() : ''))
+            .filter(Boolean)
+        )
+      )
+    : []
 
   return {
+    ...(modelFetchURLs.length > 0 ? { model_fetch_urls: modelFetchURLs } : {}),
     advanced_routes: routes,
   }
 }
@@ -448,6 +458,14 @@ export function validateAdvancedCustomConfig(
   if (routes.length === 0) {
     return {
       message: 'Advanced custom configuration requires at least one route',
+    }
+  }
+
+  for (const fetchURL of normalized.model_fetch_urls || []) {
+    if (!isFullHttpURLOrAbsolutePath(fetchURL)) {
+      return {
+        message: 'Model fetch URL must be a full URL or a path starting with /',
+      }
     }
   }
 
@@ -748,13 +766,26 @@ export function createDualEndpointConfig(
 }
 
 
+function resolveACFetchURL(fetchURL: string, channelBaseURL: string): string {
+  if (fetchURL.startsWith('http://') || fetchURL.startsWith('https://')) {
+    return fetchURL
+  }
+  const base = (channelBaseURL || '').replace(/\/+$/, '')
+  if (!base) return fetchURL
+  return base + '/' + fetchURL.replace(/^\/+/, '')
+}
+
 export function extractACFetchURLs(
   config: AdvancedCustomConfig | null | undefined,
   channelBaseURL: string
 ): string[] {
-  if (!config?.advanced_routes) return []
+  const normalized = config ? normalizeAdvancedCustomConfig(config) : null
+  if (!normalized) return []
   const urls: string[] = []
-  for (const route of config.advanced_routes) {
+  for (const fetchURL of normalized.model_fetch_urls || []) {
+    urls.push(resolveACFetchURL(fetchURL, channelBaseURL))
+  }
+  for (const route of normalized.advanced_routes || []) {
     if (
       route.incoming_path !== '/v1/chat/completions' &&
       route.incoming_path !== '/v1/responses'

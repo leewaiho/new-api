@@ -103,6 +103,21 @@ function getOptionLabel(
   return options.find((option) => option.value === value)?.label || value
 }
 
+function modelFetchURLsToText(urls: string[] | undefined): string {
+  return (urls || []).join('\n')
+}
+
+function textToModelFetchURLs(value: string): string[] {
+  return Array.from(
+    new Set(
+      value
+        .split(/[\n,]+/)
+        .map((url) => url.trim())
+        .filter(Boolean)
+    )
+  )
+}
+
 export function AdvancedCustomEditorDialog({
   open,
   value,
@@ -163,6 +178,19 @@ export function AdvancedCustomEditorDialog({
 
   const createRouteKeys = (count: number) =>
     Array.from({ length: count }, () => createRouteKey())
+
+  const updateModelFetchURLs = (value: string) => {
+    const modelFetchURLs = textToModelFetchURLs(value)
+    setConfig((current) => {
+      const next = normalizeAdvancedCustomConfig(current)
+      return {
+        ...next,
+        ...(modelFetchURLs.length > 0
+          ? { model_fetch_urls: modelFetchURLs }
+          : { model_fetch_urls: undefined }),
+      }
+    })
+  }
 
   const updateRoute = (index: number, patch: Partial<AdvancedCustomRoute>) => {
     setConfig((current) => {
@@ -256,6 +284,9 @@ export function AdvancedCustomEditorDialog({
       const base = normalizeAdvancedCustomConfig(baseConfig)
       const template = normalizeAdvancedCustomConfig(templateConfig)
       nextConfig = {
+        ...(base.model_fetch_urls?.length
+          ? { model_fetch_urls: base.model_fetch_urls }
+          : {}),
         advanced_routes: [
           ...(base.advanced_routes || []),
           ...(template.advanced_routes || []),
@@ -433,6 +464,19 @@ export function AdvancedCustomEditorDialog({
           <p className='text-muted-foreground bg-muted/30 hidden rounded-md border px-3 py-2 text-xs leading-relaxed lg:block'>
             {t(upstreamPathDescriptionKey)}
           </p>
+
+          <div className='space-y-2 rounded-md border p-3'>
+            <Label>{t('Model fetch URLs')}</Label>
+            <Textarea
+              value={modelFetchURLsToText(normalizedConfig.model_fetch_urls)}
+              onChange={(event) => updateModelFetchURLs(event.target.value)}
+              placeholder='https://api.example.com/v1/models'
+              className='min-h-20 font-mono text-xs'
+            />
+            <p className='text-muted-foreground text-xs leading-relaxed'>
+              {t('One model list endpoint per line. Leave empty to infer from OpenAI-compatible routes.')}
+            </p>
+          </div>
 
           <div className='flex flex-col gap-4 lg:gap-2'>
             <div
