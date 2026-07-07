@@ -1783,6 +1783,20 @@ export function ChannelMutateDrawer({
                     'Add a new channel by providing the necessary information.'
                   )}
             </SheetDescription>
+            {isEditing && (
+              <div className='flex flex-wrap gap-2 pt-1'>
+                <Button
+                  type='button'
+                  variant='outline'
+                  size='sm'
+                  onClick={handleOpenVendorModelImport}
+                  disabled={!channelId}
+                >
+                  <Boxes className='mr-2 h-4 w-4' aria-hidden='true' />
+                  {t('Import from Vendor Catalog')}
+                </Button>
+              </div>
+            )}
           </SheetHeader>
 
           {sensitiveLocked && (
