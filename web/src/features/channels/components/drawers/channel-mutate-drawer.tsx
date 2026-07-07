@@ -1883,7 +1883,7 @@ export function ChannelMutateDrawer({
                       )
                     : t(
                         'Add a new channel by providing the necessary information.'
-                      )}
+                  )}
                 </SheetDescription>
               </div>
               {!isEditing && (
@@ -1898,6 +1898,20 @@ export function ChannelMutateDrawer({
                   <span>{t('Paste Connection Info')}</span>
                 </Button>
               )}
+              {isEditing && (
+                <div className='flex flex-wrap gap-2'>
+                  <Button
+                    type='button'
+                    variant='outline'
+                    size='sm'
+                  onClick={handleOpenVendorModelImport}
+                  disabled={!channelId}
+                >
+                  <Boxes className='mr-2 h-4 w-4' aria-hidden='true' />
+                  {t('Import from Vendor Catalog')}
+                </Button>
+              </div>
+            )}
             </div>
           </SheetHeader>
 
