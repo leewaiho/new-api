@@ -5011,6 +5011,8 @@
     "Keep Models": "保留模型",
     "Result Models": "结果模型",
     "Select vendor to preview changes": "选择供应商以预览变更",
-    "Save channel before importing vendor catalog": "请先保存渠道再导入供应商目录"
+    "Save channel before importing vendor catalog": "请先保存渠道再导入供应商目录",
+    "Select endpoint to fetch from": "选择要从哪个端点获取模型列表",
+    "Select an endpoint": "选择一个端点"
   }
 }

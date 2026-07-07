@@ -5011,6 +5011,8 @@
     "Keep Models": "Keep Models",
     "Result Models": "Result Models",
     "Select vendor to preview changes": "Select vendor to preview changes",
-    "Save channel before importing vendor catalog": "Save channel before importing vendor catalog"
+    "Save channel before importing vendor catalog": "Save channel before importing vendor catalog",
+    "Select endpoint to fetch from": "Select endpoint to fetch from",
+    "Select an endpoint": "Select an endpoint"
   }
 }
