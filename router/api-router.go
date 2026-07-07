@@ -329,6 +329,7 @@ func SetApiRouter(router *gin.Engine) {
 		{
 			vendorRoute.GET("/", controller.GetAllVendors)
 			vendorRoute.GET("/search", controller.SearchVendors)
+			vendorRoute.POST("/catalogs/volcengine-codingplan", controller.EnsureVolcengineCodingPlanVendorCatalog)
 			vendorRoute.GET("/:id", controller.GetVendorMeta)
 			vendorRoute.POST("/", controller.CreateVendorMeta)
 			vendorRoute.PUT("/", controller.UpdateVendorMeta)

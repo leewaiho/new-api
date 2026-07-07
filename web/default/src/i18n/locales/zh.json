@@ -4992,6 +4992,25 @@
     "OpenAI Chat Completions (/v1/chat/completions)": "OpenAI Chat Completions (/v1/chat/completions)",
     "OpenAI Responses (/v1/responses)": "OpenAI Responses (/v1/responses)",
     "Anthropic auth": "Anthropic 鉴权",
-    "OpenAI auth": "OpenAI 鉴权"
+    "OpenAI auth": "OpenAI 鉴权",
+    "Create, edit, delete and initialize model vendors.": "创建、编辑、删除和初始化模型供应商。",
+    "Initialize Volcengine CodingPlan": "初始化 Volcengine CodingPlan",
+    "This vendor has linked models. Delete anyway?": "该供应商已关联模型，仍要删除吗？",
+    "Delete this vendor?": "删除该供应商？",
+    "Failed to initialize catalog": "初始化目录失败",
+    "Volcengine CodingPlan catalog initialized": "Volcengine CodingPlan 目录已初始化",
+    "No vendors found": "未找到供应商",
+    "Import from Vendor Catalog": "从供应商目录导入",
+    "Import locally maintained vendor model catalog into this channel.": "将本地维护的供应商模型目录导入到当前渠道。",
+    "Import Mode": "导入模式",
+    "Append missing models": "追加缺失模型",
+    "Replace with vendor catalog": "替换为供应商目录",
+    "Apply Import": "应用导入",
+    "Failed to import vendor models": "导入供应商模型失败",
+    "Vendor models imported": "供应商模型已导入",
+    "Keep Models": "保留模型",
+    "Result Models": "结果模型",
+    "Select vendor to preview changes": "选择供应商以预览变更",
+    "Save channel before importing vendor catalog": "请先保存渠道再导入供应商目录"
   }
 }

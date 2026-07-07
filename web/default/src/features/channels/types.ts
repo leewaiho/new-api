@@ -201,6 +201,30 @@ export interface FetchModelsResponse {
   data?: string[]
 }
 
+
+export type VendorCatalogImportMode = 'append' | 'replace'
+
+export interface ChannelVendorCatalogImportResult {
+  channel_id: number
+  channel_name: string
+  vendor_id: number
+  vendor_name: string
+  mode: VendorCatalogImportMode
+  channel_models: string[]
+  catalog_models: string[]
+  add_models: string[]
+  remove_models: string[]
+  keep_models: string[]
+  next_models: string[]
+  models_changed: boolean
+}
+
+export interface ChannelVendorCatalogImportResponse {
+  success: boolean
+  message?: string
+  data?: ChannelVendorCatalogImportResult
+}
+
 export interface CopyChannelResponse {
   success: boolean
   message?: string
