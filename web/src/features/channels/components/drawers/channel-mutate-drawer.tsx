@@ -180,6 +180,7 @@ import {
 } from '../dialogs/missing-models-confirmation-dialog'
 import { ParamOverrideEditorDialog } from '../dialogs/param-override-editor-dialog'
 import { StatusCodeRiskDialog } from '../dialogs/status-code-risk-dialog'
+import { VendorModelImportDialog } from '../dialogs/vendor-model-import-dialog'
 import { ModelMappingEditor } from '../model-mapping-editor'
 import {
   ChannelAdvancedSection,
@@ -613,6 +614,8 @@ export function ChannelMutateDrawer({
   )
   const canRevealChannelKey = currentUser?.role === ROLE.SUPER_ADMIN
   const [fetchModelsDialogOpen, setFetchModelsDialogOpen] = useState(false)
+  const [vendorModelImportDialogOpen, setVendorModelImportDialogOpen] =
+    useState(false)
   const [channelKey, setChannelKey] = useState<string | null>(null)
   const [isChannelKeyLoading, setIsChannelKeyLoading] = useState(false)
   const [isCodexCredentialRefreshing, setIsCodexCredentialRefreshing] =
@@ -1440,6 +1443,14 @@ export function ChannelMutateDrawer({
 
     setFetchModelsDialogOpen(true)
   }, [isEditing, canEditSensitive, form, t])
+
+  const handleOpenVendorModelImport = useCallback(() => {
+    if (!isEditing || !channelId) {
+      toast.error(t('Save channel before importing vendor catalog'))
+      return
+    }
+    setVendorModelImportDialogOpen(true)
+  }, [channelId, isEditing, t])
 
   const formPreviewFetcher = useCallback(async (): Promise<string[]> => {
     if (!canEditSensitive) {
@@ -3376,6 +3387,20 @@ export function ChannelMutateDrawer({
                                     )}
                                   </>
                                 )}
+
+                                <Button
+                                  type='button'
+                                  variant='outline'
+                                  size='sm'
+                                  onClick={handleOpenVendorModelImport}
+                                  disabled={!isEditing || !channelId}
+                                >
+                                  <Boxes
+                                    className='mr-2 h-4 w-4'
+                                    aria-hidden='true'
+                                  />
+                                  {t('Import from Vendor Catalog')}
+                                </Button>
                                 <Button
                                   type='button'
                                   variant='outline'
@@ -4691,6 +4716,19 @@ export function ChannelMutateDrawer({
           }}
         />
       )}
+
+
+      <VendorModelImportDialog
+        open={vendorModelImportDialogOpen}
+        onOpenChange={setVendorModelImportDialogOpen}
+        channelId={channelId || undefined}
+        onApplied={(models) => {
+          form.setValue('models', formatModelsArray(models), {
+            shouldDirty: true,
+            shouldValidate: true,
+          })
+        }}
+      />
 
       {/* Fetch Models Dialog */}
       <FetchModelsDialog

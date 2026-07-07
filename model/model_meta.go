@@ -116,6 +116,41 @@ func GetAllModels(offset int, limit int) ([]*Model, error) {
 	return models, err
 }
 
+func GetEnabledModelNamesByVendorID(vendorID int) ([]string, error) {
+	var models []Model
+	if err := DB.Where("vendor_id = ? AND status = ?", vendorID, 1).Order("id ASC").Find(&models).Error; err != nil {
+		return nil, err
+	}
+	modelNames := make([]string, 0, len(models))
+	for _, item := range models {
+		name := strings.TrimSpace(item.ModelName)
+		if name != "" {
+			modelNames = append(modelNames, name)
+		}
+	}
+	return modelNames, nil
+}
+
+func EnsureModelCatalogEntry(entry Model) (bool, error) {
+	var existing Model
+	err := DB.Where("model_name = ?", entry.ModelName).First(&existing).Error
+	if err == nil {
+		entry.Id = existing.Id
+		if entry.Status == 0 {
+			entry.Status = existing.Status
+		}
+		entry.CreatedTime = existing.CreatedTime
+		return false, entry.Update()
+	}
+	if err != gorm.ErrRecordNotFound {
+		return false, err
+	}
+	if entry.Status == 0 {
+		entry.Status = 1
+	}
+	return true, entry.Insert()
+}
+
 func GetBoundChannelsByModelsMap(modelNames []string) (map[string][]BoundChannel, error) {
 	result := make(map[string][]BoundChannel)
 	if len(modelNames) == 0 {
