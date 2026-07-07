@@ -21,6 +21,8 @@ type Vendor struct {
 	CreatedTime int64          `json:"created_time" gorm:"bigint"`
 	UpdatedTime int64          `json:"updated_time" gorm:"bigint"`
 	DeletedAt   gorm.DeletedAt `json:"-" gorm:"index;uniqueIndex:uk_vendor_name_delete_at,priority:2"`
+
+	ModelCount int64 `json:"model_count,omitempty" gorm:"-"`
 }
 
 // Insert 创建新的供应商记录
@@ -85,4 +87,40 @@ func SearchVendors(keyword string, offset int, limit int) ([]*Vendor, int64, err
 		return nil, 0, err
 	}
 	return vendors, total, nil
+}
+
+// EnsureVendorByName creates or updates a vendor by name.
+func EnsureVendorByName(name string, description string, icon string) (*Vendor, bool, error) {
+	var v Vendor
+	err := DB.Where("name = ?", name).First(&v).Error
+	if err == nil {
+		updates := map[string]interface{}{}
+		if description != "" && v.Description != description {
+			updates["description"] = description
+		}
+		if icon != "" && v.Icon != icon {
+			updates["icon"] = icon
+		}
+		if v.Status != 1 {
+			updates["status"] = 1
+		}
+		if len(updates) > 0 {
+			updates["updated_time"] = common.GetTimestamp()
+			if err := DB.Model(&Vendor{}).Where("id = ?", v.Id).Updates(updates).Error; err != nil {
+				return nil, false, err
+			}
+			if err := DB.First(&v, v.Id).Error; err != nil {
+				return nil, false, err
+			}
+		}
+		return &v, false, nil
+	}
+	if err != gorm.ErrRecordNotFound {
+		return nil, false, err
+	}
+	v = Vendor{Name: name, Description: description, Icon: icon, Status: 1}
+	if err := v.Insert(); err != nil {
+		return nil, false, err
+	}
+	return &v, true, nil
 }
