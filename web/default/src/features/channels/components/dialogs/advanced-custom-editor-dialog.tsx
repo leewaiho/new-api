@@ -65,6 +65,7 @@ import {
   getAdvancedCustomAuthMode,
   getAdvancedCustomConverterOptions,
   getAdvancedCustomIncomingPathLabel,
+  ADVANCED_CUSTOM_RESPONSES_DROP_FIELDS,
   getAdvancedCustomTemplateConfig,
   getAdvancedCustomUpstreamPathPlaceholder,
   getDefaultAdvancedCustomIncomingPath,
@@ -665,6 +666,29 @@ function RouteEditor({
     })
   }
 
+  const responsesDropFields = useMemo(
+    () =>
+      (route.converter_options?.responses_drop_fields || []).map((f) =>
+        f.trim()
+      ),
+    [route.converter_options?.responses_drop_fields]
+  )
+
+  const setResponsesDropField = (field: string, enabled: boolean) => {
+    const current = (route.converter_options?.responses_drop_fields || []).map(
+      (f) => f.trim()
+    )
+    const next = enabled
+      ? Array.from(new Set([...current, field]))
+      : current.filter((f) => f !== field)
+    onChange({
+      converter_options: {
+        ...(route.converter_options || {}),
+        responses_drop_fields: next,
+      },
+    })
+  }
+
   const updateAuth = (
     field: Exclude<keyof NonNullable<AdvancedCustomRoute['auth']>, 'type'>,
     value: string
@@ -963,6 +987,41 @@ function RouteEditor({
                 </Select>
               </FieldBlock>
             ))}
+          </div>
+          <div
+            className={cn(
+              'grid gap-4 md:grid-cols-2 lg:items-end lg:gap-2 lg:border-t lg:pt-2',
+              routeEditorGridClassName
+            )}
+          >
+            <span className='hidden lg:block' aria-hidden='true' />
+            <FieldBlock
+              label={t('Drop Responses fields')}
+              className='lg:gap-1'
+              labelClassName='lg:text-xs'
+            >
+              <div className='grid grid-cols-2 gap-1 text-xs'>
+                {ADVANCED_CUSTOM_RESPONSES_DROP_FIELDS.map((field) => {
+                  const checked = responsesDropFields.includes(field)
+                  return (
+                    <label
+                      key={field}
+                      className='flex items-center gap-2 rounded border border-border/60 px-2 py-1'
+                    >
+                      <input
+                        type='checkbox'
+                        className='h-3.5 w-3.5 accent-current'
+                        checked={checked}
+                        onChange={(event) =>
+                          setResponsesDropField(field, event.target.checked)
+                        }
+                      />
+                      <span className='truncate'>{field}</span>
+                    </label>
+                  )
+                })}
+              </div>
+            </FieldBlock>
           </div>
         </>
       ) : null}

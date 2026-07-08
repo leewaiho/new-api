@@ -111,8 +111,9 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 	case dto.AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions:
 		mappings := map[string]dto.ResponsesToolNameMapping{}
 		chatOptions := relayconvert.ResponsesRequestToChatOptions{
-			ToolPolicies:     advancedCustomResponsesToolPolicies(a.route.ConverterOptions),
-			ToolNameMappings: mappings,
+			ToolPolicies:       advancedCustomResponsesToolPolicies(a.route.ConverterOptions),
+			ToolNameMappings:   mappings,
+			DropResponseFields: advancedCustomResponsesDropFields(a.route.ConverterOptions),
 		}
 		chatReq, err := service.ResponsesRequestToChatCompletionsRequestWithOptions(&request, chatOptions)
 		if err != nil {
@@ -530,6 +531,21 @@ func advancedCustomResponsesToolPolicies(options *dto.AdvancedCustomConverterOpt
 		ToolSearch:      relayconvert.ResponsesToolPolicyDrop,
 		ImageGeneration: relayconvert.ResponsesToolPolicyDrop,
 	}
+}
+
+func advancedCustomResponsesDropFields(options *dto.AdvancedCustomConverterOptions) map[string]struct{} {
+	if options == nil || len(options.ResponsesDropFields) == 0 {
+		return nil
+	}
+	out := make(map[string]struct{}, len(options.ResponsesDropFields))
+	for _, raw := range options.ResponsesDropFields {
+		field := strings.ToLower(strings.TrimSpace(raw))
+		if field == "" {
+			continue
+		}
+		out[field] = struct{}{}
+	}
+	return out
 }
 
 func mapAdvancedCustomResponsesToolPolicy(policy string) string {

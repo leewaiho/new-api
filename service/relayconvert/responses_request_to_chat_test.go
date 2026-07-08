@@ -1,6 +1,7 @@
 package relayconvert
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -365,4 +366,62 @@ func mustRawMessage(t *testing.T, value any) []byte {
 	raw, err := common.Marshal(value)
 	require.NoError(t, err)
 	return raw
+}
+
+func TestResponsesRequestToChatCompletionsRequestDropsResponseFieldsByName(t *testing.T) {
+	got, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
+		Model:                "gpt-test",
+		Input:                mustRawMessage(t, "hello"),
+		Metadata:             mustRawMessage(t, map[string]any{"codex": "trace"}),
+		Store:                mustRawMessage(t, true),
+		TopLogProbs:          intPtr(2),
+		ServiceTier:          "auto",
+		SafetyIdentifier:     mustRawMessage(t, "user-1"),
+		PromptCacheRetention: mustRawMessage(t, "24h"),
+		PromptCacheKey:       mustRawMessage(t, "cache-key"),
+		ParallelToolCalls:    mustRawMessage(t, true),
+		StreamOptions:        &dto.StreamOptions{IncludeUsage: true},
+		Reasoning:            &dto.Reasoning{Effort: "high"},
+	}, ResponsesRequestToChatOptions{
+		DropResponseFields: map[string]struct{}{
+			"metadata":               {},
+			"store":                  {},
+			"service_tier":           {},
+			"safety_identifier":      {},
+			"prompt_cache_retention": {},
+			"prompt_cache_key":       {},
+			"parallel_tool_calls":    {},
+			"stream_options":         {},
+			"reasoning":              {},
+			"top_logprobs":           {},
+		},
+	})
+	require.NoError(t, err)
+	assert.Nil(t, got.Metadata)
+	assert.Nil(t, got.Store)
+	assert.Nil(t, got.SafetyIdentifier)
+	assert.Nil(t, got.PromptCacheRetention)
+	assert.Empty(t, got.ServiceTier)
+	assert.Empty(t, got.PromptCacheKey)
+	assert.Nil(t, got.ParallelTooCalls)
+	assert.Nil(t, got.StreamOptions)
+	assert.Empty(t, got.ReasoningEffort)
+	assert.Nil(t, got.TopLogProbs)
+}
+
+func TestResponsesRequestToChatCompletionsRequestKeepsFieldsByDefault(t *testing.T) {
+	got, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
+		Model:          "gpt-test",
+		Input:          mustRawMessage(t, "hello"),
+		Metadata:       mustRawMessage(t, map[string]any{"codex": "trace"}),
+		Store:          mustRawMessage(t, false),
+		ServiceTier:    "auto",
+		PromptCacheKey: mustRawMessage(t, "cache-key"),
+		Reasoning:      &dto.Reasoning{Effort: "high"},
+	}, ResponsesRequestToChatOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, `{"codex":"trace"}`, string(got.Metadata))
+	assert.Equal(t, "auto", strings.Trim(string(got.ServiceTier), `"`))
+	assert.Equal(t, "cache-key", got.PromptCacheKey)
+	assert.Equal(t, "high", got.ReasoningEffort)
 }
