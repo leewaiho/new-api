@@ -521,6 +521,85 @@ func TestAdaptorSelectsDuplicateResponsesRoutesByModel(t *testing.T) {
 	assert.Equal(t, "sse", parsedURL.Query().Get("alt"))
 }
 
+func TestAdaptorResponsesToolsModeDefaultsToCompatFlatten(t *testing.T) {
+	adaptor := &Adaptor{}
+	info := advancedCustomRelayInfo(&dto.AdvancedCustomConfig{
+		Routes: []dto.AdvancedCustomRoute{
+			{
+				IncomingPath: "/v1/responses",
+				UpstreamPath: "/v1/chat/completions",
+				Converter:    relayconvert.ConverterOpenAIResponsesToOpenAIChat,
+			},
+		},
+	})
+	info.RelayMode = relayconstant.RelayModeResponses
+	info.RequestURLPath = "/v1/responses"
+
+	converted, err := adaptor.ConvertOpenAIResponsesRequest(advancedCustomGinContext("/v1/responses"), info, dto.OpenAIResponsesRequest{
+		Model: "gpt-test",
+		Input: mustAdvancedCustomRawMessage(t, "hello"),
+		Tools: mustAdvancedCustomRawMessage(t, []map[string]any{
+			{
+				"type": "namespace",
+				"name": "mcp__demo__",
+				"tools": []map[string]any{
+					{
+						"type":       "function",
+						"name":       "lookup_order",
+						"parameters": map[string]any{"type": "object"},
+					},
+				},
+			},
+			{"type": "web_search"},
+		}),
+	})
+	require.NoError(t, err)
+
+	chatReq, ok := converted.(*dto.GeneralOpenAIRequest)
+	require.True(t, ok)
+	require.Len(t, chatReq.Tools, 1)
+	assert.Equal(t, "function", chatReq.Tools[0].Type)
+	assert.Equal(t, "mcp__demo__lookup_order", chatReq.Tools[0].Function.Name)
+	assert.Equal(t, dto.ResponsesToolNameMapping{Namespace: "mcp__demo__", Name: "lookup_order"}, info.ResponsesToolNameMappings["mcp__demo__lookup_order"])
+}
+
+func TestAdaptorResponsesToolsPerToolPolicyPreservesNamespaceAndDropsWebSearch(t *testing.T) {
+	adaptor := &Adaptor{}
+	info := advancedCustomRelayInfo(&dto.AdvancedCustomConfig{
+		Routes: []dto.AdvancedCustomRoute{
+			{
+				IncomingPath: "/v1/responses",
+				UpstreamPath: "/v1/chat/completions",
+				Converter:    relayconvert.ConverterOpenAIResponsesToOpenAIChat,
+				ConverterOptions: &dto.AdvancedCustomConverterOptions{
+					ResponsesTools: &dto.AdvancedCustomResponsesToolsOptions{
+						Namespace: dto.AdvancedCustomResponsesToolPolicyPreserve,
+						WebSearch: dto.AdvancedCustomResponsesToolPolicyDrop,
+					},
+				},
+			},
+		},
+	})
+	info.RelayMode = relayconstant.RelayModeResponses
+	info.RequestURLPath = "/v1/responses"
+	c := advancedCustomGinContext("/v1/responses")
+
+	converted, err := adaptor.ConvertOpenAIResponsesRequest(c, info, dto.OpenAIResponsesRequest{
+		Model: "gpt-test",
+		Input: mustAdvancedCustomRawMessage(t, "hello"),
+		Tools: mustAdvancedCustomRawMessage(t, []map[string]any{
+			{"type": "namespace", "name": "mcp__demo__", "tools": []map[string]any{{"type": "function", "name": "lookup"}}},
+			{"type": "web_search"},
+		}),
+	})
+	require.NoError(t, err)
+
+	chatReq, ok := converted.(*dto.GeneralOpenAIRequest)
+	require.True(t, ok)
+	require.Len(t, chatReq.Tools, 1)
+	assert.Equal(t, "namespace", chatReq.Tools[0].Type)
+}
+
 func TestAdaptorResponsesToGeminiUsesResponsesBridge(t *testing.T) {
 	adaptor := &Adaptor{}
 	info := advancedCustomRelayInfo(&dto.AdvancedCustomConfig{
@@ -786,7 +865,8 @@ func TestAdaptorConvertsGeminiRequestToOpenAIChatUpstream(t *testing.T) {
 	assert.Equal(t, "user", chatReq.Messages[0].Role)
 }
 
-func TestAdaptorResponsesToolsModePreserveDisablesNamespaceFlattening(t *testing.T) {
+func TestAdaptorResponsesToolsModePreserveKeepsResponsesTools(t *testing.T) {
+	adaptor := &Adaptor{}
 	info := advancedCustomRelayInfo(&dto.AdvancedCustomConfig{Routes: []dto.AdvancedCustomRoute{{
 		IncomingPath: "/v1/responses",
 		UpstreamPath: "/v1/chat/completions",
@@ -798,16 +878,35 @@ func TestAdaptorResponsesToolsModePreserveDisablesNamespaceFlattening(t *testing
 	info.RelayMode = relayconstant.RelayModeResponses
 	info.RequestURLPath = "/v1/responses"
 
-	_, err := (&Adaptor{}).ConvertOpenAIResponsesRequest(
+	converted, err := adaptor.ConvertOpenAIResponsesRequest(
 		advancedCustomGinContext("/v1/responses"),
 		info,
 		dto.OpenAIResponsesRequest{
 			Model: "gpt-test",
 			Input: mustAdvancedCustomRawMessage(t, "hello"),
+			Tools: mustAdvancedCustomRawMessage(t, []map[string]any{
+				{
+					"type": "namespace",
+					"name": "mcp__demo__",
+					"tools": []map[string]any{
+						{
+							"type":       "function",
+							"name":       "lookup_order",
+							"parameters": map[string]any{"type": "object"},
+						},
+					},
+				},
+			}),
 		},
 	)
 	require.NoError(t, err)
-	assert.False(t, info.FlattenResponsesNamespaceTools)
+
+	chatReq, ok := converted.(*dto.GeneralOpenAIRequest)
+	require.True(t, ok)
+	require.Len(t, chatReq.Tools, 1)
+	assert.Equal(t, "namespace", chatReq.Tools[0].Type)
+	assert.Contains(t, string(chatReq.Tools[0].Custom), `"type":"namespace"`)
+	assert.Empty(t, info.ResponsesToolNameMappings)
 }
 
 func advancedCustomRelayInfo(config *dto.AdvancedCustomConfig) *relaycommon.RelayInfo {

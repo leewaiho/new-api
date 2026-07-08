@@ -24,12 +24,29 @@ const (
 	ResponsesInputTypeCustomToolOutput   = responsesInputTypeCustomToolOutput
 )
 
+const (
+	ResponsesToolPolicyPreserve = "preserve"
+	ResponsesToolPolicyFlatten  = "flatten"
+	ResponsesToolPolicyDrop     = "drop"
+	ResponsesToolPolicyReject   = "reject"
+)
+
 // ResponsesRequestToChatOptions controls lossy compatibility behavior needed
 // when a Responses request must be sent to a Chat Completions-only upstream.
 type ResponsesRequestToChatOptions struct {
+	// Deprecated compatibility flags. Use ToolPolicies for per-tool behavior.
 	FlattenNamespaceTools bool
 	DropUnsupportedTools  bool
+	ToolPolicies          ResponsesToolPolicies
 	ToolNameMappings      map[string]dto.ResponsesToolNameMapping
+}
+
+type ResponsesToolPolicies struct {
+	Namespace       string
+	Custom          string
+	WebSearch       string
+	ToolSearch      string
+	ImageGeneration string
 }
 
 func ResponsesRequestToChatCompletionsRequest(req *dto.OpenAIResponsesRequest) (*dto.GeneralOpenAIRequest, error) {
@@ -340,6 +357,7 @@ func responsesRequestToolsToChat(raw json.RawMessage, options ResponsesRequestTo
 		return nil, fmt.Errorf("invalid tools: %w", err)
 	}
 
+	policies := normalizeResponsesToolPolicies(options)
 	out := make([]dto.ToolCallRequest, 0, len(tools))
 	for _, tool := range tools {
 		toolType := strings.TrimSpace(common.Interface2String(tool["type"]))
@@ -347,34 +365,100 @@ func responsesRequestToolsToChat(raw json.RawMessage, options ResponsesRequestTo
 		case "function":
 			out = append(out, responsesFunctionToolToChat(tool, ""))
 		case "namespace":
-			if !options.FlattenNamespaceTools {
-				if options.DropUnsupportedTools {
-					continue
+			switch policies.Namespace {
+			case ResponsesToolPolicyDrop:
+				continue
+			case ResponsesToolPolicyReject:
+				return nil, fmt.Errorf("responses tool %q is not supported by this converter route", toolType)
+			case ResponsesToolPolicyFlatten:
+				flattened, err := responsesNamespaceToolToChat(tool, options.ToolNameMappings)
+				if err != nil {
+					return nil, err
 				}
+				out = append(out, flattened...)
+			default:
 				chatTool, err := responsesRawToolToChat(toolType, tool)
 				if err != nil {
 					return nil, err
 				}
 				out = append(out, chatTool)
-				continue
 			}
-			flattened, err := responsesNamespaceToolToChat(tool, options.ToolNameMappings)
-			if err != nil {
-				return nil, err
-			}
-			out = append(out, flattened...)
 		default:
-			if options.DropUnsupportedTools {
+			policy := responsesToolPolicyForType(policies, toolType)
+			switch policy {
+			case ResponsesToolPolicyDrop:
 				continue
+			case ResponsesToolPolicyReject:
+				return nil, fmt.Errorf("responses tool %q is not supported by this converter route", toolType)
+			default:
+				chatTool, err := responsesRawToolToChat(toolType, tool)
+				if err != nil {
+					return nil, err
+				}
+				out = append(out, chatTool)
 			}
-			chatTool, err := responsesRawToolToChat(toolType, tool)
-			if err != nil {
-				return nil, err
-			}
-			out = append(out, chatTool)
 		}
 	}
 	return out, nil
+}
+
+func normalizeResponsesToolPolicies(options ResponsesRequestToChatOptions) ResponsesToolPolicies {
+	if !responsesToolPoliciesEmpty(options.ToolPolicies) {
+		return ResponsesToolPolicies{
+			Namespace:       defaultResponseToolPolicy(options.ToolPolicies.Namespace, ResponsesToolPolicyFlatten),
+			Custom:          defaultResponseToolPolicy(options.ToolPolicies.Custom, ResponsesToolPolicyDrop),
+			WebSearch:       defaultResponseToolPolicy(options.ToolPolicies.WebSearch, ResponsesToolPolicyDrop),
+			ToolSearch:      defaultResponseToolPolicy(options.ToolPolicies.ToolSearch, ResponsesToolPolicyDrop),
+			ImageGeneration: defaultResponseToolPolicy(options.ToolPolicies.ImageGeneration, ResponsesToolPolicyDrop),
+		}
+	}
+	if options.FlattenNamespaceTools || options.DropUnsupportedTools {
+		policies := ResponsesToolPolicies{Namespace: ResponsesToolPolicyPreserve}
+		if options.FlattenNamespaceTools {
+			policies.Namespace = ResponsesToolPolicyFlatten
+		}
+		if options.DropUnsupportedTools {
+			policies.Custom = ResponsesToolPolicyDrop
+			policies.WebSearch = ResponsesToolPolicyDrop
+			policies.ToolSearch = ResponsesToolPolicyDrop
+			policies.ImageGeneration = ResponsesToolPolicyDrop
+		}
+		return policies
+	}
+	return ResponsesToolPolicies{
+		Namespace:       ResponsesToolPolicyPreserve,
+		Custom:          ResponsesToolPolicyPreserve,
+		WebSearch:       ResponsesToolPolicyPreserve,
+		ToolSearch:      ResponsesToolPolicyPreserve,
+		ImageGeneration: ResponsesToolPolicyPreserve,
+	}
+}
+
+func responsesToolPoliciesEmpty(policies ResponsesToolPolicies) bool {
+	return policies.Namespace == "" && policies.Custom == "" && policies.WebSearch == "" && policies.ToolSearch == "" && policies.ImageGeneration == ""
+}
+
+func defaultResponseToolPolicy(policy string, fallback string) string {
+	policy = strings.TrimSpace(policy)
+	if policy == "" {
+		return fallback
+	}
+	return policy
+}
+
+func responsesToolPolicyForType(policies ResponsesToolPolicies, toolType string) string {
+	switch toolType {
+	case "custom":
+		return policies.Custom
+	case "web_search":
+		return policies.WebSearch
+	case "tool_search":
+		return policies.ToolSearch
+	case "image_generation":
+		return policies.ImageGeneration
+	default:
+		return ResponsesToolPolicyPreserve
+	}
 }
 
 func responsesFunctionToolToChat(tool map[string]any, namePrefix string) dto.ToolCallRequest {
