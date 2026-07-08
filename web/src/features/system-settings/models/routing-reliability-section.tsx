@@ -73,6 +73,7 @@ const routingReliabilitySchema = z
     AutomaticDisableChannelEnabled: z.boolean(),
     AutomaticEnableChannelEnabled: z.boolean(),
     AutomaticDisableKeywords: z.string(),
+    AutomaticDisableIgnoreKeywords: z.string(),
     AutomaticDisableStatusCodes: z.string(),
     AutomaticRetryStatusCodes: z.string(),
     monitor_setting: z.object({
@@ -122,6 +123,7 @@ type RoutingReliabilitySectionProps = {
     AutomaticDisableChannelEnabled: boolean
     AutomaticEnableChannelEnabled: boolean
     AutomaticDisableKeywords: string
+    AutomaticDisableIgnoreKeywords: string
     AutomaticDisableStatusCodes: string
     AutomaticRetryStatusCodes: string
     'monitor_setting.auto_test_channel_enabled': boolean
@@ -140,6 +142,7 @@ type NormalizedRoutingReliabilityValues = {
   AutomaticDisableChannelEnabled: boolean
   AutomaticEnableChannelEnabled: boolean
   AutomaticDisableKeywords: string
+  AutomaticDisableIgnoreKeywords: string
   AutomaticDisableStatusCodes: string
   AutomaticRetryStatusCodes: string
   'monitor_setting.auto_test_channel_enabled': boolean
@@ -160,6 +163,9 @@ const buildFormDefaults = (
   AutomaticEnableChannelEnabled: defaults.AutomaticEnableChannelEnabled,
   AutomaticDisableKeywords: normalizeLineEndings(
     defaults.AutomaticDisableKeywords ?? ''
+  ),
+  AutomaticDisableIgnoreKeywords: normalizeLineEndings(
+    defaults.AutomaticDisableIgnoreKeywords ?? ''
   ),
   AutomaticDisableStatusCodes: defaults.AutomaticDisableStatusCodes ?? '',
   AutomaticRetryStatusCodes: defaults.AutomaticRetryStatusCodes ?? '',
@@ -183,6 +189,9 @@ const normalizeDefaults = (
   AutomaticEnableChannelEnabled: defaults.AutomaticEnableChannelEnabled,
   AutomaticDisableKeywords: normalizeLineEndings(
     defaults.AutomaticDisableKeywords ?? ''
+  ),
+  AutomaticDisableIgnoreKeywords: normalizeLineEndings(
+    defaults.AutomaticDisableIgnoreKeywords ?? ''
   ),
   AutomaticDisableStatusCodes: parseHttpStatusCodeRules(
     defaults.AutomaticDisableStatusCodes ?? ''
@@ -208,6 +217,9 @@ const normalizeFormValues = (
   AutomaticEnableChannelEnabled: values.AutomaticEnableChannelEnabled,
   AutomaticDisableKeywords: normalizeLineEndings(
     values.AutomaticDisableKeywords
+  ),
+  AutomaticDisableIgnoreKeywords: normalizeLineEndings(
+    values.AutomaticDisableIgnoreKeywords
   ),
   AutomaticDisableStatusCodes: parseHttpStatusCodeRules(
     values.AutomaticDisableStatusCodes
@@ -578,6 +590,30 @@ export function RoutingReliabilitySection({
                     <FormDescription>
                       {t(
                         'If an upstream error contains any of these keywords (case insensitive), the channel will be disabled automatically.'
+                      )}
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name='AutomaticDisableIgnoreKeywords'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Auto-disable ignore keywords')}</FormLabel>
+                    <FormControl>
+                      <Textarea
+                        rows={4}
+                        placeholder={t('one keyword per line')}
+                        {...field}
+                        onChange={(event) => field.onChange(event.target.value)}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      {t(
+                        'If an upstream error contains any of these keywords (case insensitive), the channel will not be disabled automatically even when its status code matches the auto-disable rules.'
                       )}
                     </FormDescription>
                     <FormMessage />
