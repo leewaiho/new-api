@@ -125,6 +125,7 @@ export interface AdvancedCustomRoute {
 export interface AdvancedCustomConverterOptions {
   responses_tools_mode?: AdvancedCustomResponsesToolsMode
   responses_tools?: AdvancedCustomResponsesToolsOptions
+  responses_drop_fields?: string[]
 }
 
 export interface AdvancedCustomResponsesToolsOptions {

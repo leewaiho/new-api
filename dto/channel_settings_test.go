@@ -499,7 +499,7 @@ func TestAdvancedCustomValidateResponsesToolPolicies(t *testing.T) {
 			{
 				IncomingPath: "/v1/responses",
 				UpstreamPath: "/v1/chat/completions",
-				Converter:    AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions,
+				Converter:    advancedCustomConverterOpenAIResponsesToOpenAIChat,
 				ConverterOptions: &AdvancedCustomConverterOptions{
 					ResponsesTools: &AdvancedCustomResponsesToolsOptions{
 						Namespace: AdvancedCustomResponsesToolPolicyPreserve,
@@ -517,7 +517,7 @@ func TestAdvancedCustomValidateResponsesToolPolicies(t *testing.T) {
 			{
 				IncomingPath: "/v1/responses",
 				UpstreamPath: "/v1/chat/completions",
-				Converter:    AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions,
+				Converter:    advancedCustomConverterOpenAIResponsesToOpenAIChat,
 				ConverterOptions: &AdvancedCustomConverterOptions{
 					ResponsesTools: &AdvancedCustomResponsesToolsOptions{WebSearch: AdvancedCustomResponsesToolPolicyFlatten},
 				},
@@ -525,4 +525,19 @@ func TestAdvancedCustomValidateResponsesToolPolicies(t *testing.T) {
 		},
 	}
 	require.ErrorContains(t, flattenNonNamespace.Validate(), "responses_tools.web_search is invalid")
+}
+
+func TestAdvancedCustomValidateResponsesDropFields(t *testing.T) {
+	valid := &AdvancedCustomConfig{Routes: []AdvancedCustomRoute{{
+		IncomingPath: "/v1/responses",
+		UpstreamPath: "/v1/chat/completions",
+		Converter:    advancedCustomConverterOpenAIResponsesToOpenAIChat,
+		ConverterOptions: &AdvancedCustomConverterOptions{
+			ResponsesDropFields: []string{"metadata", "store"},
+		},
+	}}}
+	require.NoError(t, valid.Validate())
+
+	valid.Routes[0].ConverterOptions.ResponsesDropFields = []string{"unsupported"}
+	require.ErrorContains(t, valid.Validate(), "responses_drop_fields contains unsupported field")
 }

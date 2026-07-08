@@ -40,6 +40,24 @@ func ResponsesRequestToChatCompletionsRequest(req *dto.OpenAIResponsesRequest) (
 	return oairesponses.ResponsesRequestToChatCompletionsRequest(req)
 }
 
+// ResponsesRequestToChatOptions configures Responses-to-Chat compatibility.
+type ResponsesRequestToChatOptions = oairesponses.ResponsesRequestToChatOptions
+
+// ResponsesToolPolicies selects how each Responses tool type is represented to
+// a Chat Completions-only upstream.
+type ResponsesToolPolicies = oairesponses.ResponsesToolPolicies
+
+const (
+	ResponsesToolPolicyPreserve = oairesponses.ResponsesToolPolicyPreserve
+	ResponsesToolPolicyFlatten  = oairesponses.ResponsesToolPolicyFlatten
+	ResponsesToolPolicyDrop     = oairesponses.ResponsesToolPolicyDrop
+	ResponsesToolPolicyReject   = oairesponses.ResponsesToolPolicyReject
+)
+
+func ResponsesRequestToChatCompletionsRequestWithOptions(req *dto.OpenAIResponsesRequest, options ResponsesRequestToChatOptions) (*dto.GeneralOpenAIRequest, error) {
+	return oairesponses.ResponsesRequestToChatCompletionsRequestWithOptions(req, options)
+}
+
 func OpenAIResponsesRequestToClaudeMessages(c *gin.Context, req *dto.OpenAIResponsesRequest) (*dto.ClaudeRequest, error) {
 	return oairesponses.OpenAIResponsesRequestToClaudeMessages(c, req)
 }
