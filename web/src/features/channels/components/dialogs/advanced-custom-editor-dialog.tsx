@@ -42,11 +42,6 @@ import { Label } from '@/components/ui/label'
 import {
   Popover,
   PopoverContent,
-  PopoverTrigger,
-} from '@/components/ui/popover'
-import {
-  Popover,
-  PopoverContent,
   PopoverDescription,
   PopoverHeader,
   PopoverTitle,
@@ -76,6 +71,7 @@ import {
   ADVANCED_CUSTOM_INCOMING_PATH_OPTIONS,
   ADVANCED_CUSTOM_MODEL_LIST_LABEL,
   ADVANCED_CUSTOM_MODEL_LIST_PATH,
+  ADVANCED_CUSTOM_RESPONSES_TOOL_POLICY_OPTIONS,
   ADVANCED_CUSTOM_RESPONSES_TOOLS_MODE_OPTIONS,
   ADVANCED_CUSTOM_TEMPLATE_OPTIONS,
   type AdvancedCustomAuthMode,
@@ -103,7 +99,9 @@ import type {
   AdvancedCustomAuthType,
   AdvancedCustomConfig,
   AdvancedCustomConverter,
+  AdvancedCustomResponsesToolPolicy,
   AdvancedCustomResponsesToolsMode,
+  AdvancedCustomResponsesToolsOptions,
   AdvancedCustomRoute,
 } from '../../types'
 
@@ -959,6 +957,37 @@ function RouteGroupEditor({
   )
 }
 
+const responseToolPolicyFields: Array<{
+  key: keyof AdvancedCustomResponsesToolsOptions
+  label: string
+  allowFlatten: boolean
+}> = [
+  { key: 'namespace', label: 'Namespace', allowFlatten: true },
+  { key: 'custom', label: 'Custom', allowFlatten: false },
+  { key: 'web_search', label: 'Web search', allowFlatten: false },
+  { key: 'tool_search', label: 'Tool search', allowFlatten: false },
+  { key: 'image_generation', label: 'Image generation', allowFlatten: false },
+]
+
+function responsesToolsFromMode(mode: AdvancedCustomResponsesToolsMode) {
+  if (mode === 'preserve') {
+    return {
+      namespace: 'preserve' as const,
+      custom: 'preserve' as const,
+      web_search: 'preserve' as const,
+      tool_search: 'preserve' as const,
+      image_generation: 'preserve' as const,
+    }
+  }
+  return {
+    namespace: 'flatten' as const,
+    custom: 'drop' as const,
+    web_search: 'drop' as const,
+    tool_search: 'drop' as const,
+    image_generation: 'drop' as const,
+  }
+}
+
 function RouteEditor({
   route,
   index,
@@ -1009,6 +1038,27 @@ function RouteEditor({
     ADVANCED_CUSTOM_RESPONSES_TOOLS_MODE_OPTIONS,
     responsesToolsMode
   )
+  const fallbackResponseToolPolicies = responsesToolsFromMode(responsesToolsMode)
+  const responseToolPolicies: Required<AdvancedCustomResponsesToolsOptions> = {
+    namespace:
+      route.converter_options?.responses_tools?.namespace ??
+      fallbackResponseToolPolicies.namespace,
+    custom:
+      route.converter_options?.responses_tools?.custom ??
+      fallbackResponseToolPolicies.custom,
+    web_search:
+      route.converter_options?.responses_tools?.web_search ??
+      fallbackResponseToolPolicies.web_search,
+    tool_search:
+      route.converter_options?.responses_tools?.tool_search ??
+      fallbackResponseToolPolicies.tool_search,
+    image_generation:
+      route.converter_options?.responses_tools?.image_generation ??
+      fallbackResponseToolPolicies.image_generation,
+  }
+  const hasResponsesToolOptions =
+    Boolean(route.converter_options?.responses_tools_mode) ||
+    Boolean(route.converter_options?.responses_tools)
   const isNativeConverter = converter === 'none'
   const ConverterVisualIcon = isNativeConverter ? ArrowRight : Shuffle
   const modelsInputValue = route.models?.join(', ') || ''
@@ -1031,9 +1081,12 @@ function RouteEditor({
       auth: defaults.auth,
       converter_options:
         nextConverter === 'openai_responses_to_openai_chat_completions'
-          ? route.converter_options?.responses_tools_mode
+          ? hasResponsesToolOptions
             ? route.converter_options
-            : { responses_tools_mode: 'compat_flatten' }
+            : {
+                responses_tools_mode: 'compat_flatten',
+                responses_tools: responsesToolsFromMode('compat_flatten'),
+              }
           : undefined,
     })
   }
@@ -1057,6 +1110,22 @@ function RouteEditor({
       converter_options: {
         ...(route.converter_options || {}),
         responses_tools_mode: mode,
+        responses_tools: responsesToolsFromMode(mode),
+      },
+    })
+  }
+
+  const setResponseToolPolicy = (
+    key: keyof AdvancedCustomResponsesToolsOptions,
+    policy: AdvancedCustomResponsesToolPolicy
+  ) => {
+    onChange({
+      converter_options: {
+        ...(route.converter_options || {}),
+        responses_tools: {
+          ...responseToolPolicies,
+          [key]: policy,
+        },
       },
     })
   }
@@ -1392,6 +1461,49 @@ function RouteEditor({
             <span className='hidden lg:block' aria-hidden='true' />
             <span className='hidden lg:block' aria-hidden='true' />
             <span className='hidden lg:block' aria-hidden='true' />
+          </div>
+          <div
+            className={cn(
+              'grid gap-4 md:grid-cols-2 lg:items-end lg:gap-2 lg:border-t lg:pt-2',
+              routeEditorGridClassName
+            )}
+          >
+            <span className='hidden lg:block' aria-hidden='true' />
+            {responseToolPolicyFields.map((field) => (
+              <FieldBlock
+                key={field.key}
+                label={t(field.label)}
+                className='lg:gap-1'
+                labelClassName='lg:text-xs'
+              >
+                <Select
+                  value={responseToolPolicies[field.key]}
+                  onValueChange={(value) =>
+                    setResponseToolPolicy(
+                      field.key,
+                      value as AdvancedCustomResponsesToolPolicy
+                    )
+                  }
+                >
+                  <SelectTrigger className='w-full max-w-full lg:h-8'>
+                    <SelectValue className='min-w-0 truncate'>
+                      {t(responseToolPolicies[field.key])}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent alignItemWithTrigger={false}>
+                    <SelectGroup>
+                      {ADVANCED_CUSTOM_RESPONSES_TOOL_POLICY_OPTIONS.filter(
+                        (option) => field.allowFlatten || option.value !== 'flatten'
+                      ).map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {t(option.label)}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </FieldBlock>
+            ))}
           </div>
         </>
       ) : null}

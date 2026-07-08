@@ -106,6 +106,13 @@ export const ADVANCED_CUSTOM_RESPONSES_TOOLS_MODE_OPTIONS: Array<{
   },
 ]
 
+export const ADVANCED_CUSTOM_RESPONSES_TOOL_POLICY_OPTIONS = [
+  { value: 'preserve', label: 'Preserve' },
+  { value: 'flatten', label: 'Flatten' },
+  { value: 'drop', label: 'Drop' },
+  { value: 'reject', label: 'Reject' },
+] as const
+
 export type AdvancedCustomIncomingPathOption = {
   value: string
   /** Official API route name. Render verbatim instead of passing it to i18n. */
