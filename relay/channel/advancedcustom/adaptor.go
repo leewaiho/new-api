@@ -124,7 +124,11 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 	case relayconvert.ConverterNone:
 		return a.convertOpenAICompatibleResponsesRequest(c, info, request)
 	case relayconvert.ConverterOpenAIResponsesToOpenAIChat:
-		info.FlattenResponsesNamespaceTools = true
+		responsesToolsMode := dto.AdvancedCustomResponsesToolsModeCompatFlatten
+		if a.route.ConverterOptions != nil && a.route.ConverterOptions.ResponsesToolsMode != "" {
+			responsesToolsMode = a.route.ConverterOptions.ResponsesToolsMode
+		}
+		info.FlattenResponsesNamespaceTools = responsesToolsMode == dto.AdvancedCustomResponsesToolsModeCompatFlatten
 		result, err := service.ConvertRequestByID(c, info, converter, request)
 		if err != nil {
 			return nil, err

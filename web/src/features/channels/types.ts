@@ -119,7 +119,14 @@ export interface AdvancedCustomRoute {
   converter?: AdvancedCustomConverter
   models?: string[]
   auth?: AdvancedCustomRouteAuth
+  converter_options?: AdvancedCustomConverterOptions
 }
+
+export interface AdvancedCustomConverterOptions {
+  responses_tools_mode?: AdvancedCustomResponsesToolsMode
+}
+
+export type AdvancedCustomResponsesToolsMode = 'compat_flatten' | 'preserve'
 
 export interface AdvancedCustomRouteAuth {
   type?: AdvancedCustomAuthType

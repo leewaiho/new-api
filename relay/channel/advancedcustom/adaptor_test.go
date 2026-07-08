@@ -786,6 +786,30 @@ func TestAdaptorConvertsGeminiRequestToOpenAIChatUpstream(t *testing.T) {
 	assert.Equal(t, "user", chatReq.Messages[0].Role)
 }
 
+func TestAdaptorResponsesToolsModePreserveDisablesNamespaceFlattening(t *testing.T) {
+	info := advancedCustomRelayInfo(&dto.AdvancedCustomConfig{Routes: []dto.AdvancedCustomRoute{{
+		IncomingPath: "/v1/responses",
+		UpstreamPath: "/v1/chat/completions",
+		Converter:    relayconvert.ConverterOpenAIResponsesToOpenAIChat,
+		ConverterOptions: &dto.AdvancedCustomConverterOptions{
+			ResponsesToolsMode: dto.AdvancedCustomResponsesToolsModePreserve,
+		},
+	}}})
+	info.RelayMode = relayconstant.RelayModeResponses
+	info.RequestURLPath = "/v1/responses"
+
+	_, err := (&Adaptor{}).ConvertOpenAIResponsesRequest(
+		advancedCustomGinContext("/v1/responses"),
+		info,
+		dto.OpenAIResponsesRequest{
+			Model: "gpt-test",
+			Input: mustAdvancedCustomRawMessage(t, "hello"),
+		},
+	)
+	require.NoError(t, err)
+	assert.False(t, info.FlattenResponsesNamespaceTools)
+}
+
 func advancedCustomRelayInfo(config *dto.AdvancedCustomConfig) *relaycommon.RelayInfo {
 	return &relaycommon.RelayInfo{
 		RelayFormat:     types.RelayFormatOpenAI,

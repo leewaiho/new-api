@@ -76,6 +76,7 @@ import {
   ADVANCED_CUSTOM_INCOMING_PATH_OPTIONS,
   ADVANCED_CUSTOM_MODEL_LIST_LABEL,
   ADVANCED_CUSTOM_MODEL_LIST_PATH,
+  ADVANCED_CUSTOM_RESPONSES_TOOLS_MODE_OPTIONS,
   ADVANCED_CUSTOM_TEMPLATE_OPTIONS,
   type AdvancedCustomAuthMode,
   buildAdvancedCustomAuth,
@@ -102,6 +103,7 @@ import type {
   AdvancedCustomAuthType,
   AdvancedCustomConfig,
   AdvancedCustomConverter,
+  AdvancedCustomResponsesToolsMode,
   AdvancedCustomRoute,
 } from '../../types'
 
@@ -1001,6 +1003,12 @@ function RouteEditor({
       (option) => option.value === converter
     )?.triggerLabel || converterLabel
   const authLabel = getOptionLabel(ADVANCED_CUSTOM_AUTH_MODE_OPTIONS, authMode)
+  const responsesToolsMode: AdvancedCustomResponsesToolsMode =
+    route.converter_options?.responses_tools_mode || 'compat_flatten'
+  const responsesToolsModeLabel = getOptionLabel(
+    ADVANCED_CUSTOM_RESPONSES_TOOLS_MODE_OPTIONS,
+    responsesToolsMode
+  )
   const isNativeConverter = converter === 'none'
   const ConverterVisualIcon = isNativeConverter ? ArrowRight : Shuffle
   const modelsInputValue = route.models?.join(', ') || ''
@@ -1021,6 +1029,12 @@ function RouteEditor({
       incoming_path: nextIncomingPath,
       upstream_path: defaults.upstream_path,
       auth: defaults.auth,
+      converter_options:
+        nextConverter === 'openai_responses_to_openai_chat_completions'
+          ? route.converter_options?.responses_tools_mode
+            ? route.converter_options
+            : { responses_tools_mode: 'compat_flatten' }
+          : undefined,
     })
   }
 
@@ -1036,6 +1050,15 @@ function RouteEditor({
 
   const normalizeModelsInput = (value: string) => {
     onChange({ models: parseAdvancedCustomRouteModels(value) })
+  }
+
+  const setResponsesToolsMode = (mode: AdvancedCustomResponsesToolsMode) => {
+    onChange({
+      converter_options: {
+        ...(route.converter_options || {}),
+        responses_tools_mode: mode,
+      },
+    })
   }
 
   const updateAuth = (
@@ -1312,6 +1335,65 @@ function RouteEditor({
 
       {errorMessage ? (
         <p className='text-destructive text-xs'>{t(errorMessage)}</p>
+      ) : null}
+
+      {converter === 'openai_responses_to_openai_chat_completions' ? (
+        <>
+          <Separator className='lg:hidden' />
+          <div
+            className={cn(
+              'grid gap-4 md:grid-cols-2 lg:items-end lg:gap-2 lg:border-t lg:pt-2',
+              routeEditorGridClassName
+            )}
+          >
+            <span className='hidden lg:block' aria-hidden='true' />
+            <FieldBlock
+              label={t('Responses tools')}
+              className='lg:gap-1'
+              labelClassName='lg:text-xs'
+            >
+              <Select
+                value={responsesToolsMode}
+                onValueChange={(value) =>
+                  setResponsesToolsMode(value as AdvancedCustomResponsesToolsMode)
+                }
+              >
+                <SelectTrigger className='w-full max-w-full lg:h-8'>
+                  <SelectValue className='min-w-0 truncate'>
+                    {t(responsesToolsModeLabel)}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent
+                  alignItemWithTrigger={false}
+                  className={longSelectContentClass}
+                >
+                  <SelectGroup>
+                    {ADVANCED_CUSTOM_RESPONSES_TOOLS_MODE_OPTIONS.map(
+                      (option) => (
+                        <SelectItem
+                          key={option.value}
+                          value={option.value}
+                          className={longSelectItemClass}
+                        >
+                          <div className='flex min-w-0 flex-col gap-1 leading-snug whitespace-normal'>
+                            <span>{t(option.label)}</span>
+                            <span className='text-muted-foreground text-xs'>
+                              {t(option.description)}
+                            </span>
+                          </div>
+                        </SelectItem>
+                      )
+                    )}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </FieldBlock>
+            <span className='hidden lg:block' aria-hidden='true' />
+            <span className='hidden lg:block' aria-hidden='true' />
+            <span className='hidden lg:block' aria-hidden='true' />
+            <span className='hidden lg:block' aria-hidden='true' />
+          </div>
+        </>
       ) : null}
 
       {authMode === 'header' || authMode === 'query' ? (
