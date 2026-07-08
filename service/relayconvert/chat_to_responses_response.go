@@ -154,6 +154,7 @@ type ChatToResponsesStreamState struct {
 	outputOrder       []chatToResponsesOutputRef
 	text              strings.Builder
 	reasoning         strings.Builder
+	toolNameMappings  map[string]dto.ResponsesToolNameMapping
 }
 
 type chatToResponsesStreamTool struct {
@@ -181,6 +182,10 @@ func NewChatToResponsesStreamState(id string, model string) *ChatToResponsesStre
 		reasoningIndex:  -1,
 		toolsByIndex:    make(map[int]*chatToResponsesStreamTool),
 	}
+}
+
+func (s *ChatToResponsesStreamState) SetToolNameMappings(mappings map[string]dto.ResponsesToolNameMapping) {
+	s.toolNameMappings = mappings
 }
 
 func ChatCompletionsStreamChunkToResponsesEvents(chunk *dto.ChatCompletionsStreamResponse, state *ChatToResponsesStreamState) ([]ChatToResponsesStreamEvent, error) {
@@ -332,14 +337,7 @@ func (s *ChatToResponsesStreamState) appendToolCallDelta(toolCall dto.ToolCallRe
 			Type:        responsesEventOutputItemAdded,
 			OutputIndex: intPtr(tool.OutputIndex),
 			ItemID:      tool.ID,
-			Item: &dto.ResponsesOutput{
-				Type:      responsesOutputTypeFunctionCall,
-				ID:        tool.ID,
-				Status:    "in_progress",
-				CallId:    tool.ID,
-				Name:      tool.Name,
-				Arguments: []byte(`""`),
-			},
+			Item:        s.toolOutput(tool, "in_progress"),
 		}))
 	}
 	if strings.TrimSpace(toolCall.ID) != "" {
@@ -525,7 +523,7 @@ func (s *ChatToResponsesStreamState) reasoningOutput(status string) *dto.Respons
 }
 
 func (s *ChatToResponsesStreamState) toolOutput(tool *chatToResponsesStreamTool, status string) *dto.ResponsesOutput {
-	return &dto.ResponsesOutput{
+	output := &dto.ResponsesOutput{
 		Type:      responsesOutputTypeFunctionCall,
 		ID:        tool.ID,
 		Status:    status,
@@ -533,6 +531,11 @@ func (s *ChatToResponsesStreamState) toolOutput(tool *chatToResponsesStreamTool,
 		Name:      tool.Name,
 		Arguments: chatArgumentsRawMessage(tool.Arguments.String()),
 	}
+	if mapping, ok := s.toolNameMappings[tool.Name]; ok {
+		output.Namespace = mapping.Namespace
+		output.Name = mapping.Name
+	}
+	return output
 }
 
 func responseOutputStatus(resp *dto.OpenAIResponsesResponse) string {
@@ -564,6 +567,26 @@ func chatToolCallToResponsesOutput(toolCall dto.ToolCallRequest, responseID stri
 		CallId:    callID,
 		Arguments: toolCall.Custom,
 	}, nil
+}
+
+// ApplyResponsesToolNameMappings restores Responses namespace tool identity for
+// function calls that were flattened before being sent to a Chat Completions upstream.
+func ApplyResponsesToolNameMappings(resp *dto.OpenAIResponsesResponse, mappings map[string]dto.ResponsesToolNameMapping) {
+	if resp == nil || len(mappings) == 0 {
+		return
+	}
+	for i := range resp.Output {
+		output := &resp.Output[i]
+		if output.Type != responsesOutputTypeFunctionCall {
+			continue
+		}
+		mapping, ok := mappings[output.Name]
+		if !ok {
+			continue
+		}
+		output.Namespace = mapping.Namespace
+		output.Name = mapping.Name
+	}
 }
 
 func chatArgumentsRawMessage(arguments string) []byte {

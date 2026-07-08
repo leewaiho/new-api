@@ -173,6 +173,9 @@ type RelayInfo struct {
 	// RequestConversionChain records request format conversions in order, e.g.
 	// ["openai", "openai_responses"] or ["openai", "claude"].
 	RequestConversionChain []types.RelayFormat
+	// ResponsesToolNameMappings maps flattened Chat Completions function names
+	// back to Responses namespace tool identities for response conversion.
+	ResponsesToolNameMappings map[string]dto.ResponsesToolNameMapping
 	// 最终请求到上游的格式。可由 adaptor 显式设置；
 	// 若为空，调用 GetFinalRequestRelayFormat 会回退到 RequestConversionChain 的最后一项或 RelayFormat。
 	FinalRequestRelayFormat types.RelayFormat

@@ -199,6 +199,62 @@ func TestResponsesRequestToChatCompletionsRequestToolsToolChoiceAndTextFormat(t 
 	assert.True(t, gjson.GetBytes(got.ResponseFormat.JsonSchema, "strict").Bool())
 }
 
+func TestResponsesRequestToChatCompletionsRequestFlattensNamespaceToolsWithMapping(t *testing.T) {
+	mappings := map[string]dto.ResponsesToolNameMapping{}
+	got, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
+		Model: "gpt-test",
+		Input: mustRawMessage(t, "hello"),
+		Tools: mustRawMessage(t, []map[string]any{
+			{
+				"type":        "namespace",
+				"name":        "mcp__demo__",
+				"description": "Demo tools",
+				"tools": []map[string]any{
+					{
+						"type":        "function",
+						"name":        "lookup_order",
+						"description": "Look up an order",
+						"parameters": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"order_id": map[string]any{"type": "string"},
+							},
+						},
+					},
+				},
+			},
+		}),
+	}, ResponsesRequestToChatOptions{
+		FlattenNamespaceTools: true,
+		ToolNameMappings:      mappings,
+	})
+	require.NoError(t, err)
+
+	require.Len(t, got.Tools, 1)
+	assert.Equal(t, "function", got.Tools[0].Type)
+	assert.Equal(t, "mcp__demo__lookup_order", got.Tools[0].Function.Name)
+	assert.Equal(t, "Look up an order", got.Tools[0].Function.Description)
+	assert.Equal(t, "object", got.Tools[0].Function.Parameters.(map[string]any)["type"])
+	assert.Equal(t, dto.ResponsesToolNameMapping{Namespace: "mcp__demo__", Name: "lookup_order"}, mappings["mcp__demo__lookup_order"])
+}
+
+func TestResponsesRequestToChatCompletionsRequestDropsUnsupportedToolsWhenRequested(t *testing.T) {
+	got, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
+		Model: "gpt-test",
+		Input: mustRawMessage(t, "hello"),
+		Tools: mustRawMessage(t, []map[string]any{
+			{"type": "web_search"},
+			{"type": "custom", "name": "apply_patch"},
+			{"type": "function", "name": "lookup", "parameters": map[string]any{"type": "object"}},
+		}),
+	}, ResponsesRequestToChatOptions{DropUnsupportedTools: true})
+	require.NoError(t, err)
+
+	require.Len(t, got.Tools, 1)
+	assert.Equal(t, "function", got.Tools[0].Type)
+	assert.Equal(t, "lookup", got.Tools[0].Function.Name)
+}
+
 func TestResponsesRequestToChatCompletionsRequestCustomToolCallPreservesRawShape(t *testing.T) {
 	got, err := ResponsesRequestToChatCompletionsRequest(&dto.OpenAIResponsesRequest{
 		Model: "gpt-test",
