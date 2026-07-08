@@ -20,6 +20,7 @@ import type {
   AdvancedCustomAuthType,
   AdvancedCustomConfig,
   AdvancedCustomConverter,
+  AdvancedCustomResponsesToolsMode,
   AdvancedCustomRoute,
   AdvancedCustomRouteAuth,
 } from '../types'
@@ -67,6 +68,23 @@ export const ADVANCED_CUSTOM_AUTH_MODE_OPTIONS: Array<{
   { value: 'none', label: 'No Auth' },
   { value: 'header', label: 'Header' },
   { value: 'query', label: 'Query' },
+]
+
+export const ADVANCED_CUSTOM_RESPONSES_TOOLS_MODE_OPTIONS: Array<{
+  value: AdvancedCustomResponsesToolsMode
+  label: string
+  description: string
+}> = [
+  {
+    value: 'compat_flatten',
+    label: 'Compat: flatten namespace tools',
+    description: 'Flatten namespace function tools and drop Responses-only tools for Chat Completions upstreams.',
+  },
+  {
+    value: 'preserve',
+    label: 'Preserve Responses tools',
+    description: 'Forward Responses tools as-is for upstreams that support namespace/custom tool types.',
+  },
 ]
 
 export type AdvancedCustomIncomingPathOption = {
@@ -516,6 +534,11 @@ export function validateAdvancedCustomConfig(
     if (authError) {
       return { routeIndex: index, message: authError }
     }
+
+    const converterOptionsError = validateRouteConverterOptions(route)
+    if (converterOptionsError) {
+      return { routeIndex: index, message: converterOptionsError }
+    }
   }
 
   return null
@@ -598,6 +621,11 @@ function normalizeAdvancedCustomRoute(
       type: route.auth.type,
       name: route.auth.name || '',
       value: route.auth.value || '',
+    }
+  }
+  if (route.converter_options) {
+    nextRoute.converter_options = {
+      responses_tools_mode: route.converter_options.responses_tools_mode,
     }
   }
   return nextRoute
@@ -684,6 +712,23 @@ function validateRouteAuth(
 }
 
 
+function validateRouteConverterOptions(
+  route: AdvancedCustomRoute
+): string | null {
+  const mode = route.converter_options?.responses_tools_mode
+  if (!mode) return null
+  if (route.converter !== 'openai_responses_to_openai_chat_completions') {
+    return 'Responses tools mode only works with OpenAI Responses to OpenAI Chat converter'
+  }
+  if (
+    !ADVANCED_CUSTOM_RESPONSES_TOOLS_MODE_OPTIONS.some(
+      (option) => option.value === mode
+    )
+  ) {
+    return 'Responses tools mode is invalid'
+  }
+  return null
+}
 export interface DualEndpointConfigInput {
   anthropicBaseURL: string
   openaiBaseURL: string
@@ -821,4 +866,3 @@ export function extractACFetchURLs(
   }
   return [...new Set(urls)]
 }
-
