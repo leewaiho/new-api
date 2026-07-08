@@ -15,16 +15,7 @@ var AutomaticDisableKeywords = []string{
 	"Your account is not authorized",
 }
 
-var AutomaticDisableIgnoreKeywords = []string{
-	"requests are too frequent",
-	"reduce your request frequency",
-	"wait a short moment",
-	"too many requests",
-	"rate limit",
-	"rate_limit",
-	"rate limited",
-	"request frequency",
-}
+var AutomaticDisableIgnoreKeywords = []string{}
 
 func AutomaticDisableKeywordsToString() string {
 	return strings.Join(AutomaticDisableKeywords, "\n")

@@ -23,6 +23,34 @@ func TestShouldDisableChannelIgnoresTransientRateLimit429(t *testing.T) {
 	require.False(t, ShouldDisableChannel(err))
 }
 
+func TestShouldDisableChannelKeeps429DisabledWhenIgnoreKeywordsEmpty(t *testing.T) {
+	setupShouldDisableChannelTest(t)
+	operation_setting.AutomaticDisableIgnoreKeywords = []string{}
+
+	err := types.NewOpenAIError(
+		errors.New("Requests are too frequent. Please reduce your request frequency, wait a short moment, and retry your request."),
+		types.ErrorCodeBadResponseStatusCode,
+		http.StatusTooManyRequests,
+	)
+
+	require.True(t, ShouldDisableChannel(err))
+}
+
+func TestShouldDisableChannelIgnoreKeywordsAreCaseInsensitive(t *testing.T) {
+	setupShouldDisableChannelTest(t)
+	operation_setting.AutomaticDisableIgnoreKeywords = []string{
+		"REQUESTS ARE TOO FREQUENT",
+	}
+
+	err := types.NewOpenAIError(
+		errors.New("requests are too frequent. please retry later."),
+		types.ErrorCodeBadResponseStatusCode,
+		http.StatusTooManyRequests,
+	)
+
+	require.False(t, ShouldDisableChannel(err))
+}
+
 func TestShouldDisableChannelKeepsQuota429Disabled(t *testing.T) {
 	setupShouldDisableChannelTest(t)
 
