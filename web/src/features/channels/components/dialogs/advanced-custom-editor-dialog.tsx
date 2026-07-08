@@ -1029,19 +1029,19 @@ function RouteEditor({
   const fallbackResponseToolPolicies = responsesToolsFromMode(responsesToolsMode)
   const responseToolPolicies: Required<AdvancedCustomResponsesToolsOptions> = {
     namespace:
-      route.converter_options?.responses_tools?.namespace ??
+      route.converter_options?.responses_tools?.namespace ||
       fallbackResponseToolPolicies.namespace,
     custom:
-      route.converter_options?.responses_tools?.custom ??
+      route.converter_options?.responses_tools?.custom ||
       fallbackResponseToolPolicies.custom,
     web_search:
-      route.converter_options?.responses_tools?.web_search ??
+      route.converter_options?.responses_tools?.web_search ||
       fallbackResponseToolPolicies.web_search,
     tool_search:
-      route.converter_options?.responses_tools?.tool_search ??
+      route.converter_options?.responses_tools?.tool_search ||
       fallbackResponseToolPolicies.tool_search,
     image_generation:
-      route.converter_options?.responses_tools?.image_generation ??
+      route.converter_options?.responses_tools?.image_generation ||
       fallbackResponseToolPolicies.image_generation,
   }
   const hasResponsesToolOptions =
