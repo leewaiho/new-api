@@ -664,6 +664,11 @@ export function validateAdvancedCustomConfig(
     if (authError) {
       return { routeIndex: index, message: authError }
     }
+
+    const converterOptionsError = validateRouteConverterOptions(route)
+    if (converterOptionsError) {
+      return { routeIndex: index, message: converterOptionsError }
+    }
   }
 
   return null
@@ -760,6 +765,21 @@ function normalizeAdvancedCustomRoute(
       type: route.auth.type,
       name: route.auth.name || '',
       value: route.auth.value || '',
+    }
+  }
+  if (route.converter_options) {
+    nextRoute.converter_options = {
+      responses_tools_mode: route.converter_options.responses_tools_mode,
+      responses_tools: route.converter_options.responses_tools
+        ? {
+            namespace: route.converter_options.responses_tools.namespace,
+            custom: route.converter_options.responses_tools.custom,
+            web_search: route.converter_options.responses_tools.web_search,
+            tool_search: route.converter_options.responses_tools.tool_search,
+            image_generation:
+              route.converter_options.responses_tools.image_generation,
+          }
+        : undefined,
     }
   }
   return nextRoute
@@ -911,7 +931,38 @@ function validateRouteAuth(
   }
   return null
 }
-
+function validateRouteConverterOptions(
+  route: AdvancedCustomRoute
+): string | null {
+  const mode = route.converter_options?.responses_tools_mode
+  const tools = route.converter_options?.responses_tools
+  if (!mode && !tools) return null
+  if (route.converter !== 'openai_responses_to_openai_chat_completions') {
+    return 'Responses tool options only work with OpenAI Responses to OpenAI Chat converter'
+  }
+  if (
+    mode &&
+    !ADVANCED_CUSTOM_RESPONSES_TOOLS_MODE_OPTIONS.some(
+      (option) => option.value === mode
+    )
+  ) {
+    return 'Responses tools mode is invalid'
+  }
+  if (tools) {
+    const allowed = new Set(['preserve', 'flatten', 'drop', 'reject'])
+    const entries = Object.entries(tools)
+    for (const [toolType, policy] of entries) {
+      if (!policy) continue
+      if (!allowed.has(policy)) {
+        return `Responses tool policy is invalid: ${toolType}`
+      }
+      if (policy === 'flatten' && toolType !== 'namespace') {
+        return `Responses tool policy flatten only supports namespace`
+      }
+    }
+  }
+  return null
+}
 
 export interface DualEndpointConfigInput {
   anthropicBaseURL: string

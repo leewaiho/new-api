@@ -255,6 +255,48 @@ func TestResponsesRequestToChatCompletionsRequestDropsUnsupportedToolsWhenReques
 	assert.Equal(t, "lookup", got.Tools[0].Function.Name)
 }
 
+func TestResponsesRequestToChatCompletionsRequestAppliesPerToolPolicies(t *testing.T) {
+	got, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
+		Model: "gpt-test",
+		Input: mustRawMessage(t, "hello"),
+		Tools: mustRawMessage(t, []map[string]any{
+			{
+				"type": "namespace",
+				"name": "mcp__demo__",
+				"tools": []map[string]any{
+					{"type": "function", "name": "lookup", "parameters": map[string]any{"type": "object"}},
+				},
+			},
+			{"type": "web_search"},
+			{"type": "custom", "name": "apply_patch"},
+		}),
+	}, ResponsesRequestToChatOptions{
+		ToolPolicies: ResponsesToolPolicies{
+			Namespace: ResponsesToolPolicyPreserve,
+			WebSearch: ResponsesToolPolicyDrop,
+			Custom:    ResponsesToolPolicyPreserve,
+		},
+	})
+	require.NoError(t, err)
+
+	require.Len(t, got.Tools, 2)
+	assert.Equal(t, "namespace", got.Tools[0].Type)
+	assert.Contains(t, string(got.Tools[0].Custom), `"type":"namespace"`)
+	assert.Equal(t, "custom", got.Tools[1].Type)
+}
+
+func TestResponsesRequestToChatCompletionsRequestRejectsToolByPolicy(t *testing.T) {
+	_, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
+		Model: "gpt-test",
+		Input: mustRawMessage(t, "hello"),
+		Tools: mustRawMessage(t, []map[string]any{{"type": "web_search"}}),
+	}, ResponsesRequestToChatOptions{
+		ToolPolicies: ResponsesToolPolicies{WebSearch: ResponsesToolPolicyReject},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `responses tool "web_search" is not supported`)
+}
+
 func TestResponsesRequestToChatCompletionsRequestCustomToolCallPreservesRawShape(t *testing.T) {
 	got, err := ResponsesRequestToChatCompletionsRequest(&dto.OpenAIResponsesRequest{
 		Model: "gpt-test",
