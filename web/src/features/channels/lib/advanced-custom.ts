@@ -106,12 +106,32 @@ export const ADVANCED_CUSTOM_RESPONSES_TOOLS_MODE_OPTIONS: Array<{
   },
 ]
 
-export const ADVANCED_CUSTOM_RESPONSES_TOOL_POLICY_OPTIONS = [
-  { value: 'preserve', label: 'Preserve' },
-  { value: 'flatten', label: 'Flatten' },
-  { value: 'drop', label: 'Drop' },
-  { value: 'reject', label: 'Reject' },
-] as const
+export const ADVANCED_CUSTOM_RESPONSES_TOOL_POLICY_OPTIONS: Array<{
+  value: AdvancedCustomResponsesToolPolicy
+  label: string
+  description: string
+}> = [
+  {
+    value: 'preserve',
+    label: 'Preserve',
+    description: 'Forward the tool definition as-is to the upstream.',
+  },
+  {
+    value: 'flatten',
+    label: 'Flatten',
+    description: 'Only valid for namespace: expand into individual function tools.',
+  },
+  {
+    value: 'drop',
+    label: 'Drop',
+    description: 'Remove the tool from the converted request.',
+  },
+  {
+    value: 'reject',
+    label: 'Reject',
+    description: 'Return an explicit error if the client sends this tool.',
+  },
+]
 
 export type AdvancedCustomIncomingPathOption = {
   value: string
@@ -945,21 +965,74 @@ function validateRouteAuth(
   }
   return null
 }
-export const ADVANCED_CUSTOM_RESPONSES_DROP_FIELDS = [
-  'metadata',
-  'store',
-  'service_tier',
-  'safety_identifier',
-  'prompt_cache_key',
-  'prompt_cache_retention',
-  'parallel_tool_calls',
-  'stream_options',
-  'top_logprobs',
-  'reasoning',
-] as const
-
 export type AdvancedCustomResponsesDropField =
-  (typeof ADVANCED_CUSTOM_RESPONSES_DROP_FIELDS)[number]
+  | 'metadata'
+  | 'store'
+  | 'service_tier'
+  | 'safety_identifier'
+  | 'prompt_cache_key'
+  | 'prompt_cache_retention'
+  | 'parallel_tool_calls'
+  | 'stream_options'
+  | 'top_logprobs'
+  | 'reasoning'
+
+export const ADVANCED_CUSTOM_RESPONSES_DROP_FIELDS: ReadonlyArray<{
+  value: AdvancedCustomResponsesDropField
+  label: string
+  description: string
+}> = [
+  {
+    value: 'metadata',
+    label: 'metadata',
+    description: 'Drop the metadata object (Zhipu CodingPlan rejects it with 1210).',
+  },
+  {
+    value: 'store',
+    label: 'store',
+    description: 'Drop the store flag (chat-only upstreams do not support it).',
+  },
+  {
+    value: 'service_tier',
+    label: 'service_tier',
+    description: 'Drop the service tier hint used by OpenAI billing.',
+  },
+  {
+    value: 'safety_identifier',
+    label: 'safety_identifier',
+    description: 'Drop the safety identifier (user identity, privacy default).',
+  },
+  {
+    value: 'prompt_cache_key',
+    label: 'prompt_cache_key',
+    description: 'Drop the prompt cache key (OpenAI Responses only).',
+  },
+  {
+    value: 'prompt_cache_retention',
+    label: 'prompt_cache_retention',
+    description: 'Drop the prompt cache retention hint.',
+  },
+  {
+    value: 'parallel_tool_calls',
+    label: 'parallel_tool_calls',
+    description: 'Drop the parallel tool calls flag.',
+  },
+  {
+    value: 'stream_options',
+    label: 'stream_options',
+    description: 'Drop stream options such as include_usage.',
+  },
+  {
+    value: 'top_logprobs',
+    label: 'top_logprobs',
+    description: 'Drop top_logprobs (chat-only upstreams may reject it).',
+  },
+  {
+    value: 'reasoning',
+    label: 'reasoning',
+    description: 'Drop the reasoning object to avoid passing it to chat upstreams.',
+  },
+]
 
 function validateRouteConverterOptions(
   route: AdvancedCustomRoute
@@ -993,7 +1066,9 @@ function validateRouteConverterOptions(
     }
   }
   if (dropFields) {
-    const allowed = new Set<string>(ADVANCED_CUSTOM_RESPONSES_DROP_FIELDS)
+    const allowed = new Set<string>(
+      ADVANCED_CUSTOM_RESPONSES_DROP_FIELDS.map((option) => option.value)
+    )
     for (const field of dropFields) {
       const normalized = (field || '').trim().toLowerCase()
       if (!normalized) continue
