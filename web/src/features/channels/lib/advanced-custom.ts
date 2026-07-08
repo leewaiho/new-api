@@ -87,6 +87,25 @@ export const ADVANCED_CUSTOM_AUTH_MODE_OPTIONS: Array<{
   { value: 'query', label: 'Query' },
 ]
 
+export const ADVANCED_CUSTOM_RESPONSES_TOOLS_MODE_OPTIONS: Array<{
+  value: AdvancedCustomResponsesToolsMode
+  label: string
+  description: string
+}> = [
+  {
+    value: 'compat_flatten',
+    label: 'Compat: flatten namespace tools',
+    description:
+      'Flatten namespace function tools and drop Responses-only tools for Chat Completions upstreams.',
+  },
+  {
+    value: 'preserve',
+    label: 'Preserve Responses tools',
+    description:
+      'Forward Responses tools as-is for upstreams that support namespace/custom tool types.',
+  },
+]
+
 export type AdvancedCustomIncomingPathOption = {
   value: string
   /** Official API route name. Render verbatim instead of passing it to i18n. */

@@ -477,3 +477,18 @@ func TestAdvancedCustomSupportedEndpointTypesForModel(t *testing.T) {
 		constant.EndpointTypeAnthropic,
 	}, config.SupportedEndpointTypesForModel("other-model"))
 }
+
+func TestAdvancedCustomValidateResponsesToolsMode(t *testing.T) {
+	config := &AdvancedCustomConfig{Routes: []AdvancedCustomRoute{{
+		IncomingPath: "/v1/responses",
+		UpstreamPath: "/v1/chat/completions",
+		Converter:    advancedCustomConverterOpenAIResponsesToOpenAIChat,
+		ConverterOptions: &AdvancedCustomConverterOptions{
+			ResponsesToolsMode: AdvancedCustomResponsesToolsModePreserve,
+		},
+	}}}
+	require.NoError(t, config.Validate())
+
+	config.Routes[0].ConverterOptions.ResponsesToolsMode = "bad"
+	require.ErrorContains(t, config.Validate(), "responses_tools_mode is invalid")
+}
