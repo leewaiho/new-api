@@ -609,6 +609,26 @@ function RouteEditor({
   ADVANCED_CUSTOM_RESPONSES_TOOLS_MODE_OPTIONS,
     responsesToolsMode
   )
+  const responseToolPolicies = useMemo(
+    () => {
+      const fallback = responsesToolsFromMode(responsesToolsMode)
+      const fromRoute = route.converter_options?.responses_tools
+      if (!fromRoute) return fallback
+      return {
+        namespace: fromRoute.namespace || fallback.namespace,
+        custom: fromRoute.custom || fallback.custom,
+        web_search: fromRoute.web_search || fallback.web_search,
+        tool_search: fromRoute.tool_search || fallback.tool_search,
+        image_generation:
+          fromRoute.image_generation || fallback.image_generation,
+      }
+    },
+    [
+      responsesToolsMode,
+      route.converter_options?.responses_tools,
+    ]
+  )
+
   const isNativeConverter = converter === 'none'
   const ConverterVisualIcon = isNativeConverter ? ArrowRight : Shuffle
 
