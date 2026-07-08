@@ -68,10 +68,11 @@ type responseConverterRoute struct {
 }
 
 type ResponseStreamOptions struct {
-	ID           string
-	Model        string
-	Created      int64
-	IncludeUsage bool
+	ID               string
+	Model            string
+	Created          int64
+	IncludeUsage     bool
+	ToolNameMappings map[string]dto.ResponsesToolNameMapping
 }
 
 type ResponseStreamState struct {
@@ -819,6 +820,7 @@ func newOAIChatToOAIResponsesStreamState(options ResponseStreamOptions) any {
 	if options.Created != 0 {
 		state.Created = options.Created
 	}
+	state.SetToolNameMappings(options.ToolNameMappings)
 	return state
 }
 

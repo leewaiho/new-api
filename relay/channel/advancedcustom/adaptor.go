@@ -124,6 +124,7 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 	case relayconvert.ConverterNone:
 		return a.convertOpenAICompatibleResponsesRequest(c, info, request)
 	case relayconvert.ConverterOpenAIResponsesToOpenAIChat:
+		info.FlattenResponsesNamespaceTools = true
 		result, err := service.ConvertRequestByID(c, info, converter, request)
 		if err != nil {
 			return nil, err

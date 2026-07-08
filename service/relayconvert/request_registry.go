@@ -485,7 +485,7 @@ func convertOpenAIResponsesRequestToGeminiChat(c *gin.Context, info *relaycommon
 	return oairesponses.OpenAIResponsesRequestToGeminiChat(c, &prepared, info)
 }
 
-func convertResponsesRequestToChat(_ *gin.Context, _ *relaycommon.RelayInfo, request any) (any, error) {
+func convertResponsesRequestToChat(_ *gin.Context, info *relaycommon.RelayInfo, request any) (any, error) {
 	responsesRequest, ok := request.(*dto.OpenAIResponsesRequest)
 	if !ok {
 		if value, ok := request.(dto.OpenAIResponsesRequest); ok {
@@ -494,6 +494,24 @@ func convertResponsesRequestToChat(_ *gin.Context, _ *relaycommon.RelayInfo, req
 	}
 	if responsesRequest == nil {
 		return nil, fmt.Errorf("expected OpenAI responses request, got %T", request)
+	}
+	if info != nil && info.FlattenResponsesNamespaceTools {
+		mappings := make(map[string]dto.ResponsesToolNameMapping)
+		chatRequest, err := oairesponses.ResponsesRequestToChatCompletionsRequestWithOptions(
+			responsesRequest,
+			oairesponses.ResponsesRequestToChatOptions{
+				FlattenNamespaceTools: true,
+				DropUnsupportedTools:  true,
+				ToolNameMappings:      mappings,
+			},
+		)
+		if err != nil {
+			return nil, err
+		}
+		if len(mappings) > 0 {
+			info.ResponsesToolNameMappings = mappings
+		}
+		return chatRequest, nil
 	}
 	return oairesponses.ResponsesRequestToChatCompletionsRequest(responsesRequest)
 }

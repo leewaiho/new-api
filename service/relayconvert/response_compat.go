@@ -104,6 +104,10 @@ func FinalizeChatCompletionsStreamToResponses(state *ChatToResponsesStreamState)
 	return oaichat.FinalizeChatCompletionsStreamToResponses(state)
 }
 
+func ApplyResponsesToolNameMappings(resp *dto.OpenAIResponsesResponse, mappings map[string]dto.ResponsesToolNameMapping) {
+	oaichat.ApplyResponsesToolNameMappings(resp, mappings)
+}
+
 func ResponsesFinishReasonFromStatus(resp *dto.OpenAIResponsesResponse) (string, bool) {
 	return oairesponses.ResponsesFinishReasonFromStatus(resp)
 }
