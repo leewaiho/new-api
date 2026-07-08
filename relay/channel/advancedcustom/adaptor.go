@@ -110,11 +110,18 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 		return a.convertOpenAICompatibleResponsesRequest(c, info, request)
 	case dto.AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions:
 		mappings := map[string]dto.ResponsesToolNameMapping{}
-		chatReq, err := service.ResponsesRequestToChatCompletionsRequestWithOptions(&request, relayconvert.ResponsesRequestToChatOptions{
-			FlattenNamespaceTools: true,
-			DropUnsupportedTools:  true,
-			ToolNameMappings:      mappings,
-		})
+		responsesToolsMode := dto.AdvancedCustomResponsesToolsModeCompatFlatten
+		if a.route.ConverterOptions != nil && a.route.ConverterOptions.ResponsesToolsMode != "" {
+			responsesToolsMode = a.route.ConverterOptions.ResponsesToolsMode
+		}
+		chatOptions := relayconvert.ResponsesRequestToChatOptions{
+			ToolNameMappings: mappings,
+		}
+		if responsesToolsMode == dto.AdvancedCustomResponsesToolsModeCompatFlatten {
+			chatOptions.FlattenNamespaceTools = true
+			chatOptions.DropUnsupportedTools = true
+		}
+		chatReq, err := service.ResponsesRequestToChatCompletionsRequestWithOptions(&request, chatOptions)
 		if err != nil {
 			return nil, err
 		}

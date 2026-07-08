@@ -74,16 +74,31 @@ const (
 	AdvancedCustomAuthTypeQuery  = "query"
 )
 
+const (
+	AdvancedCustomResponsesToolsModeCompatFlatten = "compat_flatten"
+	AdvancedCustomResponsesToolsModePreserve      = "preserve"
+)
+
 type AdvancedCustomConfig struct {
 	Routes         []AdvancedCustomRoute `json:"advanced_routes,omitempty"`
 	ModelFetchURLs []string              `json:"model_fetch_urls,omitempty"`
 }
 
 type AdvancedCustomRoute struct {
-	IncomingPath string                   `json:"incoming_path,omitempty"`
-	UpstreamPath string                   `json:"upstream_path,omitempty"`
-	Converter    string                   `json:"converter,omitempty"`
-	Auth         *AdvancedCustomRouteAuth `json:"auth,omitempty"`
+	IncomingPath     string                          `json:"incoming_path,omitempty"`
+	UpstreamPath     string                          `json:"upstream_path,omitempty"`
+	Converter        string                          `json:"converter,omitempty"`
+	Auth             *AdvancedCustomRouteAuth        `json:"auth,omitempty"`
+	ConverterOptions *AdvancedCustomConverterOptions `json:"converter_options,omitempty"`
+}
+
+type AdvancedCustomConverterOptions struct {
+	// ResponsesToolsMode controls how Responses-only tool types are handled when
+	// converting /v1/responses requests to Chat Completions upstreams. Empty keeps
+	// backward-compatible behavior.
+	//   - compat_flatten: flatten namespace function tools and drop unsupported tools
+	//   - preserve: preserve original tool objects for upstreams that support them
+	ResponsesToolsMode string `json:"responses_tools_mode,omitempty"`
 }
 
 type AdvancedCustomRouteAuth struct {
@@ -216,6 +231,9 @@ func (c *AdvancedCustomConfig) Validate() error {
 		if err := validateAdvancedCustomRouteAuth(i, route.Auth); err != nil {
 			return err
 		}
+		if err := validateAdvancedCustomConverterOptions(i, route.Converter, route.ConverterOptions); err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -301,5 +319,24 @@ func validateAdvancedCustomRouteAuth(index int, auth *AdvancedCustomRouteAuth) e
 		return nil
 	default:
 		return fmt.Errorf("advanced_custom.advanced_routes[%d].auth.type is invalid: %s", index, auth.Type)
+	}
+}
+
+func validateAdvancedCustomConverterOptions(index int, converter string, options *AdvancedCustomConverterOptions) error {
+	if options == nil {
+		return nil
+	}
+	mode := strings.TrimSpace(options.ResponsesToolsMode)
+	if mode == "" {
+		return nil
+	}
+	if converter != AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions {
+		return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options.responses_tools_mode is only supported by %s", index, AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions)
+	}
+	switch mode {
+	case AdvancedCustomResponsesToolsModeCompatFlatten, AdvancedCustomResponsesToolsModePreserve:
+		return nil
+	default:
+		return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options.responses_tools_mode is invalid: %s", index, mode)
 	}
 }
