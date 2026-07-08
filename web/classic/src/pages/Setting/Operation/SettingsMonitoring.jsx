@@ -39,6 +39,7 @@ export default function SettingsMonitoring(props) {
     AutomaticDisableChannelEnabled: false,
     AutomaticEnableChannelEnabled: false,
     AutomaticDisableKeywords: '',
+    AutomaticDisableIgnoreKeywords: '',
     AutomaticDisableStatusCodes: '401',
     AutomaticRetryStatusCodes:
       '100-199,300-399,401-407,409-499,500-503,505-523,525-599',
@@ -273,6 +274,21 @@ export default function SettingsMonitoring(props) {
                   autosize={{ minRows: 6, maxRows: 12 }}
                   onChange={(value) =>
                     setInputs({ ...inputs, AutomaticDisableKeywords: value })
+                  }
+                />
+                <Form.TextArea
+                  label={t('自动禁用忽略关键词')}
+                  placeholder={t('一行一个，不区分大小写')}
+                  extraText={t(
+                    '当上游错误包含这些关键词时（不区分大小写），即使命中自动禁用状态码也不会自动禁用通道',
+                  )}
+                  field={'AutomaticDisableIgnoreKeywords'}
+                  autosize={{ minRows: 4, maxRows: 10 }}
+                  onChange={(value) =>
+                    setInputs({
+                      ...inputs,
+                      AutomaticDisableIgnoreKeywords: value,
+                    })
                   }
                 />
               </Col>
