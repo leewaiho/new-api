@@ -15,18 +15,41 @@ var AutomaticDisableKeywords = []string{
 	"Your account is not authorized",
 }
 
+var AutomaticDisableIgnoreKeywords = []string{
+	"requests are too frequent",
+	"reduce your request frequency",
+	"wait a short moment",
+	"too many requests",
+	"rate limit",
+	"rate_limit",
+	"rate limited",
+	"request frequency",
+}
+
 func AutomaticDisableKeywordsToString() string {
 	return strings.Join(AutomaticDisableKeywords, "\n")
 }
 
 func AutomaticDisableKeywordsFromString(s string) {
-	AutomaticDisableKeywords = []string{}
-	ak := strings.Split(s, "\n")
-	for _, k := range ak {
+	AutomaticDisableKeywords = parseAutomaticDisableKeywordLines(s)
+}
+
+func AutomaticDisableIgnoreKeywordsToString() string {
+	return strings.Join(AutomaticDisableIgnoreKeywords, "\n")
+}
+
+func AutomaticDisableIgnoreKeywordsFromString(s string) {
+	AutomaticDisableIgnoreKeywords = parseAutomaticDisableKeywordLines(s)
+}
+
+func parseAutomaticDisableKeywordLines(s string) []string {
+	keywords := []string{}
+	for _, k := range strings.Split(s, "\n") {
 		k = strings.TrimSpace(k)
 		k = strings.ToLower(k)
 		if k != "" {
-			AutomaticDisableKeywords = append(AutomaticDisableKeywords, k)
+			keywords = append(keywords, k)
 		}
 	}
+	return keywords
 }
