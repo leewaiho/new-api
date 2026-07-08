@@ -110,6 +110,11 @@ type AdvancedCustomConverterOptions struct {
 	// /v1/responses requests to Chat Completions upstreams. Supported policy values
 	// are preserve, flatten, drop, and reject. Flatten is only valid for namespace.
 	ResponsesTools *AdvancedCustomResponsesToolsOptions `json:"responses_tools,omitempty"`
+	// ResponsesDropFields lists Responses request field names that must be
+	// stripped from the converted Chat Completions request. Use it to
+	// remove Responses-only fields (for example "metadata") that the chat
+	// upstream rejects.
+	ResponsesDropFields []string `json:"responses_drop_fields,omitempty"`
 }
 
 type AdvancedCustomResponsesToolsOptions struct {
@@ -341,6 +346,19 @@ func validateAdvancedCustomRouteAuth(index int, auth *AdvancedCustomRouteAuth) e
 	}
 }
 
+var allowedAdvancedCustomResponsesDropFields = map[string]struct{}{
+	"stream_options":         {},
+	"top_logprobs":           {},
+	"store":                  {},
+	"metadata":               {},
+	"safety_identifier":      {},
+	"prompt_cache_key":       {},
+	"prompt_cache_retention": {},
+	"service_tier":           {},
+	"parallel_tool_calls":    {},
+	"reasoning":              {},
+}
+
 func validateAdvancedCustomConverterOptions(index int, converter string, options *AdvancedCustomConverterOptions) error {
 	if options == nil {
 		return nil
@@ -379,11 +397,30 @@ func validateAdvancedCustomConverterOptions(index int, converter string, options
 	if err := validateAdvancedCustomResponsesToolPolicy(index, "image_generation", options.ResponsesTools.ImageGeneration, false); err != nil {
 		return err
 	}
+	if len(options.ResponsesDropFields) > 0 {
+		seen := make(map[string]struct{}, len(options.ResponsesDropFields))
+		for _, raw := range options.ResponsesDropFields {
+			field := strings.ToLower(strings.TrimSpace(raw))
+			if field == "" {
+				continue
+			}
+			if _, ok := allowedAdvancedCustomResponsesDropFields[field]; !ok {
+				return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options.responses_drop_fields contains unsupported field: %s", index, raw)
+			}
+			seen[field] = struct{}{}
+		}
+		if len(seen) == 0 {
+			return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options.responses_drop_fields must not be empty", index)
+		}
+	}
 	return nil
 }
 
 func advancedCustomConverterOptionsPresent(options *AdvancedCustomConverterOptions) bool {
-	return strings.TrimSpace(options.ResponsesToolsMode) != "" || options.ResponsesTools != nil
+	if options == nil {
+		return false
+	}
+	return strings.TrimSpace(options.ResponsesToolsMode) != "" || options.ResponsesTools != nil || len(options.ResponsesDropFields) > 0
 }
 
 func validateAdvancedCustomResponsesToolPolicy(index int, toolType string, policy string, allowFlatten bool) error {

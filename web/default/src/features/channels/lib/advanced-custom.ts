@@ -643,6 +643,13 @@ function normalizeAdvancedCustomRoute(
               route.converter_options.responses_tools.image_generation,
           }
         : undefined,
+      responses_drop_fields: Array.isArray(
+        route.converter_options.responses_drop_fields
+      )
+        ? route.converter_options.responses_drop_fields
+            .map((field) => (field || '').trim())
+            .filter((field) => field.length > 0)
+        : undefined,
     }
   }
   return nextRoute
@@ -728,13 +735,29 @@ function validateRouteAuth(
   return null
 }
 
+export const ADVANCED_CUSTOM_RESPONSES_DROP_FIELDS = [
+  'metadata',
+  'store',
+  'service_tier',
+  'safety_identifier',
+  'prompt_cache_key',
+  'prompt_cache_retention',
+  'parallel_tool_calls',
+  'stream_options',
+  'top_logprobs',
+  'reasoning',
+] as const
+
+export type AdvancedCustomResponsesDropField =
+  (typeof ADVANCED_CUSTOM_RESPONSES_DROP_FIELDS)[number]
 
 function validateRouteConverterOptions(
   route: AdvancedCustomRoute
 ): string | null {
   const mode = route.converter_options?.responses_tools_mode
   const tools = route.converter_options?.responses_tools
-  if (!mode && !tools) return null
+  const dropFields = route.converter_options?.responses_drop_fields
+  if (!mode && !tools && (!dropFields || dropFields.length === 0)) return null
   if (route.converter !== 'openai_responses_to_openai_chat_completions') {
     return 'Responses tool options only work with OpenAI Responses to OpenAI Chat converter'
   }
@@ -756,6 +779,16 @@ function validateRouteConverterOptions(
       }
       if (policy === 'flatten' && toolType !== 'namespace') {
         return `Responses tool policy flatten only supports namespace`
+      }
+    }
+  }
+  if (dropFields) {
+    const allowed = new Set<string>(ADVANCED_CUSTOM_RESPONSES_DROP_FIELDS)
+    for (const field of dropFields) {
+      const normalized = (field || '').trim().toLowerCase()
+      if (!normalized) continue
+      if (!allowed.has(normalized)) {
+        return `Responses drop field is not supported: ${field}`
       }
     }
   }

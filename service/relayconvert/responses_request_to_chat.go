@@ -31,6 +31,21 @@ type ResponsesRequestToChatOptions struct {
 	DropUnsupportedTools  bool
 	ToolPolicies          ResponsesToolPolicies
 	ToolNameMappings      map[string]dto.ResponsesToolNameMapping
+	// DropResponseFields lists Responses request field names that must be
+	// removed when sending the converted Chat Completions request. This is
+	// used for chat-only upstreams that reject Responses-shaped parameters
+	// (for example "metadata").
+	DropResponseFields map[string]struct{}
+}
+
+// ShouldDropResponseField reports whether the given Responses request field
+// should be stripped from the converted Chat Completions request.
+func (o ResponsesRequestToChatOptions) ShouldDropResponseField(field string) bool {
+	if len(o.DropResponseFields) == 0 {
+		return false
+	}
+	_, ok := o.DropResponseFields[strings.ToLower(strings.TrimSpace(field))]
+	return ok
 }
 
 type ResponsesToolPolicies struct {
@@ -77,42 +92,55 @@ func ResponsesRequestToChatCompletionsRequestWithOptions(req *dto.OpenAIResponse
 	}
 
 	out := &dto.GeneralOpenAIRequest{
-		Model:                req.Model,
-		Messages:             messages,
-		Stream:               req.Stream,
-		StreamOptions:        req.StreamOptions,
-		MaxCompletionTokens:  req.MaxOutputTokens,
-		Temperature:          req.Temperature,
-		TopP:                 req.TopP,
-		TopLogProbs:          req.TopLogProbs,
-		ResponseFormat:       responseFormat,
-		Tools:                tools,
-		ToolChoice:           toolChoice,
-		User:                 req.User,
-		Store:                req.Store,
-		Metadata:             req.Metadata,
-		SafetyIdentifier:     req.SafetyIdentifier,
-		PromptCacheRetention: req.PromptCacheRetention,
-		EnableThinking:       req.EnableThinking,
+		Model:               req.Model,
+		Messages:            messages,
+		Stream:              req.Stream,
+		MaxCompletionTokens: req.MaxOutputTokens,
+		Temperature:         req.Temperature,
+		TopP:                req.TopP,
+		ResponseFormat:      responseFormat,
+		Tools:               tools,
+		ToolChoice:          toolChoice,
+		User:                req.User,
+		EnableThinking:      req.EnableThinking,
 	}
-
-	if req.Reasoning != nil {
-		out.ReasoningEffort = req.Reasoning.Effort
+	if !options.ShouldDropResponseField("stream_options") && req.StreamOptions != nil {
+		out.StreamOptions = req.StreamOptions
 	}
-	if req.ServiceTier != "" {
-		out.ServiceTier, _ = common.Marshal(req.ServiceTier)
+	if !options.ShouldDropResponseField("top_logprobs") {
+		out.TopLogProbs = req.TopLogProbs
 	}
-	if len(req.ParallelToolCalls) > 0 && common.GetJsonType(req.ParallelToolCalls) == "boolean" {
+	if !options.ShouldDropResponseField("store") {
+		out.Store = req.Store
+	}
+	if !options.ShouldDropResponseField("metadata") {
+		out.Metadata = req.Metadata
+	}
+	if !options.ShouldDropResponseField("safety_identifier") {
+		out.SafetyIdentifier = req.SafetyIdentifier
+	}
+	if !options.ShouldDropResponseField("prompt_cache_retention") {
+		out.PromptCacheRetention = req.PromptCacheRetention
+	}
+	if !options.ShouldDropResponseField("service_tier") {
+		if req.ServiceTier != "" {
+			out.ServiceTier, _ = common.Marshal(req.ServiceTier)
+		}
+	}
+	if !options.ShouldDropResponseField("prompt_cache_key") && len(req.PromptCacheKey) > 0 && common.GetJsonType(req.PromptCacheKey) == "string" {
+		var promptCacheKey string
+		if err := common.Unmarshal(req.PromptCacheKey, &promptCacheKey); err == nil {
+			out.PromptCacheKey = promptCacheKey
+		}
+	}
+	if !options.ShouldDropResponseField("parallel_tool_calls") && len(req.ParallelToolCalls) > 0 && common.GetJsonType(req.ParallelToolCalls) == "boolean" {
 		var parallelToolCalls bool
 		if err := common.Unmarshal(req.ParallelToolCalls, &parallelToolCalls); err == nil {
 			out.ParallelTooCalls = &parallelToolCalls
 		}
 	}
-	if len(req.PromptCacheKey) > 0 && common.GetJsonType(req.PromptCacheKey) == "string" {
-		var promptCacheKey string
-		if err := common.Unmarshal(req.PromptCacheKey, &promptCacheKey); err == nil {
-			out.PromptCacheKey = promptCacheKey
-		}
+	if !options.ShouldDropResponseField("reasoning") && req.Reasoning != nil {
+		out.ReasoningEffort = req.Reasoning.Effort
 	}
 
 	return out, nil
