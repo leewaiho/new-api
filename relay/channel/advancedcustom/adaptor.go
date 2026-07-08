@@ -17,6 +17,7 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/relayconvert"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/samber/lo"
@@ -108,9 +109,17 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 	case dto.AdvancedCustomConverterNone:
 		return a.convertOpenAICompatibleResponsesRequest(c, info, request)
 	case dto.AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions:
-		chatReq, err := service.ResponsesRequestToChatCompletionsRequest(&request)
+		mappings := map[string]dto.ResponsesToolNameMapping{}
+		chatReq, err := service.ResponsesRequestToChatCompletionsRequestWithOptions(&request, relayconvert.ResponsesRequestToChatOptions{
+			FlattenNamespaceTools: true,
+			DropUnsupportedTools:  true,
+			ToolNameMappings:      mappings,
+		})
 		if err != nil {
 			return nil, err
+		}
+		if len(mappings) > 0 {
+			info.ResponsesToolNameMappings = mappings
 		}
 		return a.convertOpenAICompatibleRequest(c, info, chatReq)
 	default:

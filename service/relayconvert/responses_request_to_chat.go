@@ -16,7 +16,19 @@ const (
 	responsesInputTypeCustomToolCall     = "custom_tool_call"
 )
 
+// ResponsesRequestToChatOptions controls lossy compatibility behavior needed
+// when a Responses request must be sent to a Chat Completions-only upstream.
+type ResponsesRequestToChatOptions struct {
+	FlattenNamespaceTools bool
+	DropUnsupportedTools  bool
+	ToolNameMappings      map[string]dto.ResponsesToolNameMapping
+}
+
 func ResponsesRequestToChatCompletionsRequest(req *dto.OpenAIResponsesRequest) (*dto.GeneralOpenAIRequest, error) {
+	return ResponsesRequestToChatCompletionsRequestWithOptions(req, ResponsesRequestToChatOptions{})
+}
+
+func ResponsesRequestToChatCompletionsRequestWithOptions(req *dto.OpenAIResponsesRequest, options ResponsesRequestToChatOptions) (*dto.GeneralOpenAIRequest, error) {
 	if req == nil {
 		return nil, errors.New("request is nil")
 	}
@@ -32,7 +44,7 @@ func ResponsesRequestToChatCompletionsRequest(req *dto.OpenAIResponsesRequest) (
 		return nil, err
 	}
 
-	tools, err := responsesRequestToolsToChat(req.Tools)
+	tools, err := responsesRequestToolsToChat(req.Tools, options)
 	if err != nil {
 		return nil, err
 	}
@@ -306,7 +318,7 @@ func appendToolCallToLastAssistant(messages []dto.Message, toolCall dto.ToolCall
 	return messages
 }
 
-func responsesRequestToolsToChat(raw json.RawMessage) ([]dto.ToolCallRequest, error) {
+func responsesRequestToolsToChat(raw json.RawMessage, options ResponsesRequestToChatOptions) ([]dto.ToolCallRequest, error) {
 	if !rawJSONPresent(raw) {
 		return nil, nil
 	}
@@ -319,28 +331,94 @@ func responsesRequestToolsToChat(raw json.RawMessage) ([]dto.ToolCallRequest, er
 	out := make([]dto.ToolCallRequest, 0, len(tools))
 	for _, tool := range tools {
 		toolType := strings.TrimSpace(common.Interface2String(tool["type"]))
-		if toolType == "function" {
-			out = append(out, dto.ToolCallRequest{
-				Type: "function",
-				Function: dto.FunctionRequest{
-					Name:        strings.TrimSpace(common.Interface2String(tool["name"])),
-					Description: common.Interface2String(tool["description"]),
-					Parameters:  tool["parameters"],
-				},
-			})
-			continue
+		switch toolType {
+		case "function":
+			out = append(out, responsesFunctionToolToChat(tool, ""))
+		case "namespace":
+			if !options.FlattenNamespaceTools {
+				if options.DropUnsupportedTools {
+					continue
+				}
+				chatTool, err := responsesRawToolToChat(toolType, tool)
+				if err != nil {
+					return nil, err
+				}
+				out = append(out, chatTool)
+				continue
+			}
+			flattened, err := responsesNamespaceToolToChat(tool, options.ToolNameMappings)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, flattened...)
+		default:
+			if options.DropUnsupportedTools {
+				continue
+			}
+			chatTool, err := responsesRawToolToChat(toolType, tool)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, chatTool)
 		}
-
-		rawTool, err := common.Marshal(tool)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, dto.ToolCallRequest{
-			Type:   toolType,
-			Custom: rawTool,
-		})
 	}
 	return out, nil
+}
+
+func responsesFunctionToolToChat(tool map[string]any, namePrefix string) dto.ToolCallRequest {
+	name := strings.TrimSpace(common.Interface2String(tool["name"]))
+	return dto.ToolCallRequest{
+		Type: "function",
+		Function: dto.FunctionRequest{
+			Name:        namePrefix + name,
+			Description: common.Interface2String(tool["description"]),
+			Parameters:  tool["parameters"],
+		},
+	}
+}
+
+func responsesNamespaceToolToChat(tool map[string]any, mappings map[string]dto.ResponsesToolNameMapping) ([]dto.ToolCallRequest, error) {
+	namespace := strings.TrimSpace(common.Interface2String(tool["name"]))
+	if namespace == "" {
+		return nil, fmt.Errorf("namespace tool name is required")
+	}
+	rawTools, ok := tool["tools"].([]any)
+	if !ok {
+		return nil, fmt.Errorf("namespace tool %q tools must be an array", namespace)
+	}
+	out := make([]dto.ToolCallRequest, 0, len(rawTools))
+	for _, rawTool := range rawTools {
+		nested, ok := rawTool.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("namespace tool %q contains invalid tool", namespace)
+		}
+		nestedType := strings.TrimSpace(common.Interface2String(nested["type"]))
+		if nestedType != "function" {
+			continue
+		}
+		nestedName := strings.TrimSpace(common.Interface2String(nested["name"]))
+		if nestedName == "" {
+			return nil, fmt.Errorf("namespace tool %q contains function without name", namespace)
+		}
+		flatName := namespace + nestedName
+		chatTool := responsesFunctionToolToChat(nested, namespace)
+		out = append(out, chatTool)
+		if mappings != nil {
+			mappings[flatName] = dto.ResponsesToolNameMapping{Namespace: namespace, Name: nestedName}
+		}
+	}
+	return out, nil
+}
+
+func responsesRawToolToChat(toolType string, tool map[string]any) (dto.ToolCallRequest, error) {
+	rawTool, err := common.Marshal(tool)
+	if err != nil {
+		return dto.ToolCallRequest{}, fmt.Errorf("invalid responses tool %q: %w", toolType, err)
+	}
+	return dto.ToolCallRequest{
+		Type:   toolType,
+		Custom: rawTool,
+	}, nil
 }
 
 func responsesRequestToolChoiceToChat(raw json.RawMessage) (any, error) {
