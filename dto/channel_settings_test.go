@@ -88,3 +88,37 @@ func TestAdvancedCustomValidateResponsesToolsMode(t *testing.T) {
 	}
 	require.ErrorContains(t, wrongConverter.Validate(), "only supported")
 }
+
+func TestAdvancedCustomValidateResponsesToolPolicies(t *testing.T) {
+	valid := &AdvancedCustomConfig{
+		Routes: []AdvancedCustomRoute{
+			{
+				IncomingPath: "/v1/responses",
+				UpstreamPath: "/v1/chat/completions",
+				Converter:    AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions,
+				ConverterOptions: &AdvancedCustomConverterOptions{
+					ResponsesTools: &AdvancedCustomResponsesToolsOptions{
+						Namespace: AdvancedCustomResponsesToolPolicyPreserve,
+						Custom:    AdvancedCustomResponsesToolPolicyDrop,
+						WebSearch: AdvancedCustomResponsesToolPolicyReject,
+					},
+				},
+			},
+		},
+	}
+	require.NoError(t, valid.Validate())
+
+	flattenNonNamespace := &AdvancedCustomConfig{
+		Routes: []AdvancedCustomRoute{
+			{
+				IncomingPath: "/v1/responses",
+				UpstreamPath: "/v1/chat/completions",
+				Converter:    AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions,
+				ConverterOptions: &AdvancedCustomConverterOptions{
+					ResponsesTools: &AdvancedCustomResponsesToolsOptions{WebSearch: AdvancedCustomResponsesToolPolicyFlatten},
+				},
+			},
+		},
+	}
+	require.ErrorContains(t, flattenNonNamespace.Validate(), "responses_tools.web_search is invalid")
+}

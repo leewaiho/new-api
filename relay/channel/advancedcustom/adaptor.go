@@ -110,16 +110,9 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 		return a.convertOpenAICompatibleResponsesRequest(c, info, request)
 	case dto.AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions:
 		mappings := map[string]dto.ResponsesToolNameMapping{}
-		responsesToolsMode := dto.AdvancedCustomResponsesToolsModeCompatFlatten
-		if a.route.ConverterOptions != nil && a.route.ConverterOptions.ResponsesToolsMode != "" {
-			responsesToolsMode = a.route.ConverterOptions.ResponsesToolsMode
-		}
 		chatOptions := relayconvert.ResponsesRequestToChatOptions{
+			ToolPolicies:     advancedCustomResponsesToolPolicies(a.route.ConverterOptions),
 			ToolNameMappings: mappings,
-		}
-		if responsesToolsMode == dto.AdvancedCustomResponsesToolsModeCompatFlatten {
-			chatOptions.FlattenNamespaceTools = true
-			chatOptions.DropUnsupportedTools = true
 		}
 		chatReq, err := service.ResponsesRequestToChatCompletionsRequestWithOptions(&request, chatOptions)
 		if err != nil {
@@ -505,4 +498,51 @@ func (a *Adaptor) convertOpenAICompatibleImageRequest(c *gin.Context, info *rela
 	converted, err := a.openaiAdaptor.ConvertImageRequest(c, info, request)
 	info.ChannelType = old
 	return converted, err
+}
+
+func advancedCustomResponsesToolPolicies(options *dto.AdvancedCustomConverterOptions) relayconvert.ResponsesToolPolicies {
+	if options != nil && options.ResponsesTools != nil {
+		return relayconvert.ResponsesToolPolicies{
+			Namespace:       mapAdvancedCustomResponsesToolPolicy(options.ResponsesTools.Namespace),
+			Custom:          mapAdvancedCustomResponsesToolPolicy(options.ResponsesTools.Custom),
+			WebSearch:       mapAdvancedCustomResponsesToolPolicy(options.ResponsesTools.WebSearch),
+			ToolSearch:      mapAdvancedCustomResponsesToolPolicy(options.ResponsesTools.ToolSearch),
+			ImageGeneration: mapAdvancedCustomResponsesToolPolicy(options.ResponsesTools.ImageGeneration),
+		}
+	}
+	mode := dto.AdvancedCustomResponsesToolsModeCompatFlatten
+	if options != nil && strings.TrimSpace(options.ResponsesToolsMode) != "" {
+		mode = strings.TrimSpace(options.ResponsesToolsMode)
+	}
+	if mode == dto.AdvancedCustomResponsesToolsModePreserve {
+		return relayconvert.ResponsesToolPolicies{
+			Namespace:       relayconvert.ResponsesToolPolicyPreserve,
+			Custom:          relayconvert.ResponsesToolPolicyPreserve,
+			WebSearch:       relayconvert.ResponsesToolPolicyPreserve,
+			ToolSearch:      relayconvert.ResponsesToolPolicyPreserve,
+			ImageGeneration: relayconvert.ResponsesToolPolicyPreserve,
+		}
+	}
+	return relayconvert.ResponsesToolPolicies{
+		Namespace:       relayconvert.ResponsesToolPolicyFlatten,
+		Custom:          relayconvert.ResponsesToolPolicyDrop,
+		WebSearch:       relayconvert.ResponsesToolPolicyDrop,
+		ToolSearch:      relayconvert.ResponsesToolPolicyDrop,
+		ImageGeneration: relayconvert.ResponsesToolPolicyDrop,
+	}
+}
+
+func mapAdvancedCustomResponsesToolPolicy(policy string) string {
+	switch strings.TrimSpace(policy) {
+	case dto.AdvancedCustomResponsesToolPolicyPreserve:
+		return relayconvert.ResponsesToolPolicyPreserve
+	case dto.AdvancedCustomResponsesToolPolicyFlatten:
+		return relayconvert.ResponsesToolPolicyFlatten
+	case dto.AdvancedCustomResponsesToolPolicyDrop:
+		return relayconvert.ResponsesToolPolicyDrop
+	case dto.AdvancedCustomResponsesToolPolicyReject:
+		return relayconvert.ResponsesToolPolicyReject
+	default:
+		return ""
+	}
 }
