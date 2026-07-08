@@ -85,6 +85,8 @@ import type {
   AdvancedCustomRoute,
 } from '../../types'
 
+import type { AdvancedCustomResponsesDropField } from '../../lib/advanced-custom'
+
 type AdvancedCustomEditorDialogProps = {
   open: boolean
   value: string
@@ -605,8 +607,7 @@ function RouteEditor({
   const responsesToolsMode: AdvancedCustomResponsesToolsMode =
     route.converter_options?.responses_tools_mode || 'compat_flatten'
   const responsesToolsModeLabel = getOptionLabel(
-    ADVANCED_CUSTOM_RESPONSES_TOOL_POLICY_OPTIONS,
-  ADVANCED_CUSTOM_RESPONSES_TOOLS_MODE_OPTIONS,
+    ADVANCED_CUSTOM_RESPONSES_TOOLS_MODE_OPTIONS,
     responsesToolsMode
   )
   const responseToolPolicies = useMemo(
@@ -688,13 +689,20 @@ function RouteEditor({
 
   const responsesDropFields = useMemo(
     () =>
-      (route.converter_options?.responses_drop_fields || []).map((f) =>
-        f.trim()
-      ),
+      (route.converter_options?.responses_drop_fields || [])
+        .map((f) => f.trim())
+        .filter((f): f is AdvancedCustomResponsesDropField =>
+          ADVANCED_CUSTOM_RESPONSES_DROP_FIELDS.some(
+            (option) => option.value === f
+          )
+        ),
     [route.converter_options?.responses_drop_fields]
   )
 
-  const setResponsesDropField = (field: string, enabled: boolean) => {
+  const setResponsesDropField = (
+    field: AdvancedCustomResponsesDropField,
+    enabled: boolean
+  ) => {
     const current = (route.converter_options?.responses_drop_fields || []).map(
       (f) => f.trim()
     )
@@ -993,13 +1001,25 @@ function RouteEditor({
                       {t(responseToolPolicies[field.key])}
                     </SelectValue>
                   </SelectTrigger>
-                  <SelectContent alignItemWithTrigger={false}>
+                  <SelectContent
+                    alignItemWithTrigger={false}
+                    className={longSelectContentClass}
+                  >
                     <SelectGroup>
                       {ADVANCED_CUSTOM_RESPONSES_TOOL_POLICY_OPTIONS.filter(
                         (option) => field.allowFlatten || option.value !== 'flatten'
                       ).map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {t(option.label)}
+                        <SelectItem
+                          key={option.value}
+                          value={option.value}
+                          className={longSelectItemClass}
+                        >
+                          <div className='flex min-w-0 flex-col gap-1 leading-snug whitespace-normal'>
+                            <span>{t(option.label)}</span>
+                            <span className='text-muted-foreground text-xs'>
+                              {t(option.description)}
+                            </span>
+                          </div>
                         </SelectItem>
                       ))}
                     </SelectGroup>
@@ -1017,26 +1037,40 @@ function RouteEditor({
             <span className='hidden lg:block' aria-hidden='true' />
             <FieldBlock
               label={t('Drop Responses fields')}
+              description={t(
+                'Strip these Responses request fields before forwarding to the chat-only upstream.'
+              )}
               className='lg:gap-1'
               labelClassName='lg:text-xs'
             >
-              <div className='grid grid-cols-2 gap-1 text-xs'>
-                {ADVANCED_CUSTOM_RESPONSES_DROP_FIELDS.map((field) => {
-                  const checked = responsesDropFields.includes(field)
+              <div className='grid grid-cols-1 gap-1.5 text-xs sm:grid-cols-2'>
+                {ADVANCED_CUSTOM_RESPONSES_DROP_FIELDS.map((option) => {
+                  const checked = responsesDropFields.includes(option.value)
                   return (
                     <label
-                      key={field}
-                      className='flex items-center gap-2 rounded border border-border/60 px-2 py-1'
+                      key={option.value}
+                      className='flex cursor-pointer items-start gap-2 rounded border border-border/60 px-2 py-1.5 hover:bg-muted/40'
+                      title={`${option.label} — ${option.description}`}
                     >
                       <input
                         type='checkbox'
-                        className='h-3.5 w-3.5 accent-current'
+                        className='mt-0.5 h-3.5 w-3.5 shrink-0 accent-current'
                         checked={checked}
                         onChange={(event) =>
-                          setResponsesDropField(field, event.target.checked)
+                          setResponsesDropField(
+                            option.value,
+                            event.target.checked
+                          )
                         }
                       />
-                      <span className='truncate'>{field}</span>
+                      <span className='flex min-w-0 flex-col leading-snug'>
+                        <span className='truncate font-medium'>
+                          {option.label}
+                        </span>
+                        <span className='text-muted-foreground truncate text-[11px]'>
+                          {option.description}
+                        </span>
+                      </span>
                     </label>
                   )
                 })}
@@ -1094,18 +1128,30 @@ function RouteEditor({
 
 function FieldBlock({
   label,
+  description,
   className,
   labelClassName,
   children,
 }: {
   label: string
+  description?: string
   className?: string
   labelClassName?: string
   children: ReactNode
 }) {
   return (
     <div className={cn('flex min-w-0 flex-col gap-2', className)}>
-      <span className={cn('text-sm font-medium', labelClassName)}>{label}</span>
+      <span
+        className={cn('text-sm font-medium', labelClassName)}
+        title={label}
+      >
+        {label}
+      </span>
+      {description ? (
+        <span className='text-muted-foreground text-[11px] leading-snug'>
+          {description}
+        </span>
+      ) : null}
       {children}
     </div>
   )
