@@ -360,6 +360,13 @@ type IncompleteDetails struct {
 	Reason string `json:"reason"`
 }
 
+// ResponsesToolNameMapping records how a flattened Chat Completions function
+// name maps back to the original Responses namespace tool identity.
+type ResponsesToolNameMapping struct {
+	Namespace string
+	Name      string
+}
+
 type ResponsesOutput struct {
 	Type      string                   `json:"type"`
 	ID        string                   `json:"id"`
@@ -370,6 +377,7 @@ type ResponsesOutput struct {
 	Size      string                   `json:"size"`
 	CallId    string                   `json:"call_id,omitempty"`
 	Name      string                   `json:"name,omitempty"`
+	Namespace string                   `json:"namespace,omitempty"`
 	Arguments json.RawMessage          `json:"arguments,omitempty"`
 }
 

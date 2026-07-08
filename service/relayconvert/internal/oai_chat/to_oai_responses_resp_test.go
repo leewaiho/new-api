@@ -74,9 +74,34 @@ func TestChatCompletionsResponseToResponsesMapsIncompleteFinishReasons(t *testin
 	}
 }
 
+func TestApplyResponsesToolNameMappingsRestoresNamespace(t *testing.T) {
+	resp := &dto.OpenAIResponsesResponse{
+		Output: []dto.ResponsesOutput{
+			{
+				Type:      responsesOutputTypeFunctionCall,
+				ID:        "fc_1",
+				CallId:    "call_1",
+				Name:      "mcp__demo__lookup_order",
+				Arguments: []byte(`{"order_id":"123"}`),
+			},
+		},
+	}
+
+	ApplyResponsesToolNameMappings(resp, map[string]dto.ResponsesToolNameMapping{
+		"mcp__demo__lookup_order": {Namespace: "mcp__demo__", Name: "lookup_order"},
+	})
+
+	require.Len(t, resp.Output, 1)
+	assert.Equal(t, "mcp__demo__", resp.Output[0].Namespace)
+	assert.Equal(t, "lookup_order", resp.Output[0].Name)
+}
+
 func TestChatCompletionsStreamToResponsesEventsAggregatesUsageAndToolArgs(t *testing.T) {
 	state := NewChatToResponsesStreamState("resp_1", "gpt-test")
 	state.Created = 123
+	state.SetToolNameMappings(map[string]dto.ResponsesToolNameMapping{
+		"mcp__demo__lookup_order": {Namespace: "mcp__demo__", Name: "lookup_order"},
+	})
 	toolIndex := 0
 
 	var events []ChatToResponsesStreamEvent
@@ -96,7 +121,7 @@ func TestChatCompletionsStreamToResponsesEventsAggregatesUsageAndToolArgs(t *tes
 	events = append(events, mustResponsesEventsFromChatChunk(t, state, &dto.ChatCompletionsStreamResponse{
 		Choices: []dto.ChatCompletionsStreamResponseChoice{
 			{Index: 0, Delta: dto.ChatCompletionsStreamResponseChoiceDelta{ToolCalls: []dto.ToolCallResponse{
-				{Index: &toolIndex, ID: "call_1", Type: "function", Function: dto.FunctionResponse{Name: "lookup"}},
+				{Index: &toolIndex, ID: "call_1", Type: "function", Function: dto.FunctionResponse{Name: "mcp__demo__lookup_order"}},
 			}}},
 		},
 	})...)
@@ -130,6 +155,8 @@ func TestChatCompletionsStreamToResponsesEventsAggregatesUsageAndToolArgs(t *tes
 	require.Len(t, events[9].Payload.Response.Output, 2)
 	assert.Equal(t, "hello", events[9].Payload.Response.Output[0].Content[0].Text)
 	assert.Equal(t, `"{\"q\":\"x\"}"`, string(events[9].Payload.Response.Output[1].Arguments))
+	assert.Equal(t, "mcp__demo__", events[9].Payload.Response.Output[1].Namespace)
+	assert.Equal(t, "lookup_order", events[9].Payload.Response.Output[1].Name)
 }
 
 func mustResponsesEventsFromChatChunk(t *testing.T, state *ChatToResponsesStreamState, chunk *dto.ChatCompletionsStreamResponse) []ChatToResponsesStreamEvent {
