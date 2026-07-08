@@ -79,6 +79,13 @@ const (
 	AdvancedCustomResponsesToolsModePreserve      = "preserve"
 )
 
+const (
+	AdvancedCustomResponsesToolPolicyPreserve = "preserve"
+	AdvancedCustomResponsesToolPolicyFlatten  = "flatten"
+	AdvancedCustomResponsesToolPolicyDrop     = "drop"
+	AdvancedCustomResponsesToolPolicyReject   = "reject"
+)
+
 type AdvancedCustomConfig struct {
 	Routes         []AdvancedCustomRoute `json:"advanced_routes,omitempty"`
 	ModelFetchURLs []string              `json:"model_fetch_urls,omitempty"`
@@ -93,12 +100,24 @@ type AdvancedCustomRoute struct {
 }
 
 type AdvancedCustomConverterOptions struct {
-	// ResponsesToolsMode controls how Responses-only tool types are handled when
-	// converting /v1/responses requests to Chat Completions upstreams. Empty keeps
-	// backward-compatible behavior.
+	// ResponsesToolsMode is the legacy coarse-grained switch. It is kept for
+	// backward compatibility and is expanded to ResponsesTools when ResponsesTools
+	// is empty.
 	//   - compat_flatten: flatten namespace function tools and drop unsupported tools
 	//   - preserve: preserve original tool objects for upstreams that support them
 	ResponsesToolsMode string `json:"responses_tools_mode,omitempty"`
+	// ResponsesTools controls individual Responses tool types when converting
+	// /v1/responses requests to Chat Completions upstreams. Supported policy values
+	// are preserve, flatten, drop, and reject. Flatten is only valid for namespace.
+	ResponsesTools *AdvancedCustomResponsesToolsOptions `json:"responses_tools,omitempty"`
+}
+
+type AdvancedCustomResponsesToolsOptions struct {
+	Namespace       string `json:"namespace,omitempty"`
+	Custom          string `json:"custom,omitempty"`
+	WebSearch       string `json:"web_search,omitempty"`
+	ToolSearch      string `json:"tool_search,omitempty"`
+	ImageGeneration string `json:"image_generation,omitempty"`
 }
 
 type AdvancedCustomRouteAuth struct {
@@ -326,17 +345,59 @@ func validateAdvancedCustomConverterOptions(index int, converter string, options
 	if options == nil {
 		return nil
 	}
-	mode := strings.TrimSpace(options.ResponsesToolsMode)
-	if mode == "" {
+	if !advancedCustomConverterOptionsPresent(options) {
 		return nil
 	}
 	if converter != AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions {
-		return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options.responses_tools_mode is only supported by %s", index, AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions)
+		return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options is only supported by %s", index, AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions)
 	}
-	switch mode {
-	case AdvancedCustomResponsesToolsModeCompatFlatten, AdvancedCustomResponsesToolsModePreserve:
+
+	mode := strings.TrimSpace(options.ResponsesToolsMode)
+	if mode != "" {
+		switch mode {
+		case AdvancedCustomResponsesToolsModeCompatFlatten, AdvancedCustomResponsesToolsModePreserve:
+		default:
+			return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options.responses_tools_mode is invalid: %s", index, mode)
+		}
+	}
+
+	if options.ResponsesTools == nil {
 		return nil
-	default:
-		return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options.responses_tools_mode is invalid: %s", index, mode)
 	}
+	if err := validateAdvancedCustomResponsesToolPolicy(index, "namespace", options.ResponsesTools.Namespace, true); err != nil {
+		return err
+	}
+	if err := validateAdvancedCustomResponsesToolPolicy(index, "custom", options.ResponsesTools.Custom, false); err != nil {
+		return err
+	}
+	if err := validateAdvancedCustomResponsesToolPolicy(index, "web_search", options.ResponsesTools.WebSearch, false); err != nil {
+		return err
+	}
+	if err := validateAdvancedCustomResponsesToolPolicy(index, "tool_search", options.ResponsesTools.ToolSearch, false); err != nil {
+		return err
+	}
+	if err := validateAdvancedCustomResponsesToolPolicy(index, "image_generation", options.ResponsesTools.ImageGeneration, false); err != nil {
+		return err
+	}
+	return nil
+}
+
+func advancedCustomConverterOptionsPresent(options *AdvancedCustomConverterOptions) bool {
+	return strings.TrimSpace(options.ResponsesToolsMode) != "" || options.ResponsesTools != nil
+}
+
+func validateAdvancedCustomResponsesToolPolicy(index int, toolType string, policy string, allowFlatten bool) error {
+	policy = strings.TrimSpace(policy)
+	if policy == "" {
+		return nil
+	}
+	switch policy {
+	case AdvancedCustomResponsesToolPolicyPreserve, AdvancedCustomResponsesToolPolicyDrop, AdvancedCustomResponsesToolPolicyReject:
+		return nil
+	case AdvancedCustomResponsesToolPolicyFlatten:
+		if allowFlatten {
+			return nil
+		}
+	}
+	return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options.responses_tools.%s is invalid: %s", index, toolType, policy)
 }

@@ -361,6 +361,43 @@ func TestAdaptorResponsesToolsModeDefaultsToCompatFlatten(t *testing.T) {
 	assert.Equal(t, dto.ResponsesToolNameMapping{Namespace: "mcp__demo__", Name: "lookup_order"}, info.ResponsesToolNameMappings["mcp__demo__lookup_order"])
 }
 
+func TestAdaptorResponsesToolsPerToolPolicyPreservesNamespaceAndDropsWebSearch(t *testing.T) {
+	adaptor := &Adaptor{}
+	info := advancedCustomRelayInfo(&dto.AdvancedCustomConfig{
+		Routes: []dto.AdvancedCustomRoute{
+			{
+				IncomingPath: "/v1/responses",
+				UpstreamPath: "/v1/chat/completions",
+				Converter:    dto.AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions,
+				ConverterOptions: &dto.AdvancedCustomConverterOptions{
+					ResponsesTools: &dto.AdvancedCustomResponsesToolsOptions{
+						Namespace: dto.AdvancedCustomResponsesToolPolicyPreserve,
+						WebSearch: dto.AdvancedCustomResponsesToolPolicyDrop,
+					},
+				},
+			},
+		},
+	})
+	info.RelayMode = relayconstant.RelayModeResponses
+	info.RequestURLPath = "/v1/responses"
+	c := advancedCustomGinContext("/v1/responses")
+
+	converted, err := adaptor.ConvertOpenAIResponsesRequest(c, info, dto.OpenAIResponsesRequest{
+		Model: "gpt-test",
+		Input: mustAdvancedCustomRawMessage(t, "hello"),
+		Tools: mustAdvancedCustomRawMessage(t, []map[string]any{
+			{"type": "namespace", "name": "mcp__demo__", "tools": []map[string]any{{"type": "function", "name": "lookup"}}},
+			{"type": "web_search"},
+		}),
+	})
+	require.NoError(t, err)
+
+	chatReq, ok := converted.(*dto.GeneralOpenAIRequest)
+	require.True(t, ok)
+	require.Len(t, chatReq.Tools, 1)
+	assert.Equal(t, "namespace", chatReq.Tools[0].Type)
+}
+
 func TestAdaptorResponsesToolsModePreserveKeepsResponsesTools(t *testing.T) {
 	adaptor := &Adaptor{}
 	info := advancedCustomRelayInfo(&dto.AdvancedCustomConfig{
