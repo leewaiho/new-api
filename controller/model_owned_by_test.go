@@ -46,13 +46,13 @@ func TestChannelOwnerNameUsesAdaptorChannelName(t *testing.T) {
 }
 
 func TestBuildOpenAIModelOverridesOwnedBy(t *testing.T) {
-	modelItem := buildOpenAIModel("gpt-5.4", map[string]string{"gpt-5.4": "openai"})
+	modelItem := buildNewAPIModelListItem("gpt-5.4", map[string]string{"gpt-5.4": "openai"})
 	require.Equal(t, "gpt-5.4", modelItem.Id)
 	require.Equal(t, "openai", modelItem.OwnedBy)
 }
 
 func TestBuildOpenAIModelFallsBackToCustomForUnknownModels(t *testing.T) {
-	modelItem := buildOpenAIModel("custom-test-model", nil)
+	modelItem := buildNewAPIModelListItem("custom-test-model", nil)
 	require.Equal(t, "custom-test-model", modelItem.Id)
 	require.Equal(t, "custom", modelItem.OwnedBy)
 }

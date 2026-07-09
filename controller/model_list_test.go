@@ -21,9 +21,9 @@ import (
 )
 
 type listModelsResponse struct {
-	Success bool               `json:"success"`
-	Data    []dto.OpenAIModels `json:"data"`
-	Object  string             `json:"object"`
+	Success bool                      `json:"success"`
+	Data    []dto.NewAPIModelListItem `json:"data"`
+	Object  string                    `json:"object"`
 }
 
 type userModelsResponse struct {
@@ -128,7 +128,7 @@ func withSelfUseModeDisabled(t *testing.T) {
 	})
 }
 
-func decodeListModelsResponse(t *testing.T, recorder *httptest.ResponseRecorder) map[string]struct{} {
+func decodeListModelsPayload(t *testing.T, recorder *httptest.ResponseRecorder) listModelsResponse {
 	t.Helper()
 
 	require.Equal(t, http.StatusOK, recorder.Code)
@@ -136,7 +136,13 @@ func decodeListModelsResponse(t *testing.T, recorder *httptest.ResponseRecorder)
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
 	require.True(t, payload.Success)
 	require.Equal(t, "list", payload.Object)
+	return payload
+}
 
+func decodeListModelsResponse(t *testing.T, recorder *httptest.ResponseRecorder) map[string]struct{} {
+	t.Helper()
+
+	payload := decodeListModelsPayload(t, recorder)
 	ids := make(map[string]struct{}, len(payload.Data))
 	for _, item := range payload.Data {
 		ids[item.Id] = struct{}{}
@@ -283,4 +289,80 @@ func TestListModelsTokenLimitIncludesTieredBillingModel(t *testing.T) {
 	require.NotContains(t, ids, "zz-token-tiered-empty-expr-model")
 	require.NotContains(t, ids, "zz-token-tiered-missing-expr-model")
 	require.NotContains(t, ids, "zz-token-unpriced-model")
+}
+
+func TestPricingAndListModelsExposeModelMetadata(t *testing.T) {
+	originalSelfUseMode := operation_setting.SelfUseModeEnabled
+	operation_setting.SelfUseModeEnabled = true
+	t.Cleanup(func() {
+		operation_setting.SelfUseModeEnabled = originalSelfUseMode
+	})
+
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.Create(&model.User{
+		Id:       1003,
+		Username: "metadata-model-user",
+		Password: "password",
+		Group:    "default",
+		Status:   common.UserStatusEnabled,
+	}).Error)
+	require.NoError(t, db.Create(&model.Ability{Group: "default", Model: "zz-metadata-model", ChannelId: 1, Enabled: true}).Error)
+
+	metadata := model.Model{
+		ModelName:        "zz-metadata-model",
+		Status:           1,
+		SyncOfficial:     1,
+		InputModalities:  model.ModelMetadataList{"TEXT", "image", "Image", "audio", " "},
+		OutputModalities: model.ModelMetadataList{"text", "Text"},
+		Capabilities:     model.ModelMetadataList{"vision", " Tool-Use ", "vision"},
+		ContextLength:    128000,
+		MaxOutputTokens:  4096,
+	}
+	require.NoError(t, metadata.Insert())
+	model.RefreshPricing()
+
+	pricingByName := pricingByModelName(model.GetPricing())
+	metadataPricing, ok := pricingByName["zz-metadata-model"]
+	require.True(t, ok)
+	require.Equal(t, []string{"text", "image"}, metadataPricing.InputModalities)
+	require.Equal(t, []string{"text"}, metadataPricing.OutputModalities)
+	require.Equal(t, []string{"vision", "tool-use"}, metadataPricing.Capabilities)
+	require.Equal(t, 128000, metadataPricing.ContextLength)
+	require.Equal(t, 4096, metadataPricing.MaxOutputTokens)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	ctx.Set("id", 1003)
+
+	ListModels(ctx, constant.ChannelTypeOpenAI)
+
+	payload := decodeListModelsPayload(t, recorder)
+	var listed *dto.NewAPIModelListItem
+	for i := range payload.Data {
+		if payload.Data[i].Id == "zz-metadata-model" {
+			listed = &payload.Data[i]
+			break
+		}
+	}
+	require.NotNil(t, listed)
+	require.Equal(t, []string{"text", "image"}, listed.InputModalities)
+	require.Equal(t, []string{"text"}, listed.OutputModalities)
+	require.Equal(t, []string{"vision", "tool-use"}, listed.Capabilities)
+	require.Equal(t, 128000, listed.ContextLength)
+
+	var rawPayload struct {
+		Data []struct {
+			Id              string `json:"id"`
+			MaxOutputTokens int    `json:"max_output_tokens"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &rawPayload))
+	for _, item := range rawPayload.Data {
+		if item.Id == "zz-metadata-model" {
+			require.Equal(t, 4096, item.MaxOutputTokens)
+			return
+		}
+	}
+	require.Fail(t, "zz-metadata-model not found in raw /v1/models payload")
 }

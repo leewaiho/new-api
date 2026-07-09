@@ -11,6 +11,18 @@ type OpenAIModels struct {
 	SupportedEndpointTypes []constant.EndpointType `json:"supported_endpoint_types"`
 }
 
+// NewAPIModelListItem is the model object returned by NewAPI's OpenAI-compatible
+// /v1/models endpoint. Keep OpenAIModels as the narrow compatibility DTO and put
+// NewAPI-specific discovery metadata here as an anti-corruption layer.
+type NewAPIModelListItem struct {
+	OpenAIModels
+	InputModalities  []string `json:"input_modalities,omitempty"`
+	OutputModalities []string `json:"output_modalities,omitempty"`
+	Capabilities     []string `json:"capabilities,omitempty"`
+	ContextLength    int      `json:"context_length,omitempty"`
+	MaxOutputTokens  int      `json:"max_output_tokens,omitempty"`
+}
+
 type AnthropicModel struct {
 	ID          string `json:"id"`
 	CreatedAt   string `json:"created_at"`
