@@ -1,4 +1,12 @@
 -- Configure automatic channel disable rules for transient 429 rate limits.
+-- Keep 429 in AutomaticDisableStatusCodes because some providers use 429 for
+-- hard quota / usage-threshold failures that should disable a channel.
+-- AutomaticDisableIgnoreKeywords only lists transient rate-limit messages:
+-- request frequency is too high, retry shortly, or temporary throttling.
+-- Do not add quota exhaustion / plan limit / credit balance messages here;
+-- those belong in AutomaticDisableKeywords and should still auto-disable.
+-- Keep these explanations as SQL comments, not option value lines, because
+-- each value line is treated as a keyword by the application.
 -- MySQL/MariaDB version. Safe to run repeatedly.
 
 INSERT INTO options (`key`, `value`)
