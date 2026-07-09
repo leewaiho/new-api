@@ -11,6 +11,26 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestDeriveACModelsURLPrefersExplicitModelFetchURLs(t *testing.T) {
+	settingsJSON := `{
+		"advanced_custom": {
+			"model_fetch_urls": ["https://open.bigmodel.cn/api/coding/paas/v4/models"],
+			"advanced_routes": [
+				{
+					"incoming_path": "/v1/chat/completions",
+					"upstream_path": "https://open.bigmodel.cn/api/coding/paas/v4/chat/completions",
+					"converter": "none"
+				}
+			]
+		}
+	}`
+	channel := &model.Channel{OtherSettings: settingsJSON}
+
+	result := deriveACModelsURL(channel)
+
+	require.Equal(t, "https://open.bigmodel.cn/api/coding/paas/v4/models", result)
+}
+
 func TestNormalizeModelNames(t *testing.T) {
 	result := normalizeModelNames([]string{
 		" gpt-4o ",

@@ -5011,6 +5011,11 @@
     "Keep Models": "Keep Models",
     "Result Models": "Result Models",
     "Select vendor to preview changes": "Select vendor to preview changes",
-    "Save channel before importing vendor catalog": "Save channel before importing vendor catalog"
+    "Save channel before importing vendor catalog": "Save channel before importing vendor catalog",
+    "Select endpoint to fetch from": "Select endpoint to fetch from",
+    "Select an endpoint": "Select an endpoint",
+    "Model fetch URLs": "Model fetch URLs",
+    "Model fetch URL must be a full URL or a path starting with /": "Model fetch URL must be a full URL or a path starting with /",
+    "One model list endpoint per line. Leave empty to infer from OpenAI-compatible routes.": "One model list endpoint per line. Leave empty to infer from OpenAI-compatible routes."
   }
 }

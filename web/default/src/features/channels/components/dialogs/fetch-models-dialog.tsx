@@ -32,6 +32,13 @@ import {
 } from '@/components/ui/collapsible'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Tooltip,
@@ -40,6 +47,10 @@ import {
 } from '@/components/ui/tooltip'
 
 import { fetchUpstreamModels, updateChannel } from '../../api'
+import {
+  CHANNEL_TYPE_ADVANCED_CUSTOM,
+  extractACFetchURLs,
+} from '../../lib/advanced-custom'
 import {
   channelsQueryKeys,
   categorizeModelsWithRedirect,
@@ -84,6 +95,21 @@ export function FetchModelsDialog({
   const [fetchedModels, setFetchedModels] = useState<string[]>([])
   const [selectedModels, setSelectedModels] = useState<string[]>([])
   const [searchKeyword, setSearchKeyword] = useState('')
+  const [acFetchURL, setAcFetchURL] = useState('')
+
+  const isACChannel = activeChannel?.type === CHANNEL_TYPE_ADVANCED_CUSTOM
+  const acFetchCandidates = useMemo(() => {
+    if (!isACChannel || !activeChannel) return []
+    try {
+      const parsed = JSON.parse(activeChannel.settings || '{}')
+      return extractACFetchURLs(
+        parsed.advanced_custom,
+        activeChannel.base_url || ''
+      )
+    } catch {
+      return []
+    }
+  }, [isACChannel, activeChannel])
 
   // Parse existing models
   const existingModels = useMemo(
@@ -125,6 +151,8 @@ export function FetchModelsDialog({
 
   useEffect(() => {
     if (open && (activeChannel || customFetcher)) {
+      // For AC channels with multiple endpoint candidates, wait for user selection
+      if (isACChannel && acFetchCandidates.length > 1) return
       handleFetchModels()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -141,7 +169,10 @@ export function FetchModelsDialog({
         setSelectedModels(existingModels)
         toast.success(t('Fetched {{count}} models', { count: list.length }))
       } else {
-        const response = await fetchUpstreamModels(activeChannel!.id)
+        const fetchURL = isACChannel
+          ? (acFetchURL || acFetchCandidates[0])
+          : undefined
+        const response = await fetchUpstreamModels(activeChannel!.id, fetchURL)
         if (response.success) {
           const list = Array.isArray(response.data) ? response.data : []
           setFetchedModels(list)
@@ -400,6 +431,26 @@ export function FetchModelsDialog({
         ) : null
       }
     >
+      {isACChannel && acFetchCandidates.length > 1 ? (
+        <div className='space-y-2'>
+          <Label>{t('Select endpoint to fetch from')}</Label>
+          <Select
+            value={acFetchURL || acFetchCandidates[0]}
+            onValueChange={(value) => setAcFetchURL(value || '')}
+          >
+            <SelectTrigger className='w-full'>
+              <SelectValue placeholder={t('Select an endpoint')} />
+            </SelectTrigger>
+            <SelectContent>
+              {acFetchCandidates.map((url) => (
+                <SelectItem key={url} value={url}>
+                  {url}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      ) : null}
       {!activeChannel && !customFetcher ? (
         <div className='text-muted-foreground py-8 text-center'>
           {t('No channel selected')}

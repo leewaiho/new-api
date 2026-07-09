@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"regexp"
 	"slices"
 	"strings"
@@ -231,7 +232,7 @@ func collectPendingUpstreamModelChangesFromModels(
 }
 
 func collectPendingUpstreamModelChanges(channel *model.Channel, settings dto.ChannelOtherSettings) (pendingAddModels []string, pendingRemoveModels []string, err error) {
-	upstreamModels, err := fetchChannelUpstreamModelIDs(channel)
+	upstreamModels, err := fetchChannelUpstreamModelIDs(channel, "")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -255,7 +256,54 @@ func getUpstreamModelUpdateMinCheckIntervalSeconds() int64 {
 	return interval
 }
 
-func fetchChannelUpstreamModelIDs(channel *model.Channel) ([]string, error) {
+// deriveACModelsURL extracts a candidate /models endpoint URL from an Advanced Custom
+// channel's route configuration. It looks for the first route with an OpenAI-compatible
+// incoming_path (/v1/chat/completions or /v1/responses), strips the endpoint suffix from
+// its upstream_path, and appends /models.
+func deriveACModelsURL(channel *model.Channel) string {
+	acConfig := channel.GetOtherSettings().AdvancedCustom
+	if acConfig == nil {
+		return ""
+	}
+	for _, fetchURL := range acConfig.ModelFetchURLs {
+		fetchURL = strings.TrimSpace(fetchURL)
+		if fetchURL != "" {
+			return fetchURL
+		}
+	}
+	for _, route := range acConfig.Routes {
+		if route.IncomingPath != "/v1/chat/completions" && route.IncomingPath != "/v1/responses" {
+			continue
+		}
+		upstream := strings.TrimSpace(route.UpstreamPath)
+		if upstream == "" {
+			continue
+		}
+		if !strings.HasPrefix(upstream, "http://") && !strings.HasPrefix(upstream, "https://") {
+			baseURL := strings.TrimRight(channel.GetBaseURL(), "/")
+			if baseURL == "" {
+				continue
+			}
+			upstream = baseURL + "/" + strings.TrimLeft(upstream, "/")
+		}
+		parsed, err := url.Parse(upstream)
+		if err != nil || parsed.Path == "" {
+			continue
+		}
+		lastSlash := strings.LastIndex(parsed.Path, "/")
+		if lastSlash > 0 {
+			parsed.Path = parsed.Path[:lastSlash]
+		} else if lastSlash == 0 {
+			parsed.Path = ""
+		}
+		parsed.RawPath = ""
+		parsed.Path = strings.TrimRight(parsed.Path, "/") + "/models"
+		return parsed.String()
+	}
+	return ""
+}
+
+func fetchChannelUpstreamModelIDs(channel *model.Channel, acFetchURL string) ([]string, error) {
 	baseURL := constant.ChannelBaseURLs[channel.Type]
 	if channel.GetBaseURL() != "" {
 		baseURL = channel.GetBaseURL()
@@ -287,6 +335,15 @@ func fetchChannelUpstreamModelIDs(channel *model.Channel) ([]string, error) {
 
 	var url string
 	switch channel.Type {
+	case constant.ChannelTypeAdvancedCustom:
+		if acFetchURL != "" {
+			url = acFetchURL
+		} else {
+			url = deriveACModelsURL(channel)
+		}
+		if url == "" {
+			return nil, fmt.Errorf("无法确定 Advanced Custom 渠道的模型列表 URL，请在路由中配置 OpenAI 兼容端点")
+		}
 	case constant.ChannelTypeAli:
 		url = fmt.Sprintf("%s/compatible-mode/v1/models", baseURL)
 	case constant.ChannelTypeZhipu_v4:
