@@ -9,6 +9,22 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+func enrichVendors(vendors []*model.Vendor) {
+	if len(vendors) == 0 {
+		return
+	}
+	vendorCounts, err := model.GetVendorModelCounts()
+	if err != nil {
+		return
+	}
+	for _, vendor := range vendors {
+		if vendor == nil {
+			continue
+		}
+		vendor.ModelCount = vendorCounts[int64(vendor.Id)]
+	}
+}
+
 // GetAllVendors 获取供应商列表（分页）
 func GetAllVendors(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
@@ -17,6 +33,7 @@ func GetAllVendors(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	enrichVendors(vendors)
 	var total int64
 	model.DB.Model(&model.Vendor{}).Count(&total)
 	pageInfo.SetTotal(int(total))
@@ -33,6 +50,7 @@ func SearchVendors(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	enrichVendors(vendors)
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(vendors)
 	common.ApiSuccess(c, pageInfo)
