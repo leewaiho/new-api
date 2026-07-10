@@ -20,6 +20,8 @@ import type {
   AdvancedCustomAuthType,
   AdvancedCustomConfig,
   AdvancedCustomConverter,
+  AdvancedCustomResponsesToolPolicy,
+  AdvancedCustomResponsesToolsMode,
   AdvancedCustomRoute,
   AdvancedCustomRouteAuth,
 } from '../types'
@@ -805,6 +807,7 @@ function normalizeAdvancedCustomRoute(
             tool_search: route.converter_options.responses_tools.tool_search,
             image_generation:
               route.converter_options.responses_tools.image_generation,
+            unknown: route.converter_options.responses_tools.unknown,
           }
         : undefined,
       responses_drop_fields: Array.isArray(

@@ -298,6 +298,93 @@ func TestResponsesRequestToChatCompletionsRequestRejectsToolByPolicy(t *testing.
 	assert.Contains(t, err.Error(), `responses tool "web_search" is not supported`)
 }
 
+func TestResponsesRequestToChatCompletionsRequestRejectsDroppedToolChoice(t *testing.T) {
+	_, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
+		Model:      "gpt-test",
+		Input:      mustRawMessage(t, "hello"),
+		Tools:      mustRawMessage(t, []map[string]any{{"type": "web_search"}}),
+		ToolChoice: mustRawMessage(t, map[string]any{"type": "web_search"}),
+	}, ResponsesRequestToChatOptions{
+		ToolPolicies: ResponsesToolPolicies{WebSearch: ResponsesToolPolicyDrop},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "tool_choice")
+	assert.Contains(t, err.Error(), "web_search")
+}
+
+func TestResponsesRequestToChatCompletionsRequestRewritesFlattenedNamespaceFunctionToolChoice(t *testing.T) {
+	mappings := map[string]dto.ResponsesToolNameMapping{}
+	got, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
+		Model: "gpt-test",
+		Input: mustRawMessage(t, "hello"),
+		Tools: mustRawMessage(t, []map[string]any{
+			{
+				"type": "namespace",
+				"name": "mcp__demo__",
+				"tools": []map[string]any{
+					{"type": "function", "name": "lookup"},
+				},
+			},
+		}),
+		ToolChoice: mustRawMessage(t, map[string]any{"type": "function", "name": "lookup"}),
+	}, ResponsesRequestToChatOptions{
+		ToolPolicies:     ResponsesToolPolicies{Namespace: ResponsesToolPolicyFlatten},
+		ToolNameMappings: mappings,
+	})
+	require.NoError(t, err)
+	choice, ok := got.ToolChoice.(map[string]any)
+	require.True(t, ok)
+	function, ok := choice["function"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "mcp__demo__lookup", function["name"])
+}
+
+func TestResponsesRequestToChatCompletionsRequestConvertsPreservedCustomToolChoice(t *testing.T) {
+	got, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
+		Model:      "gpt-test",
+		Input:      mustRawMessage(t, "hello"),
+		Tools:      mustRawMessage(t, []map[string]any{{"type": "custom", "name": "apply_patch"}}),
+		ToolChoice: mustRawMessage(t, map[string]any{"type": "custom", "name": "apply_patch"}),
+	}, ResponsesRequestToChatOptions{
+		ToolPolicies: ResponsesToolPolicies{Custom: ResponsesToolPolicyPreserve},
+	})
+	require.NoError(t, err)
+	choice, ok := got.ToolChoice.(map[string]any)
+	require.True(t, ok)
+	custom, ok := choice["custom"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "apply_patch", custom["name"])
+}
+
+func TestResponsesRequestToChatCompletionsRequestRejectsAllowedToolsChoiceWhenPoliciesMutateTools(t *testing.T) {
+	_, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
+		Model: "gpt-test",
+		Input: mustRawMessage(t, "hello"),
+		ToolChoice: mustRawMessage(t, map[string]any{
+			"type":  "allowed_tools",
+			"mode":  "auto",
+			"tools": []map[string]any{{"type": "web_search"}},
+		}),
+	}, ResponsesRequestToChatOptions{
+		ToolPolicies: ResponsesToolPolicies{WebSearch: ResponsesToolPolicyDrop},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "allowed_tools")
+	assert.Contains(t, err.Error(), "tool policies")
+}
+
+func TestResponsesRequestToChatCompletionsRequestDropsUnknownToolByCompatDefault(t *testing.T) {
+	got, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
+		Model: "gpt-test",
+		Input: mustRawMessage(t, "hello"),
+		Tools: mustRawMessage(t, []map[string]any{{"type": "computer_use"}}),
+	}, ResponsesRequestToChatOptions{
+		ToolPolicies: ResponsesToolPolicies{Namespace: ResponsesToolPolicyFlatten},
+	})
+	require.NoError(t, err)
+	assert.Empty(t, got.Tools)
+}
+
 func TestResponsesRequestToChatCompletionsRequestCustomToolCallPreservesRawShape(t *testing.T) {
 	got, err := ResponsesRequestToChatCompletionsRequest(&dto.OpenAIResponsesRequest{
 		Model: "gpt-test",

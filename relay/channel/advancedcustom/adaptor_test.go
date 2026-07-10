@@ -896,6 +896,7 @@ func TestAdaptorResponsesToolsModePreserveKeepsResponsesTools(t *testing.T) {
 						},
 					},
 				},
+				{"type": "computer_use"},
 			}),
 		},
 	)
@@ -903,9 +904,10 @@ func TestAdaptorResponsesToolsModePreserveKeepsResponsesTools(t *testing.T) {
 
 	chatReq, ok := converted.(*dto.GeneralOpenAIRequest)
 	require.True(t, ok)
-	require.Len(t, chatReq.Tools, 1)
+	require.Len(t, chatReq.Tools, 2)
 	assert.Equal(t, "namespace", chatReq.Tools[0].Type)
 	assert.Contains(t, string(chatReq.Tools[0].Custom), `"type":"namespace"`)
+	assert.Equal(t, "computer_use", chatReq.Tools[1].Type)
 	assert.Empty(t, info.ResponsesToolNameMappings)
 }
 
