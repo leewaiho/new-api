@@ -20,6 +20,7 @@ import type {
   AdvancedCustomAuthType,
   AdvancedCustomConfig,
   AdvancedCustomConverter,
+  AdvancedCustomResponsesToolPolicy,
   AdvancedCustomResponsesToolsMode,
   AdvancedCustomRoute,
   AdvancedCustomRouteAuth,
@@ -476,13 +477,13 @@ export function normalizeAdvancedCustomConfig(
     ? config.advanced_routes.map(normalizeAdvancedCustomRoute)
     : []
   const modelFetchURLs = Array.isArray(config.model_fetch_urls)
-    ? Array.from(
-        new Set(
+    ? [
+        ...new Set(
           config.model_fetch_urls
             .map((url) => (typeof url === 'string' ? url.trim() : ''))
             .filter(Boolean)
-        )
-      )
+        ),
+      ]
     : []
 
   return {
@@ -661,6 +662,7 @@ function normalizeAdvancedCustomRoute(
             tool_search: route.converter_options.responses_tools.tool_search,
             image_generation:
               route.converter_options.responses_tools.image_generation,
+            unknown: route.converter_options.responses_tools.unknown,
           }
         : undefined,
       responses_drop_fields: Array.isArray(
