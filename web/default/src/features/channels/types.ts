@@ -134,6 +134,7 @@ export interface AdvancedCustomResponsesToolsOptions {
   web_search?: AdvancedCustomResponsesToolPolicy
   tool_search?: AdvancedCustomResponsesToolPolicy
   image_generation?: AdvancedCustomResponsesToolPolicy
+  unknown?: AdvancedCustomResponsesToolPolicy
 }
 
 export type AdvancedCustomResponsesToolsMode = 'compat_flatten' | 'preserve'

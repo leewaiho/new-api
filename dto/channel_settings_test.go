@@ -101,6 +101,7 @@ func TestAdvancedCustomValidateResponsesToolPolicies(t *testing.T) {
 						Namespace: AdvancedCustomResponsesToolPolicyPreserve,
 						Custom:    AdvancedCustomResponsesToolPolicyDrop,
 						WebSearch: AdvancedCustomResponsesToolPolicyReject,
+						Unknown:   AdvancedCustomResponsesToolPolicyDrop,
 					},
 				},
 			},
@@ -121,4 +122,18 @@ func TestAdvancedCustomValidateResponsesToolPolicies(t *testing.T) {
 		},
 	}
 	require.ErrorContains(t, flattenNonNamespace.Validate(), "responses_tools.web_search is invalid")
+
+	flattenUnknown := &AdvancedCustomConfig{
+		Routes: []AdvancedCustomRoute{
+			{
+				IncomingPath: "/v1/responses",
+				UpstreamPath: "/v1/chat/completions",
+				Converter:    AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions,
+				ConverterOptions: &AdvancedCustomConverterOptions{
+					ResponsesTools: &AdvancedCustomResponsesToolsOptions{Unknown: AdvancedCustomResponsesToolPolicyFlatten},
+				},
+			},
+		},
+	}
+	require.ErrorContains(t, flattenUnknown.Validate(), "responses_tools.unknown is invalid")
 }

@@ -66,6 +66,7 @@ import {
   getAdvancedCustomConverterOptions,
   getAdvancedCustomIncomingPathLabel,
   ADVANCED_CUSTOM_RESPONSES_DROP_FIELDS,
+  type AdvancedCustomResponsesDropField,
   getAdvancedCustomTemplateConfig,
   getAdvancedCustomUpstreamPathPlaceholder,
   getDefaultAdvancedCustomIncomingPath,
@@ -84,8 +85,6 @@ import type {
   AdvancedCustomResponsesToolsOptions,
   AdvancedCustomRoute,
 } from '../../types'
-
-import type { AdvancedCustomResponsesDropField } from '../../lib/advanced-custom'
 
 type AdvancedCustomEditorDialogProps = {
   open: boolean
@@ -116,14 +115,14 @@ function modelFetchURLsToText(urls: string[] | undefined): string {
 }
 
 function textToModelFetchURLs(value: string): string[] {
-  return Array.from(
-    new Set(
+  return [
+    ...new Set(
       value
         .split(/[\n,]+/)
         .map((url) => url.trim())
         .filter(Boolean)
-    )
-  )
+    ),
+  ]
 }
 
 export function AdvancedCustomEditorDialog({
@@ -557,6 +556,7 @@ const responseToolPolicyFields: Array<{
   { key: 'web_search', label: 'Web search', allowFlatten: false },
   { key: 'tool_search', label: 'Tool search', allowFlatten: false },
   { key: 'image_generation', label: 'Image generation', allowFlatten: false },
+  { key: 'unknown', label: 'Unknown / other', allowFlatten: false },
 ]
 
 function responsesToolsFromMode(mode: AdvancedCustomResponsesToolsMode) {
@@ -567,6 +567,7 @@ function responsesToolsFromMode(mode: AdvancedCustomResponsesToolsMode) {
       web_search: 'preserve' as const,
       tool_search: 'preserve' as const,
       image_generation: 'preserve' as const,
+      unknown: 'preserve' as const,
     }
   }
   return {
@@ -575,6 +576,7 @@ function responsesToolsFromMode(mode: AdvancedCustomResponsesToolsMode) {
     web_search: 'drop' as const,
     tool_search: 'drop' as const,
     image_generation: 'drop' as const,
+    unknown: 'drop' as const,
   }
 }
 
@@ -610,25 +612,19 @@ function RouteEditor({
     ADVANCED_CUSTOM_RESPONSES_TOOLS_MODE_OPTIONS,
     responsesToolsMode
   )
-  const responseToolPolicies = useMemo(
-    () => {
-      const fallback = responsesToolsFromMode(responsesToolsMode)
-      const fromRoute = route.converter_options?.responses_tools
-      if (!fromRoute) return fallback
-      return {
-        namespace: fromRoute.namespace || fallback.namespace,
-        custom: fromRoute.custom || fallback.custom,
-        web_search: fromRoute.web_search || fallback.web_search,
-        tool_search: fromRoute.tool_search || fallback.tool_search,
-        image_generation:
-          fromRoute.image_generation || fallback.image_generation,
-      }
-    },
-    [
-      responsesToolsMode,
-      route.converter_options?.responses_tools,
-    ]
-  )
+  const responseToolPolicies = useMemo(() => {
+    const fallback = responsesToolsFromMode(responsesToolsMode)
+    const fromRoute = route.converter_options?.responses_tools
+    if (!fromRoute) return fallback
+    return {
+      namespace: fromRoute.namespace || fallback.namespace,
+      custom: fromRoute.custom || fallback.custom,
+      web_search: fromRoute.web_search || fallback.web_search,
+      tool_search: fromRoute.tool_search || fallback.tool_search,
+      image_generation: fromRoute.image_generation || fallback.image_generation,
+      unknown: fromRoute.unknown || fallback.unknown,
+    }
+  }, [responsesToolsMode, route.converter_options?.responses_tools])
 
   const isNativeConverter = converter === 'none'
   const ConverterVisualIcon = isNativeConverter ? ArrowRight : Shuffle
@@ -707,7 +703,7 @@ function RouteEditor({
       (f) => f.trim()
     )
     const next = enabled
-      ? Array.from(new Set([...current, field]))
+      ? [...new Set([...current, field])]
       : current.filter((f) => f !== field)
     onChange({
       converter_options: {

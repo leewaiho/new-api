@@ -123,6 +123,7 @@ type AdvancedCustomResponsesToolsOptions struct {
 	WebSearch       string `json:"web_search,omitempty"`
 	ToolSearch      string `json:"tool_search,omitempty"`
 	ImageGeneration string `json:"image_generation,omitempty"`
+	Unknown         string `json:"unknown,omitempty"`
 }
 
 type AdvancedCustomRouteAuth struct {
@@ -395,6 +396,9 @@ func validateAdvancedCustomConverterOptions(index int, converter string, options
 		return err
 	}
 	if err := validateAdvancedCustomResponsesToolPolicy(index, "image_generation", options.ResponsesTools.ImageGeneration, false); err != nil {
+		return err
+	}
+	if err := validateAdvancedCustomResponsesToolPolicy(index, "unknown", options.ResponsesTools.Unknown, false); err != nil {
 		return err
 	}
 	if len(options.ResponsesDropFields) > 0 {
