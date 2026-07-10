@@ -563,34 +563,46 @@ func (a *Adaptor) convertOpenAICompatibleImageRequest(c *gin.Context, info *rela
 }
 
 func advancedCustomResponsesToolPolicies(options *dto.AdvancedCustomConverterOptions) relayconvert.ResponsesToolPolicies {
-	if options != nil && options.ResponsesTools != nil {
-		return relayconvert.ResponsesToolPolicies{
-			Namespace:       mapAdvancedCustomResponsesToolPolicy(options.ResponsesTools.Namespace),
-			Custom:          mapAdvancedCustomResponsesToolPolicy(options.ResponsesTools.Custom),
-			WebSearch:       mapAdvancedCustomResponsesToolPolicy(options.ResponsesTools.WebSearch),
-			ToolSearch:      mapAdvancedCustomResponsesToolPolicy(options.ResponsesTools.ToolSearch),
-			ImageGeneration: mapAdvancedCustomResponsesToolPolicy(options.ResponsesTools.ImageGeneration),
-		}
-	}
 	mode := dto.AdvancedCustomResponsesToolsModeCompatFlatten
 	if options != nil && strings.TrimSpace(options.ResponsesToolsMode) != "" {
 		mode = strings.TrimSpace(options.ResponsesToolsMode)
 	}
-	if mode == dto.AdvancedCustomResponsesToolsModePreserve {
-		return relayconvert.ResponsesToolPolicies{
-			Namespace:       relayconvert.ResponsesToolPolicyPreserve,
-			Custom:          relayconvert.ResponsesToolPolicyPreserve,
-			WebSearch:       relayconvert.ResponsesToolPolicyPreserve,
-			ToolSearch:      relayconvert.ResponsesToolPolicyPreserve,
-			ImageGeneration: relayconvert.ResponsesToolPolicyPreserve,
-		}
-	}
-	return relayconvert.ResponsesToolPolicies{
+
+	policies := relayconvert.ResponsesToolPolicies{
 		Namespace:       relayconvert.ResponsesToolPolicyFlatten,
 		Custom:          relayconvert.ResponsesToolPolicyDrop,
 		WebSearch:       relayconvert.ResponsesToolPolicyDrop,
 		ToolSearch:      relayconvert.ResponsesToolPolicyDrop,
 		ImageGeneration: relayconvert.ResponsesToolPolicyDrop,
+		Unknown:         relayconvert.ResponsesToolPolicyDrop,
+	}
+	if mode == dto.AdvancedCustomResponsesToolsModePreserve {
+		policies = relayconvert.ResponsesToolPolicies{
+			Namespace:       relayconvert.ResponsesToolPolicyPreserve,
+			Custom:          relayconvert.ResponsesToolPolicyPreserve,
+			WebSearch:       relayconvert.ResponsesToolPolicyPreserve,
+			ToolSearch:      relayconvert.ResponsesToolPolicyPreserve,
+			ImageGeneration: relayconvert.ResponsesToolPolicyPreserve,
+			Unknown:         relayconvert.ResponsesToolPolicyPreserve,
+		}
+	}
+
+	if options == nil || options.ResponsesTools == nil {
+		return policies
+	}
+	overrides := options.ResponsesTools
+	applyAdvancedCustomResponsesToolPolicyOverride(&policies.Namespace, overrides.Namespace)
+	applyAdvancedCustomResponsesToolPolicyOverride(&policies.Custom, overrides.Custom)
+	applyAdvancedCustomResponsesToolPolicyOverride(&policies.WebSearch, overrides.WebSearch)
+	applyAdvancedCustomResponsesToolPolicyOverride(&policies.ToolSearch, overrides.ToolSearch)
+	applyAdvancedCustomResponsesToolPolicyOverride(&policies.ImageGeneration, overrides.ImageGeneration)
+	applyAdvancedCustomResponsesToolPolicyOverride(&policies.Unknown, overrides.Unknown)
+	return policies
+}
+
+func applyAdvancedCustomResponsesToolPolicyOverride(target *string, policy string) {
+	if mapped := mapAdvancedCustomResponsesToolPolicy(policy); mapped != "" {
+		*target = mapped
 	}
 }
 

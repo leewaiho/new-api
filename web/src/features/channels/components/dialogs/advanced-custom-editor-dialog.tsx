@@ -86,6 +86,7 @@ import {
   getAdvancedCustomModelRuleKind,
   getAdvancedCustomRegexModelPattern,
   ADVANCED_CUSTOM_RESPONSES_DROP_FIELDS,
+  type AdvancedCustomResponsesDropField,
   getAdvancedCustomTemplateConfig,
   getAdvancedCustomUpstreamPathPlaceholder,
   getDefaultAdvancedCustomIncomingPath,
@@ -105,8 +106,6 @@ import type {
   AdvancedCustomResponsesToolsOptions,
   AdvancedCustomRoute,
 } from '../../types'
-
-import type { AdvancedCustomResponsesDropField } from '../../lib/advanced-custom'
 
 type AdvancedCustomEditorDialogProps = {
   open: boolean
@@ -970,6 +969,7 @@ const responseToolPolicyFields: Array<{
   { key: 'web_search', label: 'Web search', allowFlatten: false },
   { key: 'tool_search', label: 'Tool search', allowFlatten: false },
   { key: 'image_generation', label: 'Image generation', allowFlatten: false },
+  { key: 'unknown', label: 'Unknown / other', allowFlatten: false },
 ]
 
 function responsesToolsFromMode(mode: AdvancedCustomResponsesToolsMode) {
@@ -980,6 +980,7 @@ function responsesToolsFromMode(mode: AdvancedCustomResponsesToolsMode) {
       web_search: 'preserve' as const,
       tool_search: 'preserve' as const,
       image_generation: 'preserve' as const,
+      unknown: 'preserve' as const,
     }
   }
   return {
@@ -988,6 +989,7 @@ function responsesToolsFromMode(mode: AdvancedCustomResponsesToolsMode) {
     web_search: 'drop' as const,
     tool_search: 'drop' as const,
     image_generation: 'drop' as const,
+    unknown: 'drop' as const,
   }
 }
 
@@ -1058,6 +1060,9 @@ function RouteEditor({
     image_generation:
       route.converter_options?.responses_tools?.image_generation ||
       fallbackResponseToolPolicies.image_generation,
+    unknown:
+      route.converter_options?.responses_tools?.unknown ||
+      fallbackResponseToolPolicies.unknown,
   }
   const hasResponsesToolOptions =
     Boolean(route.converter_options?.responses_tools_mode) ||
@@ -1153,7 +1158,7 @@ function RouteEditor({
       (f) => f.trim()
     )
     const next = enabled
-      ? Array.from(new Set([...current, field]))
+      ? [...new Set([...current, field])]
       : current.filter((f) => f !== field)
     onChange({
       converter_options: {
