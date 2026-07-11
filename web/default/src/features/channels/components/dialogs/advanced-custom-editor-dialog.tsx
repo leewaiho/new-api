@@ -54,6 +54,8 @@ import {
   ADVANCED_CUSTOM_AUTH_MODE_OPTIONS,
   ADVANCED_CUSTOM_CONVERTER_OPTIONS,
   ADVANCED_CUSTOM_INCOMING_PATH_OPTIONS,
+  ADVANCED_CUSTOM_RESPONSES_TOOL_POLICY_OPTIONS,
+  ADVANCED_CUSTOM_RESPONSES_TOOLS_MODE_OPTIONS,
   ADVANCED_CUSTOM_TEMPLATE_OPTIONS,
   type AdvancedCustomAuthMode,
   buildAdvancedCustomAuth,
@@ -63,6 +65,8 @@ import {
   getAdvancedCustomAuthMode,
   getAdvancedCustomConverterOptions,
   getAdvancedCustomIncomingPathLabel,
+  ADVANCED_CUSTOM_RESPONSES_DROP_FIELDS,
+  type AdvancedCustomResponsesDropField,
   getAdvancedCustomTemplateConfig,
   getAdvancedCustomUpstreamPathPlaceholder,
   getDefaultAdvancedCustomIncomingPath,
@@ -76,6 +80,9 @@ import type {
   AdvancedCustomAuthType,
   AdvancedCustomConfig,
   AdvancedCustomConverter,
+  AdvancedCustomResponsesToolPolicy,
+  AdvancedCustomResponsesToolsMode,
+  AdvancedCustomResponsesToolsOptions,
   AdvancedCustomRoute,
 } from '../../types'
 
@@ -108,14 +115,14 @@ function modelFetchURLsToText(urls: string[] | undefined): string {
 }
 
 function textToModelFetchURLs(value: string): string[] {
-  return Array.from(
-    new Set(
+  return [
+    ...new Set(
       value
         .split(/[\n,]+/)
         .map((url) => url.trim())
         .filter(Boolean)
-    )
-  )
+    ),
+  ]
 }
 
 export function AdvancedCustomEditorDialog({
@@ -539,6 +546,40 @@ export function AdvancedCustomEditorDialog({
   )
 }
 
+const responseToolPolicyFields: Array<{
+  key: keyof AdvancedCustomResponsesToolsOptions
+  label: string
+  allowFlatten: boolean
+}> = [
+  { key: 'namespace', label: 'Namespace', allowFlatten: true },
+  { key: 'custom', label: 'Custom', allowFlatten: false },
+  { key: 'web_search', label: 'Web search', allowFlatten: false },
+  { key: 'tool_search', label: 'Tool search', allowFlatten: false },
+  { key: 'image_generation', label: 'Image generation', allowFlatten: false },
+  { key: 'unknown', label: 'Unknown / other', allowFlatten: false },
+]
+
+function responsesToolsFromMode(mode: AdvancedCustomResponsesToolsMode) {
+  if (mode === 'preserve') {
+    return {
+      namespace: 'preserve' as const,
+      custom: 'preserve' as const,
+      web_search: 'preserve' as const,
+      tool_search: 'preserve' as const,
+      image_generation: 'preserve' as const,
+      unknown: 'preserve' as const,
+    }
+  }
+  return {
+    namespace: 'flatten' as const,
+    custom: 'drop' as const,
+    web_search: 'drop' as const,
+    tool_search: 'drop' as const,
+    image_generation: 'drop' as const,
+    unknown: 'drop' as const,
+  }
+}
+
 function RouteEditor({
   route,
   index,
@@ -565,6 +606,26 @@ function RouteEditor({
     converter
   )
   const authLabel = getOptionLabel(ADVANCED_CUSTOM_AUTH_MODE_OPTIONS, authMode)
+  const responsesToolsMode: AdvancedCustomResponsesToolsMode =
+    route.converter_options?.responses_tools_mode || 'compat_flatten'
+  const responsesToolsModeLabel = getOptionLabel(
+    ADVANCED_CUSTOM_RESPONSES_TOOLS_MODE_OPTIONS,
+    responsesToolsMode
+  )
+  const responseToolPolicies = useMemo(() => {
+    const fallback = responsesToolsFromMode(responsesToolsMode)
+    const fromRoute = route.converter_options?.responses_tools
+    if (!fromRoute) return fallback
+    return {
+      namespace: fromRoute.namespace || fallback.namespace,
+      custom: fromRoute.custom || fallback.custom,
+      web_search: fromRoute.web_search || fallback.web_search,
+      tool_search: fromRoute.tool_search || fallback.tool_search,
+      image_generation: fromRoute.image_generation || fallback.image_generation,
+      unknown: fromRoute.unknown || fallback.unknown,
+    }
+  }, [responsesToolsMode, route.converter_options?.responses_tools])
+
   const isNativeConverter = converter === 'none'
   const ConverterVisualIcon = isNativeConverter ? ArrowRight : Shuffle
 
@@ -572,6 +633,11 @@ function RouteEditor({
     const patch: Partial<AdvancedCustomRoute> = { converter: nextConverter }
     if (!isAdvancedCustomIncomingPathAllowed(incomingPath, nextConverter)) {
       patch.incoming_path = getDefaultAdvancedCustomIncomingPath(nextConverter)
+    }
+    if (nextConverter !== 'openai_responses_to_openai_chat_completions') {
+      patch.converter_options = undefined
+    } else if (!route.converter_options?.responses_tools_mode) {
+      patch.converter_options = { responses_tools_mode: 'compat_flatten' }
     }
     onChange(patch)
   }
@@ -590,6 +656,61 @@ function RouteEditor({
 
   const setAuthMode = (mode: AdvancedCustomAuthMode) => {
     onChange({ auth: buildAdvancedCustomAuth(mode, route.auth) })
+  }
+
+  const setResponsesToolsMode = (mode: AdvancedCustomResponsesToolsMode) => {
+    onChange({
+      converter_options: {
+        ...(route.converter_options || {}),
+        responses_tools_mode: mode,
+        responses_tools: responsesToolsFromMode(mode),
+      },
+    })
+  }
+
+  const setResponseToolPolicy = (
+    key: keyof AdvancedCustomResponsesToolsOptions,
+    policy: AdvancedCustomResponsesToolPolicy
+  ) => {
+    onChange({
+      converter_options: {
+        ...(route.converter_options || {}),
+        responses_tools: {
+          ...responseToolPolicies,
+          [key]: policy,
+        },
+      },
+    })
+  }
+
+  const responsesDropFields = useMemo(
+    () =>
+      (route.converter_options?.responses_drop_fields || [])
+        .map((f) => f.trim())
+        .filter((f): f is AdvancedCustomResponsesDropField =>
+          ADVANCED_CUSTOM_RESPONSES_DROP_FIELDS.some(
+            (option) => option.value === f
+          )
+        ),
+    [route.converter_options?.responses_drop_fields]
+  )
+
+  const setResponsesDropField = (
+    field: AdvancedCustomResponsesDropField,
+    enabled: boolean
+  ) => {
+    const current = (route.converter_options?.responses_drop_fields || []).map(
+      (f) => f.trim()
+    )
+    const next = enabled
+      ? [...new Set([...current, field])]
+      : current.filter((f) => f !== field)
+    onChange({
+      converter_options: {
+        ...(route.converter_options || {}),
+        responses_drop_fields: next,
+      },
+    })
   }
 
   const updateAuth = (
@@ -792,6 +913,169 @@ function RouteEditor({
         </Button>
       </div>
 
+      {converter === 'openai_responses_to_openai_chat_completions' ? (
+        <>
+          <Separator className='lg:hidden' />
+          <div
+            className={cn(
+              'grid gap-4 md:grid-cols-2 lg:items-end lg:gap-2 lg:border-t lg:pt-2',
+              routeEditorGridClassName
+            )}
+          >
+            <span className='hidden lg:block' aria-hidden='true' />
+            <FieldBlock
+              label={t('Responses tools')}
+              className='lg:gap-1'
+              labelClassName='lg:text-xs'
+            >
+              <Select
+                value={responsesToolsMode}
+                onValueChange={(value) =>
+                  setResponsesToolsMode(value as AdvancedCustomResponsesToolsMode)
+                }
+              >
+                <SelectTrigger className='w-full max-w-full lg:h-8'>
+                  <SelectValue className='min-w-0 truncate'>
+                    {t(responsesToolsModeLabel)}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent
+                  alignItemWithTrigger={false}
+                  className={longSelectContentClass}
+                >
+                  <SelectGroup>
+                    {ADVANCED_CUSTOM_RESPONSES_TOOLS_MODE_OPTIONS.map(
+                      (option) => (
+                        <SelectItem
+                          key={option.value}
+                          value={option.value}
+                          className={longSelectItemClass}
+                        >
+                          <div className='flex min-w-0 flex-col gap-1 leading-snug whitespace-normal'>
+                            <span>{t(option.label)}</span>
+                            <span className='text-muted-foreground text-xs'>
+                              {t(option.description)}
+                            </span>
+                          </div>
+                        </SelectItem>
+                      )
+                    )}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </FieldBlock>
+            <span className='hidden lg:block' aria-hidden='true' />
+            <span className='hidden lg:block' aria-hidden='true' />
+            <span className='hidden lg:block' aria-hidden='true' />
+            <span className='hidden lg:block' aria-hidden='true' />
+          </div>
+          <div
+            className={cn(
+              'grid gap-4 md:grid-cols-2 lg:items-end lg:gap-2 lg:border-t lg:pt-2',
+              routeEditorGridClassName
+            )}
+          >
+            <span className='hidden lg:block' aria-hidden='true' />
+            {responseToolPolicyFields.map((field) => (
+              <FieldBlock
+                key={field.key}
+                label={t(field.label)}
+                className='lg:gap-1'
+                labelClassName='lg:text-xs'
+              >
+                <Select
+                  value={responseToolPolicies[field.key]}
+                  onValueChange={(value) =>
+                    setResponseToolPolicy(
+                      field.key,
+                      value as AdvancedCustomResponsesToolPolicy
+                    )
+                  }
+                >
+                  <SelectTrigger className='w-full max-w-full lg:h-8'>
+                    <SelectValue className='min-w-0 truncate'>
+                      {t(responseToolPolicies[field.key])}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent
+                    alignItemWithTrigger={false}
+                    className={longSelectContentClass}
+                  >
+                    <SelectGroup>
+                      {ADVANCED_CUSTOM_RESPONSES_TOOL_POLICY_OPTIONS.filter(
+                        (option) => field.allowFlatten || option.value !== 'flatten'
+                      ).map((option) => (
+                        <SelectItem
+                          key={option.value}
+                          value={option.value}
+                          className={longSelectItemClass}
+                        >
+                          <div className='flex min-w-0 flex-col gap-1 leading-snug whitespace-normal'>
+                            <span>{t(option.label)}</span>
+                            <span className='text-muted-foreground text-xs'>
+                              {t(option.description)}
+                            </span>
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </FieldBlock>
+            ))}
+          </div>
+          <div
+            className={cn(
+              'grid gap-4 md:grid-cols-2 lg:items-end lg:gap-2 lg:border-t lg:pt-2',
+              routeEditorGridClassName
+            )}
+          >
+            <span className='hidden lg:block' aria-hidden='true' />
+            <FieldBlock
+              label={t('Drop Responses fields')}
+              description={t(
+                'Strip these Responses request fields before forwarding to the chat-only upstream.'
+              )}
+              className='lg:gap-1'
+              labelClassName='lg:text-xs'
+            >
+              <div className='grid grid-cols-1 gap-1.5 text-xs sm:grid-cols-2'>
+                {ADVANCED_CUSTOM_RESPONSES_DROP_FIELDS.map((option) => {
+                  const checked = responsesDropFields.includes(option.value)
+                  return (
+                    <label
+                      key={option.value}
+                      className='flex cursor-pointer items-start gap-2 rounded border border-border/60 px-2 py-1.5 hover:bg-muted/40'
+                      title={`${option.label} — ${option.description}`}
+                    >
+                      <input
+                        type='checkbox'
+                        className='mt-0.5 h-3.5 w-3.5 shrink-0 accent-current'
+                        checked={checked}
+                        onChange={(event) =>
+                          setResponsesDropField(
+                            option.value,
+                            event.target.checked
+                          )
+                        }
+                      />
+                      <span className='flex min-w-0 flex-col leading-snug'>
+                        <span className='truncate font-medium'>
+                          {option.label}
+                        </span>
+                        <span className='text-muted-foreground truncate text-[11px]'>
+                          {option.description}
+                        </span>
+                      </span>
+                    </label>
+                  )
+                })}
+              </div>
+            </FieldBlock>
+          </div>
+        </>
+      ) : null}
+
       {authMode === 'header' || authMode === 'query' ? (
         <>
           <Separator className='lg:hidden' />
@@ -840,18 +1124,30 @@ function RouteEditor({
 
 function FieldBlock({
   label,
+  description,
   className,
   labelClassName,
   children,
 }: {
   label: string
+  description?: string
   className?: string
   labelClassName?: string
   children: ReactNode
 }) {
   return (
     <div className={cn('flex min-w-0 flex-col gap-2', className)}>
-      <span className={cn('text-sm font-medium', labelClassName)}>{label}</span>
+      <span
+        className={cn('text-sm font-medium', labelClassName)}
+        title={label}
+      >
+        {label}
+      </span>
+      {description ? (
+        <span className='text-muted-foreground text-[11px] leading-snug'>
+          {description}
+        </span>
+      ) : null}
       {children}
     </div>
   )

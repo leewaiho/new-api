@@ -17,6 +17,7 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/relayconvert"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/samber/lo"
@@ -108,9 +109,18 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 	case dto.AdvancedCustomConverterNone:
 		return a.convertOpenAICompatibleResponsesRequest(c, info, request)
 	case dto.AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions:
-		chatReq, err := service.ResponsesRequestToChatCompletionsRequest(&request)
+		mappings := map[string]dto.ResponsesToolNameMapping{}
+		chatOptions := relayconvert.ResponsesRequestToChatOptions{
+			ToolPolicies:       advancedCustomResponsesToolPolicies(a.route.ConverterOptions),
+			ToolNameMappings:   mappings,
+			DropResponseFields: advancedCustomResponsesDropFields(a.route.ConverterOptions),
+		}
+		chatReq, err := service.ResponsesRequestToChatCompletionsRequestWithOptions(&request, chatOptions)
 		if err != nil {
 			return nil, err
+		}
+		if len(mappings) > 0 {
+			info.ResponsesToolNameMappings = mappings
 		}
 		return a.convertOpenAICompatibleRequest(c, info, chatReq)
 	default:
@@ -489,4 +499,78 @@ func (a *Adaptor) convertOpenAICompatibleImageRequest(c *gin.Context, info *rela
 	converted, err := a.openaiAdaptor.ConvertImageRequest(c, info, request)
 	info.ChannelType = old
 	return converted, err
+}
+
+func advancedCustomResponsesToolPolicies(options *dto.AdvancedCustomConverterOptions) relayconvert.ResponsesToolPolicies {
+	mode := dto.AdvancedCustomResponsesToolsModeCompatFlatten
+	if options != nil && strings.TrimSpace(options.ResponsesToolsMode) != "" {
+		mode = strings.TrimSpace(options.ResponsesToolsMode)
+	}
+
+	policies := relayconvert.ResponsesToolPolicies{
+		Namespace:       relayconvert.ResponsesToolPolicyFlatten,
+		Custom:          relayconvert.ResponsesToolPolicyDrop,
+		WebSearch:       relayconvert.ResponsesToolPolicyDrop,
+		ToolSearch:      relayconvert.ResponsesToolPolicyDrop,
+		ImageGeneration: relayconvert.ResponsesToolPolicyDrop,
+		Unknown:         relayconvert.ResponsesToolPolicyDrop,
+	}
+	if mode == dto.AdvancedCustomResponsesToolsModePreserve {
+		policies = relayconvert.ResponsesToolPolicies{
+			Namespace:       relayconvert.ResponsesToolPolicyPreserve,
+			Custom:          relayconvert.ResponsesToolPolicyPreserve,
+			WebSearch:       relayconvert.ResponsesToolPolicyPreserve,
+			ToolSearch:      relayconvert.ResponsesToolPolicyPreserve,
+			ImageGeneration: relayconvert.ResponsesToolPolicyPreserve,
+			Unknown:         relayconvert.ResponsesToolPolicyPreserve,
+		}
+	}
+
+	if options == nil || options.ResponsesTools == nil {
+		return policies
+	}
+	overrides := options.ResponsesTools
+	applyAdvancedCustomResponsesToolPolicyOverride(&policies.Namespace, overrides.Namespace)
+	applyAdvancedCustomResponsesToolPolicyOverride(&policies.Custom, overrides.Custom)
+	applyAdvancedCustomResponsesToolPolicyOverride(&policies.WebSearch, overrides.WebSearch)
+	applyAdvancedCustomResponsesToolPolicyOverride(&policies.ToolSearch, overrides.ToolSearch)
+	applyAdvancedCustomResponsesToolPolicyOverride(&policies.ImageGeneration, overrides.ImageGeneration)
+	applyAdvancedCustomResponsesToolPolicyOverride(&policies.Unknown, overrides.Unknown)
+	return policies
+}
+
+func applyAdvancedCustomResponsesToolPolicyOverride(target *string, policy string) {
+	if mapped := mapAdvancedCustomResponsesToolPolicy(policy); mapped != "" {
+		*target = mapped
+	}
+}
+
+func advancedCustomResponsesDropFields(options *dto.AdvancedCustomConverterOptions) map[string]struct{} {
+	if options == nil || len(options.ResponsesDropFields) == 0 {
+		return nil
+	}
+	out := make(map[string]struct{}, len(options.ResponsesDropFields))
+	for _, raw := range options.ResponsesDropFields {
+		field := strings.ToLower(strings.TrimSpace(raw))
+		if field == "" {
+			continue
+		}
+		out[field] = struct{}{}
+	}
+	return out
+}
+
+func mapAdvancedCustomResponsesToolPolicy(policy string) string {
+	switch strings.TrimSpace(policy) {
+	case dto.AdvancedCustomResponsesToolPolicyPreserve:
+		return relayconvert.ResponsesToolPolicyPreserve
+	case dto.AdvancedCustomResponsesToolPolicyFlatten:
+		return relayconvert.ResponsesToolPolicyFlatten
+	case dto.AdvancedCustomResponsesToolPolicyDrop:
+		return relayconvert.ResponsesToolPolicyDrop
+	case dto.AdvancedCustomResponsesToolPolicyReject:
+		return relayconvert.ResponsesToolPolicyReject
+	default:
+		return ""
+	}
 }

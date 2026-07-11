@@ -1,6 +1,7 @@
 package relayconvert
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -199,6 +200,191 @@ func TestResponsesRequestToChatCompletionsRequestToolsToolChoiceAndTextFormat(t 
 	assert.True(t, gjson.GetBytes(got.ResponseFormat.JsonSchema, "strict").Bool())
 }
 
+func TestResponsesRequestToChatCompletionsRequestFlattensNamespaceToolsWithMapping(t *testing.T) {
+	mappings := map[string]dto.ResponsesToolNameMapping{}
+	got, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
+		Model: "gpt-test",
+		Input: mustRawMessage(t, "hello"),
+		Tools: mustRawMessage(t, []map[string]any{
+			{
+				"type":        "namespace",
+				"name":        "mcp__demo__",
+				"description": "Demo tools",
+				"tools": []map[string]any{
+					{
+						"type":        "function",
+						"name":        "lookup_order",
+						"description": "Look up an order",
+						"parameters": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"order_id": map[string]any{"type": "string"},
+							},
+						},
+					},
+				},
+			},
+		}),
+	}, ResponsesRequestToChatOptions{
+		FlattenNamespaceTools: true,
+		ToolNameMappings:      mappings,
+	})
+	require.NoError(t, err)
+
+	require.Len(t, got.Tools, 1)
+	assert.Equal(t, "function", got.Tools[0].Type)
+	assert.Equal(t, "mcp__demo__lookup_order", got.Tools[0].Function.Name)
+	assert.Equal(t, "Look up an order", got.Tools[0].Function.Description)
+	assert.Equal(t, "object", got.Tools[0].Function.Parameters.(map[string]any)["type"])
+	assert.Equal(t, dto.ResponsesToolNameMapping{Namespace: "mcp__demo__", Name: "lookup_order"}, mappings["mcp__demo__lookup_order"])
+}
+
+func TestResponsesRequestToChatCompletionsRequestDropsUnsupportedToolsWhenRequested(t *testing.T) {
+	got, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
+		Model: "gpt-test",
+		Input: mustRawMessage(t, "hello"),
+		Tools: mustRawMessage(t, []map[string]any{
+			{"type": "web_search"},
+			{"type": "custom", "name": "apply_patch"},
+			{"type": "function", "name": "lookup", "parameters": map[string]any{"type": "object"}},
+		}),
+	}, ResponsesRequestToChatOptions{DropUnsupportedTools: true})
+	require.NoError(t, err)
+
+	require.Len(t, got.Tools, 1)
+	assert.Equal(t, "function", got.Tools[0].Type)
+	assert.Equal(t, "lookup", got.Tools[0].Function.Name)
+}
+
+func TestResponsesRequestToChatCompletionsRequestAppliesPerToolPolicies(t *testing.T) {
+	got, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
+		Model: "gpt-test",
+		Input: mustRawMessage(t, "hello"),
+		Tools: mustRawMessage(t, []map[string]any{
+			{
+				"type": "namespace",
+				"name": "mcp__demo__",
+				"tools": []map[string]any{
+					{"type": "function", "name": "lookup", "parameters": map[string]any{"type": "object"}},
+				},
+			},
+			{"type": "web_search"},
+			{"type": "custom", "name": "apply_patch"},
+		}),
+	}, ResponsesRequestToChatOptions{
+		ToolPolicies: ResponsesToolPolicies{
+			Namespace: ResponsesToolPolicyPreserve,
+			WebSearch: ResponsesToolPolicyDrop,
+			Custom:    ResponsesToolPolicyPreserve,
+		},
+	})
+	require.NoError(t, err)
+
+	require.Len(t, got.Tools, 2)
+	assert.Equal(t, "namespace", got.Tools[0].Type)
+	assert.Contains(t, string(got.Tools[0].Custom), `"type":"namespace"`)
+	assert.Equal(t, "custom", got.Tools[1].Type)
+}
+
+func TestResponsesRequestToChatCompletionsRequestRejectsToolByPolicy(t *testing.T) {
+	_, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
+		Model: "gpt-test",
+		Input: mustRawMessage(t, "hello"),
+		Tools: mustRawMessage(t, []map[string]any{{"type": "web_search"}}),
+	}, ResponsesRequestToChatOptions{
+		ToolPolicies: ResponsesToolPolicies{WebSearch: ResponsesToolPolicyReject},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `responses tool "web_search" is not supported`)
+}
+
+func TestResponsesRequestToChatCompletionsRequestRejectsDroppedToolChoice(t *testing.T) {
+	_, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
+		Model:      "gpt-test",
+		Input:      mustRawMessage(t, "hello"),
+		Tools:      mustRawMessage(t, []map[string]any{{"type": "web_search"}}),
+		ToolChoice: mustRawMessage(t, map[string]any{"type": "web_search"}),
+	}, ResponsesRequestToChatOptions{
+		ToolPolicies: ResponsesToolPolicies{WebSearch: ResponsesToolPolicyDrop},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "tool_choice")
+	assert.Contains(t, err.Error(), "web_search")
+}
+
+func TestResponsesRequestToChatCompletionsRequestRewritesFlattenedNamespaceFunctionToolChoice(t *testing.T) {
+	mappings := map[string]dto.ResponsesToolNameMapping{}
+	got, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
+		Model: "gpt-test",
+		Input: mustRawMessage(t, "hello"),
+		Tools: mustRawMessage(t, []map[string]any{
+			{
+				"type": "namespace",
+				"name": "mcp__demo__",
+				"tools": []map[string]any{
+					{"type": "function", "name": "lookup"},
+				},
+			},
+		}),
+		ToolChoice: mustRawMessage(t, map[string]any{"type": "function", "name": "lookup"}),
+	}, ResponsesRequestToChatOptions{
+		ToolPolicies:     ResponsesToolPolicies{Namespace: ResponsesToolPolicyFlatten},
+		ToolNameMappings: mappings,
+	})
+	require.NoError(t, err)
+	choice, ok := got.ToolChoice.(map[string]any)
+	require.True(t, ok)
+	function, ok := choice["function"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "mcp__demo__lookup", function["name"])
+}
+
+func TestResponsesRequestToChatCompletionsRequestConvertsPreservedCustomToolChoice(t *testing.T) {
+	got, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
+		Model:      "gpt-test",
+		Input:      mustRawMessage(t, "hello"),
+		Tools:      mustRawMessage(t, []map[string]any{{"type": "custom", "name": "apply_patch"}}),
+		ToolChoice: mustRawMessage(t, map[string]any{"type": "custom", "name": "apply_patch"}),
+	}, ResponsesRequestToChatOptions{
+		ToolPolicies: ResponsesToolPolicies{Custom: ResponsesToolPolicyPreserve},
+	})
+	require.NoError(t, err)
+	choice, ok := got.ToolChoice.(map[string]any)
+	require.True(t, ok)
+	custom, ok := choice["custom"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "apply_patch", custom["name"])
+}
+
+func TestResponsesRequestToChatCompletionsRequestRejectsAllowedToolsChoiceWhenPoliciesMutateTools(t *testing.T) {
+	_, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
+		Model: "gpt-test",
+		Input: mustRawMessage(t, "hello"),
+		ToolChoice: mustRawMessage(t, map[string]any{
+			"type":  "allowed_tools",
+			"mode":  "auto",
+			"tools": []map[string]any{{"type": "web_search"}},
+		}),
+	}, ResponsesRequestToChatOptions{
+		ToolPolicies: ResponsesToolPolicies{WebSearch: ResponsesToolPolicyDrop},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "allowed_tools")
+	assert.Contains(t, err.Error(), "tool policies")
+}
+
+func TestResponsesRequestToChatCompletionsRequestDropsUnknownToolByCompatDefault(t *testing.T) {
+	got, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
+		Model: "gpt-test",
+		Input: mustRawMessage(t, "hello"),
+		Tools: mustRawMessage(t, []map[string]any{{"type": "computer_use"}}),
+	}, ResponsesRequestToChatOptions{
+		ToolPolicies: ResponsesToolPolicies{Namespace: ResponsesToolPolicyFlatten},
+	})
+	require.NoError(t, err)
+	assert.Empty(t, got.Tools)
+}
+
 func TestResponsesRequestToChatCompletionsRequestCustomToolCallPreservesRawShape(t *testing.T) {
 	got, err := ResponsesRequestToChatCompletionsRequest(&dto.OpenAIResponsesRequest{
 		Model: "gpt-test",
@@ -267,4 +453,62 @@ func mustRawMessage(t *testing.T, value any) []byte {
 	raw, err := common.Marshal(value)
 	require.NoError(t, err)
 	return raw
+}
+
+func TestResponsesRequestToChatCompletionsRequestDropsResponseFieldsByName(t *testing.T) {
+	got, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
+		Model:                "gpt-test",
+		Input:                mustRawMessage(t, "hello"),
+		Metadata:             mustRawMessage(t, map[string]any{"codex": "trace"}),
+		Store:                mustRawMessage(t, true),
+		TopLogProbs:          intPtr(2),
+		ServiceTier:          "auto",
+		SafetyIdentifier:     mustRawMessage(t, "user-1"),
+		PromptCacheRetention: mustRawMessage(t, "24h"),
+		PromptCacheKey:       mustRawMessage(t, "cache-key"),
+		ParallelToolCalls:    mustRawMessage(t, true),
+		StreamOptions:        &dto.StreamOptions{IncludeUsage: true},
+		Reasoning:            &dto.Reasoning{Effort: "high"},
+	}, ResponsesRequestToChatOptions{
+		DropResponseFields: map[string]struct{}{
+			"metadata":               {},
+			"store":                  {},
+			"service_tier":           {},
+			"safety_identifier":      {},
+			"prompt_cache_retention": {},
+			"prompt_cache_key":       {},
+			"parallel_tool_calls":    {},
+			"stream_options":         {},
+			"reasoning":              {},
+			"top_logprobs":           {},
+		},
+	})
+	require.NoError(t, err)
+	assert.Nil(t, got.Metadata)
+	assert.Nil(t, got.Store)
+	assert.Nil(t, got.SafetyIdentifier)
+	assert.Nil(t, got.PromptCacheRetention)
+	assert.Empty(t, got.ServiceTier)
+	assert.Empty(t, got.PromptCacheKey)
+	assert.Nil(t, got.ParallelTooCalls)
+	assert.Nil(t, got.StreamOptions)
+	assert.Empty(t, got.ReasoningEffort)
+	assert.Nil(t, got.TopLogProbs)
+}
+
+func TestResponsesRequestToChatCompletionsRequestKeepsFieldsByDefault(t *testing.T) {
+	got, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
+		Model:          "gpt-test",
+		Input:          mustRawMessage(t, "hello"),
+		Metadata:       mustRawMessage(t, map[string]any{"codex": "trace"}),
+		Store:          mustRawMessage(t, false),
+		ServiceTier:    "auto",
+		PromptCacheKey: mustRawMessage(t, "cache-key"),
+		Reasoning:      &dto.Reasoning{Effort: "high"},
+	}, ResponsesRequestToChatOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, `{"codex":"trace"}`, string(got.Metadata))
+	assert.Equal(t, "auto", strings.Trim(string(got.ServiceTier), `"`))
+	assert.Equal(t, "cache-key", got.PromptCacheKey)
+	assert.Equal(t, "high", got.ReasoningEffort)
 }

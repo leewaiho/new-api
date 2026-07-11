@@ -16,7 +16,52 @@ const (
 	responsesInputTypeCustomToolCall     = "custom_tool_call"
 )
 
+const (
+	ResponsesToolPolicyPreserve = "preserve"
+	ResponsesToolPolicyFlatten  = "flatten"
+	ResponsesToolPolicyDrop     = "drop"
+	ResponsesToolPolicyReject   = "reject"
+)
+
+// ResponsesRequestToChatOptions controls lossy compatibility behavior needed
+// when a Responses request must be sent to a Chat Completions-only upstream.
+type ResponsesRequestToChatOptions struct {
+	// Deprecated compatibility flags. Use ToolPolicies for per-tool behavior.
+	FlattenNamespaceTools bool
+	DropUnsupportedTools  bool
+	ToolPolicies          ResponsesToolPolicies
+	ToolNameMappings      map[string]dto.ResponsesToolNameMapping
+	// DropResponseFields lists Responses request field names that must be
+	// removed when sending the converted Chat Completions request. This is
+	// used for chat-only upstreams that reject Responses-shaped parameters
+	// (for example "metadata").
+	DropResponseFields map[string]struct{}
+}
+
+// ShouldDropResponseField reports whether the given Responses request field
+// should be stripped from the converted Chat Completions request.
+func (o ResponsesRequestToChatOptions) ShouldDropResponseField(field string) bool {
+	if len(o.DropResponseFields) == 0 {
+		return false
+	}
+	_, ok := o.DropResponseFields[strings.ToLower(strings.TrimSpace(field))]
+	return ok
+}
+
+type ResponsesToolPolicies struct {
+	Namespace       string
+	Custom          string
+	WebSearch       string
+	ToolSearch      string
+	ImageGeneration string
+	Unknown         string
+}
+
 func ResponsesRequestToChatCompletionsRequest(req *dto.OpenAIResponsesRequest) (*dto.GeneralOpenAIRequest, error) {
+	return ResponsesRequestToChatCompletionsRequestWithOptions(req, ResponsesRequestToChatOptions{})
+}
+
+func ResponsesRequestToChatCompletionsRequestWithOptions(req *dto.OpenAIResponsesRequest, options ResponsesRequestToChatOptions) (*dto.GeneralOpenAIRequest, error) {
 	if req == nil {
 		return nil, errors.New("request is nil")
 	}
@@ -32,12 +77,12 @@ func ResponsesRequestToChatCompletionsRequest(req *dto.OpenAIResponsesRequest) (
 		return nil, err
 	}
 
-	tools, err := responsesRequestToolsToChat(req.Tools)
+	tools, err := responsesRequestToolsToChat(req.Tools, options)
 	if err != nil {
 		return nil, err
 	}
 
-	toolChoice, err := responsesRequestToolChoiceToChat(req.ToolChoice)
+	toolChoice, err := responsesRequestToolChoiceToChat(req.ToolChoice, options, tools)
 	if err != nil {
 		return nil, err
 	}
@@ -48,42 +93,55 @@ func ResponsesRequestToChatCompletionsRequest(req *dto.OpenAIResponsesRequest) (
 	}
 
 	out := &dto.GeneralOpenAIRequest{
-		Model:                req.Model,
-		Messages:             messages,
-		Stream:               req.Stream,
-		StreamOptions:        req.StreamOptions,
-		MaxCompletionTokens:  req.MaxOutputTokens,
-		Temperature:          req.Temperature,
-		TopP:                 req.TopP,
-		TopLogProbs:          req.TopLogProbs,
-		ResponseFormat:       responseFormat,
-		Tools:                tools,
-		ToolChoice:           toolChoice,
-		User:                 req.User,
-		Store:                req.Store,
-		Metadata:             req.Metadata,
-		SafetyIdentifier:     req.SafetyIdentifier,
-		PromptCacheRetention: req.PromptCacheRetention,
-		EnableThinking:       req.EnableThinking,
+		Model:               req.Model,
+		Messages:            messages,
+		Stream:              req.Stream,
+		MaxCompletionTokens: req.MaxOutputTokens,
+		Temperature:         req.Temperature,
+		TopP:                req.TopP,
+		ResponseFormat:      responseFormat,
+		Tools:               tools,
+		ToolChoice:          toolChoice,
+		User:                req.User,
+		EnableThinking:      req.EnableThinking,
 	}
-
-	if req.Reasoning != nil {
-		out.ReasoningEffort = req.Reasoning.Effort
+	if !options.ShouldDropResponseField("stream_options") && req.StreamOptions != nil {
+		out.StreamOptions = req.StreamOptions
 	}
-	if req.ServiceTier != "" {
-		out.ServiceTier, _ = common.Marshal(req.ServiceTier)
+	if !options.ShouldDropResponseField("top_logprobs") {
+		out.TopLogProbs = req.TopLogProbs
 	}
-	if len(req.ParallelToolCalls) > 0 && common.GetJsonType(req.ParallelToolCalls) == "boolean" {
+	if !options.ShouldDropResponseField("store") {
+		out.Store = req.Store
+	}
+	if !options.ShouldDropResponseField("metadata") {
+		out.Metadata = req.Metadata
+	}
+	if !options.ShouldDropResponseField("safety_identifier") {
+		out.SafetyIdentifier = req.SafetyIdentifier
+	}
+	if !options.ShouldDropResponseField("prompt_cache_retention") {
+		out.PromptCacheRetention = req.PromptCacheRetention
+	}
+	if !options.ShouldDropResponseField("service_tier") {
+		if req.ServiceTier != "" {
+			out.ServiceTier, _ = common.Marshal(req.ServiceTier)
+		}
+	}
+	if !options.ShouldDropResponseField("prompt_cache_key") && len(req.PromptCacheKey) > 0 && common.GetJsonType(req.PromptCacheKey) == "string" {
+		var promptCacheKey string
+		if err := common.Unmarshal(req.PromptCacheKey, &promptCacheKey); err == nil {
+			out.PromptCacheKey = promptCacheKey
+		}
+	}
+	if !options.ShouldDropResponseField("parallel_tool_calls") && len(req.ParallelToolCalls) > 0 && common.GetJsonType(req.ParallelToolCalls) == "boolean" {
 		var parallelToolCalls bool
 		if err := common.Unmarshal(req.ParallelToolCalls, &parallelToolCalls); err == nil {
 			out.ParallelTooCalls = &parallelToolCalls
 		}
 	}
-	if len(req.PromptCacheKey) > 0 && common.GetJsonType(req.PromptCacheKey) == "string" {
-		var promptCacheKey string
-		if err := common.Unmarshal(req.PromptCacheKey, &promptCacheKey); err == nil {
-			out.PromptCacheKey = promptCacheKey
-		}
+	if !options.ShouldDropResponseField("reasoning") && req.Reasoning != nil {
+		out.ReasoningEffort = req.Reasoning.Effort
 	}
 
 	return out, nil
@@ -306,7 +364,7 @@ func appendToolCallToLastAssistant(messages []dto.Message, toolCall dto.ToolCall
 	return messages
 }
 
-func responsesRequestToolsToChat(raw json.RawMessage) ([]dto.ToolCallRequest, error) {
+func responsesRequestToolsToChat(raw json.RawMessage, options ResponsesRequestToChatOptions) ([]dto.ToolCallRequest, error) {
 	if !rawJSONPresent(raw) {
 		return nil, nil
 	}
@@ -316,34 +374,170 @@ func responsesRequestToolsToChat(raw json.RawMessage) ([]dto.ToolCallRequest, er
 		return nil, fmt.Errorf("invalid tools: %w", err)
 	}
 
+	policies := normalizeResponsesToolPolicies(options)
 	out := make([]dto.ToolCallRequest, 0, len(tools))
 	for _, tool := range tools {
 		toolType := strings.TrimSpace(common.Interface2String(tool["type"]))
-		if toolType == "function" {
-			out = append(out, dto.ToolCallRequest{
-				Type: "function",
-				Function: dto.FunctionRequest{
-					Name:        strings.TrimSpace(common.Interface2String(tool["name"])),
-					Description: common.Interface2String(tool["description"]),
-					Parameters:  tool["parameters"],
-				},
-			})
-			continue
+		switch toolType {
+		case "function":
+			out = append(out, responsesFunctionToolToChat(tool, ""))
+		case "namespace":
+			switch policies.Namespace {
+			case ResponsesToolPolicyDrop:
+				continue
+			case ResponsesToolPolicyReject:
+				return nil, fmt.Errorf("responses tool %q is not supported by this converter route", toolType)
+			case ResponsesToolPolicyFlatten:
+				flattened, err := responsesNamespaceToolToChat(tool, options.ToolNameMappings)
+				if err != nil {
+					return nil, err
+				}
+				out = append(out, flattened...)
+			default:
+				chatTool, err := responsesRawToolToChat(toolType, tool)
+				if err != nil {
+					return nil, err
+				}
+				out = append(out, chatTool)
+			}
+		default:
+			policy := responsesToolPolicyForType(policies, toolType)
+			switch policy {
+			case ResponsesToolPolicyDrop:
+				continue
+			case ResponsesToolPolicyReject:
+				return nil, fmt.Errorf("responses tool %q is not supported by this converter route", toolType)
+			default:
+				chatTool, err := responsesRawToolToChat(toolType, tool)
+				if err != nil {
+					return nil, err
+				}
+				out = append(out, chatTool)
+			}
 		}
-
-		rawTool, err := common.Marshal(tool)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, dto.ToolCallRequest{
-			Type:   toolType,
-			Custom: rawTool,
-		})
 	}
 	return out, nil
 }
 
-func responsesRequestToolChoiceToChat(raw json.RawMessage) (any, error) {
+func normalizeResponsesToolPolicies(options ResponsesRequestToChatOptions) ResponsesToolPolicies {
+	if !responsesToolPoliciesEmpty(options.ToolPolicies) {
+		return ResponsesToolPolicies{
+			Namespace:       defaultResponseToolPolicy(options.ToolPolicies.Namespace, ResponsesToolPolicyFlatten),
+			Custom:          defaultResponseToolPolicy(options.ToolPolicies.Custom, ResponsesToolPolicyDrop),
+			WebSearch:       defaultResponseToolPolicy(options.ToolPolicies.WebSearch, ResponsesToolPolicyDrop),
+			ToolSearch:      defaultResponseToolPolicy(options.ToolPolicies.ToolSearch, ResponsesToolPolicyDrop),
+			ImageGeneration: defaultResponseToolPolicy(options.ToolPolicies.ImageGeneration, ResponsesToolPolicyDrop),
+			Unknown:         defaultResponseToolPolicy(options.ToolPolicies.Unknown, ResponsesToolPolicyDrop),
+		}
+	}
+	if options.FlattenNamespaceTools || options.DropUnsupportedTools {
+		policies := ResponsesToolPolicies{Namespace: ResponsesToolPolicyPreserve}
+		if options.FlattenNamespaceTools {
+			policies.Namespace = ResponsesToolPolicyFlatten
+		}
+		if options.DropUnsupportedTools {
+			policies.Custom = ResponsesToolPolicyDrop
+			policies.WebSearch = ResponsesToolPolicyDrop
+			policies.ToolSearch = ResponsesToolPolicyDrop
+			policies.ImageGeneration = ResponsesToolPolicyDrop
+			policies.Unknown = ResponsesToolPolicyDrop
+		}
+		return policies
+	}
+	return ResponsesToolPolicies{
+		Namespace:       ResponsesToolPolicyPreserve,
+		Custom:          ResponsesToolPolicyPreserve,
+		WebSearch:       ResponsesToolPolicyPreserve,
+		ToolSearch:      ResponsesToolPolicyPreserve,
+		ImageGeneration: ResponsesToolPolicyPreserve,
+		Unknown:         ResponsesToolPolicyPreserve,
+	}
+}
+
+func responsesToolPoliciesEmpty(policies ResponsesToolPolicies) bool {
+	return policies.Namespace == "" && policies.Custom == "" && policies.WebSearch == "" && policies.ToolSearch == "" && policies.ImageGeneration == "" && policies.Unknown == ""
+}
+
+func defaultResponseToolPolicy(policy string, fallback string) string {
+	policy = strings.TrimSpace(policy)
+	if policy == "" {
+		return fallback
+	}
+	return policy
+}
+
+func responsesToolPolicyForType(policies ResponsesToolPolicies, toolType string) string {
+	switch toolType {
+	case "custom":
+		return policies.Custom
+	case "web_search":
+		return policies.WebSearch
+	case "tool_search":
+		return policies.ToolSearch
+	case "image_generation":
+		return policies.ImageGeneration
+	default:
+		return defaultResponseToolPolicy(policies.Unknown, ResponsesToolPolicyPreserve)
+	}
+}
+
+func responsesFunctionToolToChat(tool map[string]any, namePrefix string) dto.ToolCallRequest {
+	name := strings.TrimSpace(common.Interface2String(tool["name"]))
+	return dto.ToolCallRequest{
+		Type: "function",
+		Function: dto.FunctionRequest{
+			Name:        namePrefix + name,
+			Description: common.Interface2String(tool["description"]),
+			Parameters:  tool["parameters"],
+		},
+	}
+}
+
+func responsesNamespaceToolToChat(tool map[string]any, mappings map[string]dto.ResponsesToolNameMapping) ([]dto.ToolCallRequest, error) {
+	namespace := strings.TrimSpace(common.Interface2String(tool["name"]))
+	if namespace == "" {
+		return nil, fmt.Errorf("namespace tool name is required")
+	}
+	rawTools, ok := tool["tools"].([]any)
+	if !ok {
+		return nil, fmt.Errorf("namespace tool %q tools must be an array", namespace)
+	}
+	out := make([]dto.ToolCallRequest, 0, len(rawTools))
+	for _, rawTool := range rawTools {
+		nested, ok := rawTool.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("namespace tool %q contains invalid tool", namespace)
+		}
+		nestedType := strings.TrimSpace(common.Interface2String(nested["type"]))
+		if nestedType != "function" {
+			continue
+		}
+		nestedName := strings.TrimSpace(common.Interface2String(nested["name"]))
+		if nestedName == "" {
+			return nil, fmt.Errorf("namespace tool %q contains function without name", namespace)
+		}
+		flatName := namespace + nestedName
+		chatTool := responsesFunctionToolToChat(nested, namespace)
+		out = append(out, chatTool)
+		if mappings != nil {
+			mappings[flatName] = dto.ResponsesToolNameMapping{Namespace: namespace, Name: nestedName}
+		}
+	}
+	return out, nil
+}
+
+func responsesRawToolToChat(toolType string, tool map[string]any) (dto.ToolCallRequest, error) {
+	rawTool, err := common.Marshal(tool)
+	if err != nil {
+		return dto.ToolCallRequest{}, fmt.Errorf("invalid responses tool %q: %w", toolType, err)
+	}
+	return dto.ToolCallRequest{
+		Type:   toolType,
+		Custom: rawTool,
+	}, nil
+}
+
+func responsesRequestToolChoiceToChat(raw json.RawMessage, options ResponsesRequestToChatOptions, tools []dto.ToolCallRequest) (any, error) {
 	if !rawJSONPresent(raw) {
 		return nil, nil
 	}
@@ -359,18 +553,97 @@ func responsesRequestToolChoiceToChat(raw json.RawMessage) (any, error) {
 	if err := common.Unmarshal(raw, &choice); err != nil {
 		return nil, fmt.Errorf("invalid tool_choice: %w", err)
 	}
-	if common.Interface2String(choice["type"]) == "function" {
+	toolType := strings.TrimSpace(common.Interface2String(choice["type"]))
+	policies := normalizeResponsesToolPolicies(options)
+
+	if toolType == "function" {
+		name := strings.TrimSpace(common.Interface2String(choice["name"]))
+		if name == "" {
+			return choice, nil
+		}
+		resolvedName, err := resolveResponsesFunctionToolChoiceName(name, tools, options.ToolNameMappings)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{
+			"type": "function",
+			"function": map[string]any{
+				"name": resolvedName,
+			},
+		}, nil
+	}
+
+	if toolType == "allowed_tools" && responsesToolPoliciesMutateTools(policies) {
+		return nil, errors.New("responses tool_choice type \"allowed_tools\" cannot be safely converted when tool policies modify tools")
+	}
+
+	policy := responsesToolPolicyForType(policies, toolType)
+	if toolType == "namespace" {
+		policy = policies.Namespace
+	}
+	switch policy {
+	case ResponsesToolPolicyDrop, ResponsesToolPolicyReject:
+		return nil, fmt.Errorf("responses tool_choice selects %q, but its converter policy is %q", toolType, policy)
+	case ResponsesToolPolicyFlatten:
+		return nil, fmt.Errorf("responses tool_choice selects %q, but an explicit flattened tool cannot be resolved safely", toolType)
+	}
+
+	if toolType == "custom" {
 		name := strings.TrimSpace(common.Interface2String(choice["name"]))
 		if name != "" {
 			return map[string]any{
-				"type": "function",
-				"function": map[string]any{
+				"type": "custom",
+				"custom": map[string]any{
 					"name": name,
 				},
 			}, nil
 		}
 	}
 	return choice, nil
+}
+
+func resolveResponsesFunctionToolChoiceName(name string, tools []dto.ToolCallRequest, mappings map[string]dto.ResponsesToolNameMapping) (string, error) {
+	for _, tool := range tools {
+		if tool.Type == "function" && tool.Function.Name == name {
+			return name, nil
+		}
+	}
+
+	matches := make([]string, 0, 1)
+	for flatName, mapping := range mappings {
+		if mapping.Name != name {
+			continue
+		}
+		for _, tool := range tools {
+			if tool.Type == "function" && tool.Function.Name == flatName {
+				matches = append(matches, flatName)
+				break
+			}
+		}
+	}
+	if len(matches) == 1 {
+		return matches[0], nil
+	}
+	if len(matches) > 1 {
+		return "", fmt.Errorf("responses tool_choice function %q matches multiple flattened namespace tools", name)
+	}
+	return name, nil
+}
+
+func responsesToolPoliciesMutateTools(policies ResponsesToolPolicies) bool {
+	for _, policy := range []string{
+		policies.Namespace,
+		policies.Custom,
+		policies.WebSearch,
+		policies.ToolSearch,
+		policies.ImageGeneration,
+		policies.Unknown,
+	} {
+		if policy != "" && policy != ResponsesToolPolicyPreserve {
+			return true
+		}
+	}
+	return false
 }
 
 func responsesRequestTextToChatResponseFormat(raw json.RawMessage) (*dto.ResponseFormat, error) {

@@ -20,6 +20,8 @@ import type {
   AdvancedCustomAuthType,
   AdvancedCustomConfig,
   AdvancedCustomConverter,
+  AdvancedCustomResponsesToolPolicy,
+  AdvancedCustomResponsesToolsMode,
   AdvancedCustomRoute,
   AdvancedCustomRouteAuth,
 } from '../types'
@@ -67,6 +69,50 @@ export const ADVANCED_CUSTOM_AUTH_MODE_OPTIONS: Array<{
   { value: 'none', label: 'No Auth' },
   { value: 'header', label: 'Header' },
   { value: 'query', label: 'Query' },
+]
+
+export const ADVANCED_CUSTOM_RESPONSES_TOOLS_MODE_OPTIONS: Array<{
+  value: AdvancedCustomResponsesToolsMode
+  label: string
+  description: string
+}> = [
+  {
+    value: 'compat_flatten',
+    label: 'Compat: flatten namespace tools',
+    description: 'Flatten namespace function tools and drop Responses-only tools for Chat Completions upstreams.',
+  },
+  {
+    value: 'preserve',
+    label: 'Preserve Responses tools',
+    description: 'Forward Responses tools as-is for upstreams that support namespace/custom tool types.',
+  },
+]
+
+export const ADVANCED_CUSTOM_RESPONSES_TOOL_POLICY_OPTIONS: Array<{
+  value: AdvancedCustomResponsesToolPolicy
+  label: string
+  description: string
+}> = [
+  {
+    value: 'preserve',
+    label: 'Preserve',
+    description: 'Forward the tool definition as-is to the upstream.',
+  },
+  {
+    value: 'flatten',
+    label: 'Flatten',
+    description: 'Only valid for namespace: expand into individual function tools.',
+  },
+  {
+    value: 'drop',
+    label: 'Drop',
+    description: 'Remove the tool from the converted request.',
+  },
+  {
+    value: 'reject',
+    label: 'Reject',
+    description: 'Return an explicit error if the client sends this tool.',
+  },
 ]
 
 export type AdvancedCustomIncomingPathOption = {
@@ -431,13 +477,13 @@ export function normalizeAdvancedCustomConfig(
     ? config.advanced_routes.map(normalizeAdvancedCustomRoute)
     : []
   const modelFetchURLs = Array.isArray(config.model_fetch_urls)
-    ? Array.from(
-        new Set(
+    ? [
+        ...new Set(
           config.model_fetch_urls
             .map((url) => (typeof url === 'string' ? url.trim() : ''))
             .filter(Boolean)
-        )
-      )
+        ),
+      ]
     : []
 
   return {
@@ -515,6 +561,11 @@ export function validateAdvancedCustomConfig(
     const authError = validateRouteAuth(route.auth)
     if (authError) {
       return { routeIndex: index, message: authError }
+    }
+
+    const converterOptionsError = validateRouteConverterOptions(route)
+    if (converterOptionsError) {
+      return { routeIndex: index, message: converterOptionsError }
     }
   }
 
@@ -600,6 +651,29 @@ function normalizeAdvancedCustomRoute(
       value: route.auth.value || '',
     }
   }
+  if (route.converter_options) {
+    nextRoute.converter_options = {
+      responses_tools_mode: route.converter_options.responses_tools_mode,
+      responses_tools: route.converter_options.responses_tools
+        ? {
+            namespace: route.converter_options.responses_tools.namespace,
+            custom: route.converter_options.responses_tools.custom,
+            web_search: route.converter_options.responses_tools.web_search,
+            tool_search: route.converter_options.responses_tools.tool_search,
+            image_generation:
+              route.converter_options.responses_tools.image_generation,
+            unknown: route.converter_options.responses_tools.unknown,
+          }
+        : undefined,
+      responses_drop_fields: Array.isArray(
+        route.converter_options.responses_drop_fields
+      )
+        ? route.converter_options.responses_drop_fields
+            .map((field) => (field || '').trim())
+            .filter((field) => field.length > 0)
+        : undefined,
+    }
+  }
   return nextRoute
 }
 
@@ -683,7 +757,120 @@ function validateRouteAuth(
   return null
 }
 
+export type AdvancedCustomResponsesDropField =
+  | 'metadata'
+  | 'store'
+  | 'service_tier'
+  | 'safety_identifier'
+  | 'prompt_cache_key'
+  | 'prompt_cache_retention'
+  | 'parallel_tool_calls'
+  | 'stream_options'
+  | 'top_logprobs'
+  | 'reasoning'
 
+export const ADVANCED_CUSTOM_RESPONSES_DROP_FIELDS: ReadonlyArray<{
+  value: AdvancedCustomResponsesDropField
+  label: string
+  description: string
+}> = [
+  {
+    value: 'metadata',
+    label: 'metadata',
+    description: 'Drop the metadata object (Zhipu CodingPlan rejects it with 1210).',
+  },
+  {
+    value: 'store',
+    label: 'store',
+    description: 'Drop the store flag (chat-only upstreams do not support it).',
+  },
+  {
+    value: 'service_tier',
+    label: 'service_tier',
+    description: 'Drop the service tier hint used by OpenAI billing.',
+  },
+  {
+    value: 'safety_identifier',
+    label: 'safety_identifier',
+    description: 'Drop the safety identifier (user identity, privacy default).',
+  },
+  {
+    value: 'prompt_cache_key',
+    label: 'prompt_cache_key',
+    description: 'Drop the prompt cache key (OpenAI Responses only).',
+  },
+  {
+    value: 'prompt_cache_retention',
+    label: 'prompt_cache_retention',
+    description: 'Drop the prompt cache retention hint.',
+  },
+  {
+    value: 'parallel_tool_calls',
+    label: 'parallel_tool_calls',
+    description: 'Drop the parallel tool calls flag.',
+  },
+  {
+    value: 'stream_options',
+    label: 'stream_options',
+    description: 'Drop stream options such as include_usage.',
+  },
+  {
+    value: 'top_logprobs',
+    label: 'top_logprobs',
+    description: 'Drop top_logprobs (chat-only upstreams may reject it).',
+  },
+  {
+    value: 'reasoning',
+    label: 'reasoning',
+    description: 'Drop the reasoning object to avoid passing it to chat upstreams.',
+  },
+]
+
+function validateRouteConverterOptions(
+  route: AdvancedCustomRoute
+): string | null {
+  const mode = route.converter_options?.responses_tools_mode
+  const tools = route.converter_options?.responses_tools
+  const dropFields = route.converter_options?.responses_drop_fields
+  if (!mode && !tools && (!dropFields || dropFields.length === 0)) return null
+  if (route.converter !== 'openai_responses_to_openai_chat_completions') {
+    return 'Responses tool options only work with OpenAI Responses to OpenAI Chat converter'
+  }
+  if (
+    mode &&
+    !ADVANCED_CUSTOM_RESPONSES_TOOLS_MODE_OPTIONS.some(
+      (option) => option.value === mode
+    )
+  ) {
+    return 'Responses tools mode is invalid'
+  }
+  if (tools) {
+    const allowed = new Set(['preserve', 'flatten', 'drop', 'reject'])
+    const entries = Object.entries(tools)
+    for (const [toolType, policy] of entries) {
+      if (!policy) continue
+      if (!allowed.has(policy)) {
+        return `Responses tool policy is invalid: ${toolType}`
+      }
+      if (policy === 'flatten' && toolType !== 'namespace') {
+        return `Responses tool policy flatten only supports namespace`
+      }
+    }
+  }
+  if (dropFields) {
+    const allowed = new Set<string>(
+      ADVANCED_CUSTOM_RESPONSES_DROP_FIELDS.map((option) => option.value)
+    )
+    for (const field of dropFields) {
+      const normalized = (field || '').trim().toLowerCase()
+      if (!normalized) continue
+      if (!allowed.has(normalized)) {
+        return `Responses drop field is not supported: ${field}`
+      }
+    }
+  }
+  return null
+}
 export interface DualEndpointConfigInput {
   anthropicBaseURL: string
   openaiBaseURL: string
@@ -821,4 +1008,3 @@ export function extractACFetchURLs(
   }
   return [...new Set(urls)]
 }
-

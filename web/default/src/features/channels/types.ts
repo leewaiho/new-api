@@ -119,7 +119,30 @@ export interface AdvancedCustomRoute {
   upstream_path?: string
   converter?: AdvancedCustomConverter
   auth?: AdvancedCustomRouteAuth
+  converter_options?: AdvancedCustomConverterOptions
 }
+
+export interface AdvancedCustomConverterOptions {
+  responses_tools_mode?: AdvancedCustomResponsesToolsMode
+  responses_tools?: AdvancedCustomResponsesToolsOptions
+  responses_drop_fields?: string[]
+}
+
+export interface AdvancedCustomResponsesToolsOptions {
+  namespace?: AdvancedCustomResponsesToolPolicy
+  custom?: AdvancedCustomResponsesToolPolicy
+  web_search?: AdvancedCustomResponsesToolPolicy
+  tool_search?: AdvancedCustomResponsesToolPolicy
+  image_generation?: AdvancedCustomResponsesToolPolicy
+  unknown?: AdvancedCustomResponsesToolPolicy
+}
+
+export type AdvancedCustomResponsesToolsMode = 'compat_flatten' | 'preserve'
+export type AdvancedCustomResponsesToolPolicy =
+  | 'preserve'
+  | 'flatten'
+  | 'drop'
+  | 'reject'
 
 export interface AdvancedCustomRouteAuth {
   type?: AdvancedCustomAuthType

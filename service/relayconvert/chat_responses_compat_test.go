@@ -46,6 +46,28 @@ func TestChatCompletionsRequestToResponsesRequestRejectsMultipleChoices(t *testi
 	assert.Contains(t, err.Error(), "n>1")
 }
 
+func TestApplyResponsesToolNameMappingsRestoresNamespace(t *testing.T) {
+	resp := &dto.OpenAIResponsesResponse{
+		Output: []dto.ResponsesOutput{
+			{
+				Type:      responsesOutputTypeFunctionCall,
+				ID:        "fc_1",
+				CallId:    "call_1",
+				Name:      "mcp__demo__lookup_order",
+				Arguments: []byte(`{"order_id":"123"}`),
+			},
+		},
+	}
+
+	ApplyResponsesToolNameMappings(resp, map[string]dto.ResponsesToolNameMapping{
+		"mcp__demo__lookup_order": {Namespace: "mcp__demo__", Name: "lookup_order"},
+	})
+
+	require.Len(t, resp.Output, 1)
+	assert.Equal(t, "mcp__demo__", resp.Output[0].Namespace)
+	assert.Equal(t, "lookup_order", resp.Output[0].Name)
+}
+
 func TestResponsesResponseToChatCompletionsPreservesTextAndToolCalls(t *testing.T) {
 	resp := &dto.OpenAIResponsesResponse{
 		ID:        "resp_1",

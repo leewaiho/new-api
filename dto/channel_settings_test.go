@@ -44,3 +44,96 @@ func TestAdvancedCustomValidateResponsesToChatConverterPath(t *testing.T) {
 		})
 	}
 }
+
+func TestAdvancedCustomValidateResponsesToolsMode(t *testing.T) {
+	valid := &AdvancedCustomConfig{
+		Routes: []AdvancedCustomRoute{
+			{
+				IncomingPath: "/v1/responses",
+				UpstreamPath: "/v1/chat/completions",
+				Converter:    AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions,
+				ConverterOptions: &AdvancedCustomConverterOptions{
+					ResponsesToolsMode: AdvancedCustomResponsesToolsModePreserve,
+				},
+			},
+		},
+	}
+	require.NoError(t, valid.Validate())
+
+	invalidMode := &AdvancedCustomConfig{
+		Routes: []AdvancedCustomRoute{
+			{
+				IncomingPath: "/v1/responses",
+				UpstreamPath: "/v1/chat/completions",
+				Converter:    AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions,
+				ConverterOptions: &AdvancedCustomConverterOptions{
+					ResponsesToolsMode: "bad",
+				},
+			},
+		},
+	}
+	require.ErrorContains(t, invalidMode.Validate(), "responses_tools_mode is invalid")
+
+	wrongConverter := &AdvancedCustomConfig{
+		Routes: []AdvancedCustomRoute{
+			{
+				IncomingPath: "/v1/chat/completions",
+				UpstreamPath: "/v1/chat/completions",
+				Converter:    AdvancedCustomConverterNone,
+				ConverterOptions: &AdvancedCustomConverterOptions{
+					ResponsesToolsMode: AdvancedCustomResponsesToolsModePreserve,
+				},
+			},
+		},
+	}
+	require.ErrorContains(t, wrongConverter.Validate(), "only supported")
+}
+
+func TestAdvancedCustomValidateResponsesToolPolicies(t *testing.T) {
+	valid := &AdvancedCustomConfig{
+		Routes: []AdvancedCustomRoute{
+			{
+				IncomingPath: "/v1/responses",
+				UpstreamPath: "/v1/chat/completions",
+				Converter:    AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions,
+				ConverterOptions: &AdvancedCustomConverterOptions{
+					ResponsesTools: &AdvancedCustomResponsesToolsOptions{
+						Namespace: AdvancedCustomResponsesToolPolicyPreserve,
+						Custom:    AdvancedCustomResponsesToolPolicyDrop,
+						WebSearch: AdvancedCustomResponsesToolPolicyReject,
+						Unknown:   AdvancedCustomResponsesToolPolicyDrop,
+					},
+				},
+			},
+		},
+	}
+	require.NoError(t, valid.Validate())
+
+	flattenNonNamespace := &AdvancedCustomConfig{
+		Routes: []AdvancedCustomRoute{
+			{
+				IncomingPath: "/v1/responses",
+				UpstreamPath: "/v1/chat/completions",
+				Converter:    AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions,
+				ConverterOptions: &AdvancedCustomConverterOptions{
+					ResponsesTools: &AdvancedCustomResponsesToolsOptions{WebSearch: AdvancedCustomResponsesToolPolicyFlatten},
+				},
+			},
+		},
+	}
+	require.ErrorContains(t, flattenNonNamespace.Validate(), "responses_tools.web_search is invalid")
+
+	flattenUnknown := &AdvancedCustomConfig{
+		Routes: []AdvancedCustomRoute{
+			{
+				IncomingPath: "/v1/responses",
+				UpstreamPath: "/v1/chat/completions",
+				Converter:    AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions,
+				ConverterOptions: &AdvancedCustomConverterOptions{
+					ResponsesTools: &AdvancedCustomResponsesToolsOptions{Unknown: AdvancedCustomResponsesToolPolicyFlatten},
+				},
+			},
+		},
+	}
+	require.ErrorContains(t, flattenUnknown.Validate(), "responses_tools.unknown is invalid")
+}

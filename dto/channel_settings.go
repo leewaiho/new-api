@@ -74,16 +74,56 @@ const (
 	AdvancedCustomAuthTypeQuery  = "query"
 )
 
+const (
+	AdvancedCustomResponsesToolsModeCompatFlatten = "compat_flatten"
+	AdvancedCustomResponsesToolsModePreserve      = "preserve"
+)
+
+const (
+	AdvancedCustomResponsesToolPolicyPreserve = "preserve"
+	AdvancedCustomResponsesToolPolicyFlatten  = "flatten"
+	AdvancedCustomResponsesToolPolicyDrop     = "drop"
+	AdvancedCustomResponsesToolPolicyReject   = "reject"
+)
+
 type AdvancedCustomConfig struct {
 	Routes         []AdvancedCustomRoute `json:"advanced_routes,omitempty"`
 	ModelFetchURLs []string              `json:"model_fetch_urls,omitempty"`
 }
 
 type AdvancedCustomRoute struct {
-	IncomingPath string                   `json:"incoming_path,omitempty"`
-	UpstreamPath string                   `json:"upstream_path,omitempty"`
-	Converter    string                   `json:"converter,omitempty"`
-	Auth         *AdvancedCustomRouteAuth `json:"auth,omitempty"`
+	IncomingPath     string                          `json:"incoming_path,omitempty"`
+	UpstreamPath     string                          `json:"upstream_path,omitempty"`
+	Converter        string                          `json:"converter,omitempty"`
+	Auth             *AdvancedCustomRouteAuth        `json:"auth,omitempty"`
+	ConverterOptions *AdvancedCustomConverterOptions `json:"converter_options,omitempty"`
+}
+
+type AdvancedCustomConverterOptions struct {
+	// ResponsesToolsMode is the legacy coarse-grained switch. It is kept for
+	// backward compatibility and is expanded to ResponsesTools when ResponsesTools
+	// is empty.
+	//   - compat_flatten: flatten namespace function tools and drop unsupported tools
+	//   - preserve: preserve original tool objects for upstreams that support them
+	ResponsesToolsMode string `json:"responses_tools_mode,omitempty"`
+	// ResponsesTools controls individual Responses tool types when converting
+	// /v1/responses requests to Chat Completions upstreams. Supported policy values
+	// are preserve, flatten, drop, and reject. Flatten is only valid for namespace.
+	ResponsesTools *AdvancedCustomResponsesToolsOptions `json:"responses_tools,omitempty"`
+	// ResponsesDropFields lists Responses request field names that must be
+	// stripped from the converted Chat Completions request. Use it to
+	// remove Responses-only fields (for example "metadata") that the chat
+	// upstream rejects.
+	ResponsesDropFields []string `json:"responses_drop_fields,omitempty"`
+}
+
+type AdvancedCustomResponsesToolsOptions struct {
+	Namespace       string `json:"namespace,omitempty"`
+	Custom          string `json:"custom,omitempty"`
+	WebSearch       string `json:"web_search,omitempty"`
+	ToolSearch      string `json:"tool_search,omitempty"`
+	ImageGeneration string `json:"image_generation,omitempty"`
+	Unknown         string `json:"unknown,omitempty"`
 }
 
 type AdvancedCustomRouteAuth struct {
@@ -216,6 +256,9 @@ func (c *AdvancedCustomConfig) Validate() error {
 		if err := validateAdvancedCustomRouteAuth(i, route.Auth); err != nil {
 			return err
 		}
+		if err := validateAdvancedCustomConverterOptions(i, route.Converter, route.ConverterOptions); err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -302,4 +345,100 @@ func validateAdvancedCustomRouteAuth(index int, auth *AdvancedCustomRouteAuth) e
 	default:
 		return fmt.Errorf("advanced_custom.advanced_routes[%d].auth.type is invalid: %s", index, auth.Type)
 	}
+}
+
+var allowedAdvancedCustomResponsesDropFields = map[string]struct{}{
+	"stream_options":         {},
+	"top_logprobs":           {},
+	"store":                  {},
+	"metadata":               {},
+	"safety_identifier":      {},
+	"prompt_cache_key":       {},
+	"prompt_cache_retention": {},
+	"service_tier":           {},
+	"parallel_tool_calls":    {},
+	"reasoning":              {},
+}
+
+func validateAdvancedCustomConverterOptions(index int, converter string, options *AdvancedCustomConverterOptions) error {
+	if options == nil {
+		return nil
+	}
+	if !advancedCustomConverterOptionsPresent(options) {
+		return nil
+	}
+	if converter != AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions {
+		return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options is only supported by %s", index, AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions)
+	}
+
+	mode := strings.TrimSpace(options.ResponsesToolsMode)
+	if mode != "" {
+		switch mode {
+		case AdvancedCustomResponsesToolsModeCompatFlatten, AdvancedCustomResponsesToolsModePreserve:
+		default:
+			return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options.responses_tools_mode is invalid: %s", index, mode)
+		}
+	}
+
+	if options.ResponsesTools == nil {
+		return nil
+	}
+	if err := validateAdvancedCustomResponsesToolPolicy(index, "namespace", options.ResponsesTools.Namespace, true); err != nil {
+		return err
+	}
+	if err := validateAdvancedCustomResponsesToolPolicy(index, "custom", options.ResponsesTools.Custom, false); err != nil {
+		return err
+	}
+	if err := validateAdvancedCustomResponsesToolPolicy(index, "web_search", options.ResponsesTools.WebSearch, false); err != nil {
+		return err
+	}
+	if err := validateAdvancedCustomResponsesToolPolicy(index, "tool_search", options.ResponsesTools.ToolSearch, false); err != nil {
+		return err
+	}
+	if err := validateAdvancedCustomResponsesToolPolicy(index, "image_generation", options.ResponsesTools.ImageGeneration, false); err != nil {
+		return err
+	}
+	if err := validateAdvancedCustomResponsesToolPolicy(index, "unknown", options.ResponsesTools.Unknown, false); err != nil {
+		return err
+	}
+	if len(options.ResponsesDropFields) > 0 {
+		seen := make(map[string]struct{}, len(options.ResponsesDropFields))
+		for _, raw := range options.ResponsesDropFields {
+			field := strings.ToLower(strings.TrimSpace(raw))
+			if field == "" {
+				continue
+			}
+			if _, ok := allowedAdvancedCustomResponsesDropFields[field]; !ok {
+				return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options.responses_drop_fields contains unsupported field: %s", index, raw)
+			}
+			seen[field] = struct{}{}
+		}
+		if len(seen) == 0 {
+			return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options.responses_drop_fields must not be empty", index)
+		}
+	}
+	return nil
+}
+
+func advancedCustomConverterOptionsPresent(options *AdvancedCustomConverterOptions) bool {
+	if options == nil {
+		return false
+	}
+	return strings.TrimSpace(options.ResponsesToolsMode) != "" || options.ResponsesTools != nil || len(options.ResponsesDropFields) > 0
+}
+
+func validateAdvancedCustomResponsesToolPolicy(index int, toolType string, policy string, allowFlatten bool) error {
+	policy = strings.TrimSpace(policy)
+	if policy == "" {
+		return nil
+	}
+	switch policy {
+	case AdvancedCustomResponsesToolPolicyPreserve, AdvancedCustomResponsesToolPolicyDrop, AdvancedCustomResponsesToolPolicyReject:
+		return nil
+	case AdvancedCustomResponsesToolPolicyFlatten:
+		if allowFlatten {
+			return nil
+		}
+	}
+	return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options.responses_tools.%s is invalid: %s", index, toolType, policy)
 }
