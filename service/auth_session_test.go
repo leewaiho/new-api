@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -353,6 +355,30 @@ func TestLoginSessionCreateRefreshAndRevoke(t *testing.T) {
 	require.NoError(t, RevokeByRefreshToken(refreshed.RefreshToken, refreshed.Session.SID, "logout"))
 	_, _, err = ValidateLoginSession(identity)
 	assert.True(t, errors.Is(err, ErrLoginSessionRevoked))
+}
+
+func TestCreateLoginSessionUsesConfiguredDashboardLifetime(t *testing.T) {
+	useTestSessionSecret(t)
+	user := setupAuthSessionTestDB(t)
+	previousDays := common.DashboardSessionLifetimeDays
+	common.DashboardSessionLifetimeDays = 90
+	t.Cleanup(func() { common.DashboardSessionLifetimeDays = previousDays })
+
+	bundle, err := CreateLoginSession(user.Id, "password", "127.0.0.1", "test-agent")
+	require.NoError(t, err)
+	assert.InDelta(t, time.Now().Add(90*24*time.Hour).Unix(), bundle.Session.ExpiresAt, 2)
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	WriteRefreshCookie(context, bundle.RefreshToken)
+	cookies := recorder.Result().Cookies()
+	require.Len(t, cookies, 1)
+	assert.InDelta(t, 90*24*60*60, cookies[0].MaxAge, 2)
+	assert.Equal(t, "/api/user/auth", cookies[0].Path)
+	assert.True(t, cookies[0].HttpOnly)
+	assert.Equal(t, common.SessionCookieSecure, cookies[0].Secure)
+	assert.Equal(t, http.SameSiteStrictMode, cookies[0].SameSite)
 }
 
 func TestIndependentRedisSessionRevokeConvergesAfterCacheTTL(t *testing.T) {
