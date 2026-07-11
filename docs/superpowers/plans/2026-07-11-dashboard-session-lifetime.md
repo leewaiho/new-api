@@ -51,15 +51,15 @@ func TestParseDashboardSessionLifetimeDays(t *testing.T) {
     }
     for _, tt := range cases {
         got, err := ParseDashboardSessionLifetimeDays(tt.raw)
-        if tt.ok && (err != nil || got != tt.want) { t.Fatalf("...") }
-        if !tt.ok && err == nil { t.Fatalf("...") }
+        if tt.ok && (err != nil || got != tt.want) { t.Fatalf("ParseDashboardSessionLifetimeDays(%q) = (%d, %v), want (%d, nil)", tt.raw, got, err, tt.want) }
+        if !tt.ok && err == nil { t.Fatalf("ParseDashboardSessionLifetimeDays(%q) unexpectedly succeeded with %d", tt.raw, got) }
     }
 }
 
 func TestDashboardSessionOptionsPreservesCookieSecurityAttributes(t *testing.T) {
     options := DashboardSessionOptions(90)
-    if options.MaxAge != 90*24*60*60 { t.Fatalf("...") }
-    if options.Path != "/" || !options.HttpOnly || options.Secure || options.SameSite != http.SameSiteStrictMode { t.Fatalf("...") }
+    if options.MaxAge != 90*24*60*60 { t.Fatalf("MaxAge = %d, want %d", options.MaxAge, 90*24*60*60) }
+    if options.Path != "/" || !options.HttpOnly || options.Secure || options.SameSite != http.SameSiteStrictMode { t.Fatalf("dashboard cookie security options changed: %+v", options) }
 }
 ```
 
