@@ -9,6 +9,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/setting/auth_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
@@ -40,6 +41,11 @@ type AuthBundle struct {
 	AccessExpiresAt int64            `json:"access_expires_at"`
 	Session         LoginSessionView `json:"session"`
 	RefreshToken    string           `json:"-"`
+}
+
+func loginSessionTTL() time.Duration {
+	days := auth_setting.NormalizeDashboardSessionLifetimeDays(common.DashboardSessionLifetimeDays)
+	return time.Duration(days) * 24 * time.Hour
 }
 
 func CreateLoginSession(userID int, loginMethod, ip, userAgent string) (*AuthBundle, error) {
@@ -95,7 +101,7 @@ func createLoginSession(userID int, expectedAuthVersion int64, loginMethod, ip, 
 		UserAgent:       truncateAuthMetadata(userAgent, 512),
 		CreatedAt:       now,
 		LastActiveAt:    now,
-		ExpiresAt:       time.Unix(now, 0).Add(LoginSessionTTL).Unix(),
+		ExpiresAt:       time.Unix(now, 0).Add(loginSessionTTL()).Unix(),
 	}
 	if session.LoginMethod == "" {
 		session.LoginMethod = "unknown"
@@ -290,7 +296,7 @@ func ListLoginSessions(userID int, currentSID string) ([]LoginSessionView, error
 }
 
 func WriteRefreshCookie(c *gin.Context, rawToken string) {
-	expiresAt := time.Now().Add(LoginSessionTTL)
+	expiresAt := time.Now().Add(loginSessionTTL())
 	if sid, _, ok := splitRefreshToken(rawToken); ok {
 		if session, err := model.GetUserSessionCached(sid); err == nil && session.ExpiresAt > time.Now().Unix() {
 			expiresAt = time.Unix(session.ExpiresAt, 0)
