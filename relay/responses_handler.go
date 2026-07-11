@@ -20,6 +20,15 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+func newResponsesConvertRequestError(err error) *types.NewAPIError {
+	return types.NewError(
+		err,
+		types.ErrorCodeConvertRequestFailed,
+		types.ErrOptionWithSkipRetry(),
+		types.ErrOptionWithStatusCode(http.StatusBadRequest),
+	)
+}
+
 func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NewAPIError) {
 	info.InitChannelMeta(c)
 	if info.RelayMode == relayconstant.RelayModeResponsesCompact {
@@ -90,7 +99,7 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 	} else {
 		convertedRequest, err := adaptor.ConvertOpenAIResponsesRequest(c, info, *request)
 		if err != nil {
-			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+			return newResponsesConvertRequestError(err)
 		}
 		relaycommon.AppendRequestConversionFromRequest(info, convertedRequest)
 		jsonData, err := common.Marshal(convertedRequest)
