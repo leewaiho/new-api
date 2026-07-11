@@ -123,6 +123,7 @@ export type SiteSettings = {
 
 export type AuthSettings = {
   PasswordLoginEnabled: boolean
+  DashboardSessionLifetimeDays: number
   PasswordRegisterEnabled: boolean
   EmailVerificationEnabled: boolean
   RegisterEnabled: boolean

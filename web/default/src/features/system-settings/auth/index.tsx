@@ -26,6 +26,7 @@ import {
 
 const defaultAuthSettings: AuthSettings = {
   PasswordLoginEnabled: true,
+  DashboardSessionLifetimeDays: 30,
   PasswordRegisterEnabled: true,
   EmailVerificationEnabled: false,
   RegisterEnabled: true,
