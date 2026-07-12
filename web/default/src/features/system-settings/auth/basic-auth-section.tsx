@@ -22,6 +22,7 @@ import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import * as z from 'zod'
 
+import { Button } from '@/components/ui/button'
 import {
   Form,
   FormControl,
@@ -31,6 +32,7 @@ import {
   FormLabel,
   FormMessage,
 } from '@/components/ui/form'
+import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 
@@ -43,9 +45,20 @@ import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
 import { useResetForm } from '../hooks/use-reset-form'
 import { useUpdateOption } from '../hooks/use-update-option'
+import { safeNumberFieldProps } from '../utils/numeric-field'
+import {
+  DASHBOARD_SESSION_LIFETIME_MAX_DAYS,
+  DASHBOARD_SESSION_LIFETIME_MIN_DAYS,
+  DASHBOARD_SESSION_LIFETIME_PRESETS,
+} from './dashboard-session-lifetime'
 
 const basicAuthSchema = z.object({
   PasswordLoginEnabled: z.boolean(),
+  DashboardSessionLifetimeDays: z
+    .number()
+    .int()
+    .min(DASHBOARD_SESSION_LIFETIME_MIN_DAYS)
+    .max(DASHBOARD_SESSION_LIFETIME_MAX_DAYS),
   PasswordRegisterEnabled: z.boolean(),
   EmailVerificationEnabled: z.boolean(),
   RegisterEnabled: z.boolean(),
@@ -83,7 +96,10 @@ export function BasicAuthSection({ defaultValues }: BasicAuthSectionProps) {
   useResetForm(form, formDefaults)
 
   const onSubmit = async (data: BasicAuthFormValues) => {
-    const updates: Array<{ key: string; value: string | boolean }> = []
+    const updates: Array<{
+      key: string
+      value: string | number | boolean
+    }> = []
 
     Object.entries(data).forEach(([key, value]) => {
       if (key === 'EmailDomainWhitelist') {
@@ -114,6 +130,46 @@ export function BasicAuthSection({ defaultValues }: BasicAuthSectionProps) {
             onSave={form.handleSubmit(onSubmit)}
             isSaving={updateOption.isPending}
           />
+          <FormField
+            control={form.control}
+            name='DashboardSessionLifetimeDays'
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>{t('Dashboard Session Lifetime')}</FormLabel>
+                <FormControl>
+                  <Input
+                    type='number'
+                    min={DASHBOARD_SESSION_LIFETIME_MIN_DAYS}
+                    max={DASHBOARD_SESSION_LIFETIME_MAX_DAYS}
+                    step={1}
+                    {...safeNumberFieldProps(field)}
+                  />
+                </FormControl>
+                <div className='flex flex-wrap gap-2'>
+                  {DASHBOARD_SESSION_LIFETIME_PRESETS.map((days) => (
+                    <Button
+                      key={days}
+                      type='button'
+                      variant='outline'
+                      size='sm'
+                      onClick={() => field.onChange(days)}
+                    >
+                      {days === 3650
+                        ? t('Long-lived (10 years)')
+                        : t('{{days}} days', { days })}
+                    </Button>
+                  ))}
+                </div>
+                <FormDescription>
+                  {t(
+                    'Applies only to future successful dashboard logins. API keys and temporary OAuth, Passkey, and 2FA sessions are unchanged. 3650 days is a long-lived 10-year session, but clearing browser data can still remove it.'
+                  )}
+                </FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+
           <FormField
             control={form.control}
             name='PasswordLoginEnabled'
