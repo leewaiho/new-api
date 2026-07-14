@@ -366,7 +366,7 @@ func (s *ChatToResponsesStreamState) outputStatus() string {
 }
 
 func (s *ChatToResponsesStreamState) messageID() string {
-	return fmt.Sprintf("%s_msg_0", s.ID)
+	return fmt.Sprintf("msg_%s_0", s.ID)
 }
 
 func (s *ChatToResponsesStreamState) reasoningID() string {

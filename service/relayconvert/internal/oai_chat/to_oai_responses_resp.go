@@ -60,7 +60,7 @@ func ChatCompletionsResponseToResponsesResponse(resp *dto.OpenAITextResponse, id
 	if text := choice.Message.StringContent(); text != "" {
 		out.Output = append(out.Output, dto.ResponsesOutput{
 			Type:   responsesOutputTypeMessage,
-			ID:     fmt.Sprintf("%s_msg_0", id),
+			ID:     fmt.Sprintf("msg_%s_0", id),
 			Status: responseOutputStatus(out),
 			Role:   "assistant",
 			Content: []dto.ResponsesOutputContent{
