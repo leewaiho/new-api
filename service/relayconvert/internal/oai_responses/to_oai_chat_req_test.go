@@ -567,3 +567,46 @@ func TestApplyResponsesToolConflictPolicyDeduplicatesAlias(t *testing.T) {
 		require.Empty(t, decisions)
 	})
 }
+
+func TestResponsesRequestToolsToChatConvertsWebSearchForChatUpstream(t *testing.T) {
+	tools := mustRawMessage(t, []map[string]any{{"type": "web_search"}, {"type": "web_search_preview"}})
+	converted, err := responsesRequestToolsToChat(tools, ResponsesRequestToChatOptions{
+		ToolPolicies: ResponsesToolPolicies{WebSearch: ResponsesToolPolicyPreserve},
+	})
+	require.NoError(t, err)
+	require.Len(t, converted, 2)
+	for _, tool := range converted {
+		require.Equal(t, "web_search", tool.Type)
+		require.Equal(t, true, tool.WebSearch["enable"])
+		require.Equal(t, true, tool.WebSearch["search_result"])
+		require.Empty(t, tool.Custom)
+	}
+}
+
+func TestResponsesRequestToolsToChatPreservesExplicitWebSearchOptions(t *testing.T) {
+	tools := mustRawMessage(t, []map[string]any{{
+		"type":       "web_search",
+		"web_search": map[string]any{"enable": true, "search_result": false, "search_engine": "search_std"},
+	}})
+	converted, err := responsesRequestToolsToChat(tools, ResponsesRequestToChatOptions{
+		ToolPolicies: ResponsesToolPolicies{WebSearch: ResponsesToolPolicyPreserve},
+	})
+	require.NoError(t, err)
+	require.Len(t, converted, 1)
+	require.Equal(t, false, converted[0].WebSearch["search_result"])
+	require.Equal(t, "search_std", converted[0].WebSearch["search_engine"])
+}
+
+func TestResponsesRequestToChatCompletionsRequestSerializesWebSearchAtTopLevel(t *testing.T) {
+	request, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
+		Model: "glm-5.2",
+		Input: mustRawMessage(t, "search for a fact"),
+		Tools: mustRawMessage(t, []map[string]any{{"type": "web_search"}}),
+	}, ResponsesRequestToChatOptions{ToolPolicies: ResponsesToolPolicies{WebSearch: ResponsesToolPolicyPreserve}})
+	require.NoError(t, err)
+	encoded, err := common.Marshal(request)
+	require.NoError(t, err)
+	require.True(t, gjson.GetBytes(encoded, "tools.0.web_search.enable").Bool())
+	require.True(t, gjson.GetBytes(encoded, "tools.0.web_search.search_result").Bool())
+	require.False(t, gjson.GetBytes(encoded, "tools.0.custom").Exists())
+}

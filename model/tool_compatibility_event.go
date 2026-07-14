@@ -232,3 +232,73 @@ func isToolCompatibilityEventRetryableError(err error) bool {
 	message := strings.ToLower(err.Error())
 	return strings.Contains(message, "unique") || strings.Contains(message, "duplicate") || strings.Contains(message, "locked") || strings.Contains(message, "deadlock")
 }
+
+type ToolCompatibilityEventListOptions struct {
+	ChannelId        int
+	Route            string
+	RequestedModel   string
+	UpstreamModel    string
+	ToolType         string
+	EventType        string
+	ResolutionStatus string
+	Page             int
+	PageSize         int
+}
+
+func ListToolCompatibilityEvents(options ToolCompatibilityEventListOptions) ([]ToolCompatibilityEvent, int64, error) {
+	if DB == nil {
+		return nil, 0, errors.New("database is not initialized")
+	}
+	query := DB.Model(&ToolCompatibilityEvent{})
+	if options.ChannelId > 0 {
+		query = query.Where("channel_id = ?", options.ChannelId)
+	}
+	for column, value := range map[string]string{"route": options.Route, "requested_model": options.RequestedModel, "upstream_model": options.UpstreamModel, "tool_type": options.ToolType, "event_type": options.EventType, "resolution_status": options.ResolutionStatus} {
+		if value = strings.TrimSpace(value); value != "" {
+			query = query.Where(column+" = ?", value)
+		}
+	}
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	page, size := options.Page, options.PageSize
+	if page < 1 {
+		page = 1
+	}
+	if size < 1 {
+		size = 20
+	}
+	if size > 100 {
+		size = 100
+	}
+	var events []ToolCompatibilityEvent
+	if err := query.Order("last_seen_at DESC, id DESC").Offset((page - 1) * size).Limit(size).Find(&events).Error; err != nil {
+		return nil, 0, err
+	}
+	return events, total, nil
+}
+
+func GetToolCompatibilityEventByID(id int) (*ToolCompatibilityEvent, error) {
+	if DB == nil {
+		return nil, errors.New("database is not initialized")
+	}
+	var event ToolCompatibilityEvent
+	if err := DB.First(&event, id).Error; err != nil {
+		return nil, err
+	}
+	return &event, nil
+}
+
+func UpdateToolCompatibilityEventResolutionStatus(id int, status string) (*ToolCompatibilityEvent, error) {
+	status = strings.TrimSpace(status)
+	switch status {
+	case ToolCompatibilityResolutionStatusOpen, ToolCompatibilityResolutionStatusIgnored, ToolCompatibilityResolutionStatusResolved:
+	default:
+		return nil, fmt.Errorf("%w: invalid resolution status %q", ErrInvalidToolCompatibilityEvent, status)
+	}
+	if err := DB.Model(&ToolCompatibilityEvent{}).Where("id = ?", id).Update("resolution_status", status).Error; err != nil {
+		return nil, err
+	}
+	return GetToolCompatibilityEventByID(id)
+}

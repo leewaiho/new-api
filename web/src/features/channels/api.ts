@@ -40,6 +40,9 @@ import type {
   SearchChannelsParams,
   SearchChannelsResponse,
   TagOperationParams,
+  ToolCompatibilityEvent,
+  ToolCompatibilityEventsResponse,
+  ToolCompatibilityResolutionStatus,
 } from './types'
 
 const channelActionConfig = (
@@ -677,5 +680,58 @@ export async function getPrefillGroups(
   data?: Array<{ id: number; name: string; items: string | string[] }>
 }> {
   const res = await api.get('/api/prefill_group', { params: { type } })
+  return res.data
+}
+
+export async function getToolCompatibilityEvents(params: {
+  channel_id?: number
+  route?: string
+  requested_model?: string
+  upstream_model?: string
+  tool_type?: string
+  event_type?: string
+  resolution_status?: string
+  page?: number
+  page_size?: number
+}): Promise<ToolCompatibilityEventsResponse> {
+  const res = await api.get('/api/tool-compatibility/events', { params })
+  return res.data
+}
+
+export async function updateToolCompatibilityEventStatus(
+  id: number,
+  status: ToolCompatibilityResolutionStatus
+): Promise<{
+  success: boolean
+  message?: string
+  data?: ToolCompatibilityEvent
+}> {
+  const res = await api.patch(
+    `/api/tool-compatibility/events/${id}/status`,
+    { status },
+    channelActionConfig()
+  )
+  return res.data
+}
+
+export async function applyToolCompatibilityEventSuggestion(
+  id: number
+): Promise<{ success: boolean; message?: string }> {
+  const res = await api.post(
+    `/api/tool-compatibility/events/${id}/apply-suggestion`,
+    undefined,
+    channelActionConfig()
+  )
+  return res.data
+}
+
+export async function restoreToolCompatibilityEventModelDefault(
+  id: number
+): Promise<{ success: boolean; message?: string }> {
+  const res = await api.post(
+    `/api/tool-compatibility/events/${id}/restore-default`,
+    undefined,
+    channelActionConfig()
+  )
   return res.data
 }

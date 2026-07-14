@@ -1,6 +1,7 @@
 package advancedcustom
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -8,8 +9,10 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/claude"
 	"github.com/QuantumNous/new-api/relay/channel/gemini"
@@ -36,6 +39,10 @@ type Adaptor struct {
 	converted bool
 	route     dto.AdvancedCustomRoute
 	converter string
+
+	compatibilityRequestedModel string
+	compatibilityUpstreamModel  string
+	compatibilityTools          []relayconvert.ResponsesToolPolicyDecision
 }
 
 func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
@@ -132,6 +139,7 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 	}
 	filteredTools, policyDecisions, err := relayconvert.ApplyResponsesToolPolicies(request.Tools, policyResolver)
 	if err != nil {
+		recordAdvancedCustomToolCompatibilityEvents(info, a.route, requestedModel, upstreamModel, policyDecisions, err)
 		return nil, advancedCustomResponsesToolPolicyError(info, a.route, requestedModel, upstreamModel, policyDecisions, err)
 	}
 	filteredTools, conflictDecisions, err := relayconvert.ApplyResponsesToolConflictPolicyWithImplicitHostedTools(
@@ -144,12 +152,18 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 		),
 	)
 	if err != nil {
+		recordAdvancedCustomToolCompatibilityEvents(info, a.route, requestedModel, upstreamModel, conflictDecisions, err)
 		return nil, advancedCustomResponsesToolPolicyError(info, a.route, requestedModel, upstreamModel, conflictDecisions, err)
 	}
 	decisions := append(policyDecisions, conflictDecisions...)
+	recordAdvancedCustomToolCompatibilityEvents(info, a.route, requestedModel, upstreamModel, decisions, nil)
 	if err := relayconvert.ValidateResponsesToolChoiceAfterPolicy(request.ToolChoice, decisions); err != nil {
+		recordAdvancedCustomToolCompatibilityEvents(info, a.route, requestedModel, upstreamModel, decisions, err)
 		return nil, advancedCustomResponsesToolPolicyError(info, a.route, requestedModel, upstreamModel, decisions, err)
 	}
+	a.compatibilityRequestedModel = requestedModel
+	a.compatibilityUpstreamModel = upstreamModel
+	a.compatibilityTools = summarizeAdvancedCustomResponsesTools(filteredTools)
 	request.Tools = filteredTools
 	switch converter {
 	case relayconvert.ConverterNone:
@@ -321,35 +335,40 @@ func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, request
 }
 
 func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (usage any, err *types.NewAPIError) {
-	if err := a.resolve(c, info); err != nil {
-		return nil, types.NewOpenAIError(err, types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+	if resolveErr := a.resolve(c, info); resolveErr != nil {
+		return nil, types.NewOpenAIError(resolveErr, types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 	}
 
 	switch a.converter {
 	case relayconvert.ConverterNone:
-		return a.doNativeResponse(c, resp, info)
+		usage, err = a.doNativeResponse(c, resp, info)
 	case relayconvert.ConverterClaudeMessagesToOpenAIChat,
 		relayconvert.ConverterGeminiContentToOpenAIChat:
-		return a.openaiAdaptor.DoResponse(c, resp, info)
+		usage, err = a.openaiAdaptor.DoResponse(c, resp, info)
 	case relayconvert.ConverterOpenAIChatToClaudeMessages:
-		return a.claudeAdaptor.DoResponse(c, resp, info)
-	case relayconvert.ConverterOpenAIChatToGeminiContent:
-		return a.geminiAdaptor.DoResponse(c, resp, info)
-	case relayconvert.ConverterOpenAIResponsesToGemini:
-		return a.geminiAdaptor.DoResponse(c, resp, info)
+		usage, err = a.claudeAdaptor.DoResponse(c, resp, info)
+	case relayconvert.ConverterOpenAIChatToGeminiContent,
+		relayconvert.ConverterOpenAIResponsesToGemini:
+		usage, err = a.geminiAdaptor.DoResponse(c, resp, info)
 	case relayconvert.ConverterOpenAIChatToOpenAIResponses:
 		if info.IsStream {
-			return openai.OaiResponsesToChatStreamHandler(c, info, resp)
+			usage, err = openai.OaiResponsesToChatStreamHandler(c, info, resp)
+		} else {
+			usage, err = openai.OaiResponsesToChatHandler(c, info, resp)
 		}
-		return openai.OaiResponsesToChatHandler(c, info, resp)
 	case relayconvert.ConverterOpenAIResponsesToOpenAIChat:
 		if info.IsStream {
-			return openai.OaiChatToResponsesStreamHandler(c, info, resp)
+			usage, err = openai.OaiChatToResponsesStreamHandler(c, info, resp)
+		} else {
+			usage, err = openai.OaiChatToResponsesHandler(c, info, resp)
 		}
-		return openai.OaiChatToResponsesHandler(c, info, resp)
 	default:
-		return nil, types.NewOpenAIError(fmt.Errorf("unsupported advanced custom converter: %s", a.converter), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		err = types.NewOpenAIError(fmt.Errorf("unsupported advanced custom converter: %s", a.converter), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 	}
+	if err != nil {
+		recordAdvancedCustomUpstreamToolCompatibilityEvents(info, a.route, a.compatibilityRequestedModel, a.compatibilityUpstreamModel, a.compatibilityTools, err)
+	}
+	return usage, err
 }
 
 func (a *Adaptor) GetModelList() []string {
@@ -591,6 +610,115 @@ func (a *Adaptor) convertOpenAICompatibleImageRequest(c *gin.Context, info *rela
 	converted, err := a.openaiAdaptor.ConvertImageRequest(c, info, request)
 	info.ChannelType = old
 	return converted, err
+}
+
+func summarizeAdvancedCustomResponsesTools(raw json.RawMessage) []relayconvert.ResponsesToolPolicyDecision {
+	var tools []map[string]any
+	if err := common.Unmarshal(raw, &tools); err != nil {
+		return nil
+	}
+	out := make([]relayconvert.ResponsesToolPolicyDecision, 0, len(tools))
+	for _, tool := range tools {
+		toolType := strings.TrimSpace(common.Interface2String(tool["type"]))
+		if toolType == "" {
+			continue
+		}
+		out = append(out, relayconvert.ResponsesToolPolicyDecision{ToolType: toolType, ToolName: strings.TrimSpace(common.Interface2String(tool["name"]))})
+	}
+	return out
+}
+
+func recordAdvancedCustomUpstreamToolCompatibilityEvents(info *relaycommon.RelayInfo, route dto.AdvancedCustomRoute, requestedModel string, upstreamModel string, tools []relayconvert.ResponsesToolPolicyDecision, cause *types.NewAPIError) {
+	channelID := 0
+	if info != nil {
+		channelID = info.ChannelId
+	}
+	if channelID <= 0 || len(tools) == 0 || cause == nil {
+		return
+	}
+	message := cause.ErrorWithStatusCode()
+	for _, tool := range tools {
+		eventType, suggestion := classifyAdvancedCustomUpstreamToolError(cause.StatusCode, message, tool.ToolType)
+		if eventType == "" {
+			continue
+		}
+		if _, err := service.RecordToolCompatibilityEvent(service.ToolCompatibilityEventInput{
+			ChannelId: channelID, Route: route.IncomingPath, RequestedModel: requestedModel, UpstreamModel: upstreamModel,
+			ToolType: tool.ToolType, ToolName: tool.ToolName, EventType: eventType, SuggestedPolicy: suggestion, ErrorMessage: message,
+		}); err != nil {
+			common.SysError("record upstream tool compatibility event failed: " + err.Error())
+		}
+	}
+}
+
+func classifyAdvancedCustomUpstreamToolError(statusCode int, message string, toolType string) (string, string) {
+	if statusCode < http.StatusBadRequest {
+		return "", ""
+	}
+	lower := strings.ToLower(message)
+	normalizedType := strings.ToLower(strings.TrimSpace(toolType))
+	// Only explicit unsupported-tool wording may recommend a policy change. A
+	// generic 400 remains evidence for review, never an automatic Drop proposal.
+	if strings.Contains(lower, "unsupported tool type") || strings.Contains(lower, "tool type is not supported") || strings.Contains(lower, "does not support tool") {
+		if normalizedType == "function" {
+			return model.ToolCompatibilityEventTypeUpstreamUnsupported, ""
+		}
+		return model.ToolCompatibilityEventTypeUpstreamUnsupported, dto.AdvancedCustomResponsesToolPolicyDrop
+	}
+	return model.ToolCompatibilityEventTypeUnclassified, ""
+}
+
+func recordAdvancedCustomToolCompatibilityEvents(
+	info *relaycommon.RelayInfo,
+	route dto.AdvancedCustomRoute,
+	requestedModel string,
+	upstreamModel string,
+	decisions []relayconvert.ResponsesToolPolicyDecision,
+	cause error,
+) {
+	channelID := 0
+	if info != nil {
+		channelID = info.ChannelId
+	}
+	if channelID <= 0 || strings.TrimSpace(route.IncomingPath) == "" {
+		return
+	}
+	if len(decisions) == 0 && cause != nil {
+		decisions = []relayconvert.ResponsesToolPolicyDecision{{}}
+	}
+	for _, decision := range decisions {
+		eventType := model.ToolCompatibilityEventTypeInvalidToolSchema
+		suggestedPolicy := ""
+		switch decision.Policy {
+		case dto.AdvancedCustomResponsesToolPolicyDrop:
+			eventType = model.ToolCompatibilityEventTypePolicyDrop
+		case dto.AdvancedCustomResponsesToolPolicyReject:
+			eventType = model.ToolCompatibilityEventTypePolicyReject
+		case dto.AdvancedCustomResponsesToolConflictPolicyDeduplicate:
+			eventType = model.ToolCompatibilityEventTypeNameConflict
+			suggestedPolicy = dto.AdvancedCustomResponsesToolConflictPolicyDeduplicate
+		default:
+			if cause == nil {
+				continue
+			}
+		}
+		_, err := service.RecordToolCompatibilityEvent(service.ToolCompatibilityEventInput{
+			ChannelId: channelID, Route: route.IncomingPath,
+			RequestedModel: requestedModel, UpstreamModel: upstreamModel,
+			ToolType: decision.ToolType, ToolName: decision.ToolName,
+			EventType: eventType, CurrentPolicy: decision.Policy,
+			SuggestedPolicy: suggestedPolicy,
+			ErrorMessage: func() string {
+				if cause == nil {
+					return ""
+				}
+				return cause.Error()
+			}(),
+		})
+		if err != nil {
+			common.SysError("record tool compatibility event failed: " + err.Error())
+		}
+	}
 }
 
 func advancedCustomResponsesToolPolicies(options *dto.AdvancedCustomConverterOptions, requestedModel string, upstreamModel string) relayconvert.ResponsesToolPolicies {
