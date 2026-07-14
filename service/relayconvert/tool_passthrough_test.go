@@ -20,6 +20,39 @@ func TestApplyResponsesToolPoliciesForPassthroughKeepsFunctionTools(t *testing.T
 	assert.Equal(t, string(raw), string(got), "function-only tools must retain their original bytes")
 }
 
+func TestApplyResponsesToolPoliciesForPassthroughKeepsClientDefinedToolTypes(t *testing.T) {
+	raw := json.RawMessage(`[
+  {"type":"function","name":"shell"},
+  {"type":"namespace","name":"mcp__demo__","tools":[{"type":"function","name":"lookup"}]},
+  {"type":"custom","name":"apply_patch"},
+  {"type":"future_client_tool","name":"future"}
+]`)
+
+	got := ApplyResponsesToolPoliciesForPassthrough(raw, ResponsesToolPolicies{
+		Namespace:       ResponsesToolPolicyPreserve,
+		Custom:          ResponsesToolPolicyPreserve,
+		WebSearch:       ResponsesToolPolicyDrop,
+		ToolSearch:      ResponsesToolPolicyDrop,
+		ImageGeneration: ResponsesToolPolicyDrop,
+		Unknown:         ResponsesToolPolicyPreserve,
+	})
+
+	assert.Equal(t, raw, got, "client-defined tools must not be rewritten or removed")
+}
+
+func TestApplyResponsesToolPoliciesForPassthroughKeepsNamespaceForFlattenPolicy(t *testing.T) {
+	raw := json.RawMessage(`[
+  {"type":"namespace","name":"mcp__demo__","tools":[{"type":"function","name":"lookup"}]}
+]`)
+
+	got := ApplyResponsesToolPoliciesForPassthrough(raw, ResponsesToolPolicies{
+		Namespace: ResponsesToolPolicyFlatten,
+		Unknown:   ResponsesToolPolicyDrop,
+	})
+
+	assert.Equal(t, raw, got, "passthrough cannot flatten namespace tools and must preserve their raw shape")
+}
+
 func TestApplyResponsesToolPoliciesForPassthroughDropsHostedTools(t *testing.T) {
 	raw := mustRawMessage(t, []map[string]any{
 		{"type": "function", "name": "shell"},
@@ -77,6 +110,21 @@ func TestDeduplicateConflictingToolsRemovesOnlyActualConflict(t *testing.T) {
 		{"type":"function","name":"shell"},
 		{"type":"image_gen"}
 	]`, string(got))
+}
+
+func TestDeduplicateConflictingToolsIgnoresNonHostedToolTypes(t *testing.T) {
+	raw := json.RawMessage(`[
+  {"type":"function","name":"namespace.lookup"},
+  {"type":"function","name":"custom.apply_patch"},
+  {"type":"function","name":"future_client_tool.run"},
+  {"type":"namespace","name":"namespace"},
+  {"type":"custom","name":"custom"},
+  {"type":"future_client_tool","name":"future_client_tool"}
+]`)
+
+	got := DeduplicateConflictingTools(raw)
+
+	assert.Equal(t, raw, got, "non-hosted tool types must not remove same-prefix functions")
 }
 
 func TestDeduplicateConflictingToolsKeepsFunctionWithoutHostedConflict(t *testing.T) {

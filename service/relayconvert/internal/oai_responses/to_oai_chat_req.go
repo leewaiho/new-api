@@ -480,6 +480,8 @@ func defaultResponseToolPolicy(policy string, fallback string) string {
 
 func responsesToolPolicyForType(policies ResponsesToolPolicies, toolType string) string {
 	switch toolType {
+	case "namespace":
+		return policies.Namespace
 	case "custom":
 		return policies.Custom
 	case "web_search":
@@ -866,8 +868,22 @@ func ApplyResponsesToolPoliciesForPassthrough(rawTools json.RawMessage, policies
 	return result
 }
 
+var responsesHostedToolTypes = map[string]struct{}{
+	"apply_patch":          {},
+	"code_interpreter":     {},
+	"computer_use":         {},
+	"computer_use_preview": {},
+	"file_search":          {},
+	"image_gen":            {},
+	"image_generation":     {},
+	"shell":                {},
+	"tool_search":          {},
+	"web_search":           {},
+	"web_search_preview":   {},
+}
+
 // DeduplicateConflictingTools removes a function tool only when the same request
-// also declares a hosted tool whose type matches the function name prefix.
+// also declares a known hosted tool whose type matches the function name prefix.
 func DeduplicateConflictingTools(rawTools json.RawMessage) json.RawMessage {
 	if len(rawTools) == 0 {
 		return rawTools
@@ -881,7 +897,7 @@ func DeduplicateConflictingTools(rawTools json.RawMessage) json.RawMessage {
 	hostedNames := make(map[string]struct{})
 	for _, tool := range tools {
 		toolType := strings.TrimSpace(common.Interface2String(tool["type"]))
-		if toolType != "" && toolType != "function" {
+		if _, isHosted := responsesHostedToolTypes[toolType]; isHosted {
 			hostedNames[toolType] = struct{}{}
 		}
 	}

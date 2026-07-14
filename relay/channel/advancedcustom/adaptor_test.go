@@ -944,8 +944,12 @@ func TestAdaptorResponsesPassthroughSendsExpectedToolsToUpstream(t *testing.T) {
 			{"type": "function", "name": "shell", "description": "run shell", "parameters": map[string]any{"type": "object"}},
 			{"type": "function", "name": "apply_patch", "description": "apply patch", "parameters": map[string]any{"type": "object"}},
 			{"type": "function", "name": "image_gen.imagegen", "description": "generate image", "parameters": map[string]any{"type": "object"}},
+			{"type": "namespace", "name": "mcp__demo__", "tools": []map[string]any{{"type": "function", "name": "lookup"}}},
+			{"type": "custom", "name": "apply_patch_custom"},
+			{"type": "future_client_tool", "name": "future"},
 			{"type": "image_gen"},
 			{"type": "web_search"},
+			{"type": "tool_search"},
 		}),
 		ToolChoice: mustAdvancedCustomRawMessage(t, map[string]any{
 			"type": "function",
@@ -970,11 +974,14 @@ func TestAdaptorResponsesPassthroughSendsExpectedToolsToUpstream(t *testing.T) {
 	require.NoError(t, common.Unmarshal(upstreamBody, &upstreamRequest))
 	var tools []map[string]any
 	require.NoError(t, common.Unmarshal(upstreamRequest.Tools, &tools))
-	require.Len(t, tools, 2, "upstream must receive normal function tools only")
+	require.Len(t, tools, 5, "upstream must retain every client-defined tool type")
 	assert.Equal(t, "function", tools[0]["type"])
 	assert.Equal(t, "shell", tools[0]["name"])
 	assert.Equal(t, "function", tools[1]["type"])
 	assert.Equal(t, "apply_patch", tools[1]["name"])
+	assert.Equal(t, "namespace", tools[2]["type"])
+	assert.Equal(t, "custom", tools[3]["type"])
+	assert.Equal(t, "future_client_tool", tools[4]["type"])
 	assert.JSONEq(t, `{"type":"function","name":"shell"}`, string(upstreamRequest.ToolChoice))
 }
 
