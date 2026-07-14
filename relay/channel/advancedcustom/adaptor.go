@@ -120,6 +120,7 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 	if err != nil {
 		return nil, err
 	}
+	request.Tools = relayconvert.DeduplicateConflictingTools(request.Tools)
 	switch converter {
 	case relayconvert.ConverterNone:
 		return a.convertOpenAICompatibleResponsesRequest(c, info, request)
@@ -531,6 +532,9 @@ func (a *Adaptor) convertOpenAICompatibleRequest(c *gin.Context, info *relaycomm
 }
 
 func (a *Adaptor) convertOpenAICompatibleResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.OpenAIResponsesRequest) (any, error) {
+	policies := advancedCustomResponsesToolPolicies(a.route.ConverterOptions)
+	request.Tools = relayconvert.ApplyResponsesToolPoliciesForPassthrough(request.Tools, policies)
+
 	old := info.ChannelType
 	info.ChannelType = constant.ChannelTypeOpenAI
 	converted, err := a.openaiAdaptor.ConvertOpenAIResponsesRequest(c, info, request)
