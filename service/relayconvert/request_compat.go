@@ -1,6 +1,8 @@
 package relayconvert
 
 import (
+	"encoding/json"
+
 	"github.com/QuantumNous/new-api/dto"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	claudemessages "github.com/QuantumNous/new-api/service/relayconvert/internal/claude_messages"
@@ -56,6 +58,14 @@ const (
 
 func ResponsesRequestToChatCompletionsRequestWithOptions(req *dto.OpenAIResponsesRequest, options ResponsesRequestToChatOptions) (*dto.GeneralOpenAIRequest, error) {
 	return oairesponses.ResponsesRequestToChatCompletionsRequestWithOptions(req, options)
+}
+
+func ApplyResponsesToolPoliciesForPassthrough(rawTools json.RawMessage, policies ResponsesToolPolicies) json.RawMessage {
+	return oairesponses.ApplyResponsesToolPoliciesForPassthrough(rawTools, policies)
+}
+
+func DeduplicateConflictingTools(rawTools json.RawMessage) json.RawMessage {
+	return oairesponses.DeduplicateConflictingTools(rawTools)
 }
 
 func OpenAIResponsesRequestToClaudeMessages(c *gin.Context, req *dto.OpenAIResponsesRequest) (*dto.ClaudeRequest, error) {

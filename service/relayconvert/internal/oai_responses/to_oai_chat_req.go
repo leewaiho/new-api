@@ -486,7 +486,7 @@ func responsesToolPolicyForType(policies ResponsesToolPolicies, toolType string)
 		return policies.WebSearch
 	case "tool_search":
 		return policies.ToolSearch
-	case "image_generation":
+	case "image_gen", "image_generation":
 		return policies.ImageGeneration
 	default:
 		return defaultResponseToolPolicy(policies.Unknown, ResponsesToolPolicyPreserve)
@@ -823,4 +823,96 @@ func JSONString(raw json.RawMessage) (string, error) {
 
 func RawJSONPresent(raw json.RawMessage) bool {
 	return rawJSONPresent(raw)
+}
+
+// ApplyResponsesToolPoliciesForPassthrough filters hosted Responses tools without
+// converting the request to Chat Completions format. Function tools are always
+// preserved. In passthrough mode, reject has the same safe behavior as drop
+// because this helper cannot return a validation error.
+func ApplyResponsesToolPoliciesForPassthrough(rawTools json.RawMessage, policies ResponsesToolPolicies) json.RawMessage {
+	if len(rawTools) == 0 || !responsesToolPoliciesMutateTools(policies) {
+		return rawTools
+	}
+
+	var tools []map[string]any
+	if err := common.Unmarshal(rawTools, &tools); err != nil {
+		return rawTools
+	}
+
+	filtered := make([]map[string]any, 0, len(tools))
+	changed := false
+	for _, tool := range tools {
+		toolType := strings.TrimSpace(common.Interface2String(tool["type"]))
+		if toolType == "function" {
+			filtered = append(filtered, tool)
+			continue
+		}
+
+		switch responsesToolPolicyForType(policies, toolType) {
+		case ResponsesToolPolicyDrop, ResponsesToolPolicyReject:
+			changed = true
+		default:
+			filtered = append(filtered, tool)
+		}
+	}
+	if !changed {
+		return rawTools
+	}
+
+	result, err := common.Marshal(filtered)
+	if err != nil {
+		return rawTools
+	}
+	return result
+}
+
+// DeduplicateConflictingTools removes a function tool only when the same request
+// also declares a hosted tool whose type matches the function name prefix.
+func DeduplicateConflictingTools(rawTools json.RawMessage) json.RawMessage {
+	if len(rawTools) == 0 {
+		return rawTools
+	}
+
+	var tools []map[string]any
+	if err := common.Unmarshal(rawTools, &tools); err != nil {
+		return rawTools
+	}
+
+	hostedNames := make(map[string]struct{})
+	for _, tool := range tools {
+		toolType := strings.TrimSpace(common.Interface2String(tool["type"]))
+		if toolType != "" && toolType != "function" {
+			hostedNames[toolType] = struct{}{}
+		}
+	}
+	if len(hostedNames) == 0 {
+		return rawTools
+	}
+
+	filtered := make([]map[string]any, 0, len(tools))
+	changed := false
+	for _, tool := range tools {
+		toolType := strings.TrimSpace(common.Interface2String(tool["type"]))
+		if toolType == "function" {
+			name := strings.TrimSpace(common.Interface2String(tool["name"]))
+			prefix := name
+			if idx := strings.IndexByte(name, '.'); idx > 0 {
+				prefix = name[:idx]
+			}
+			if _, conflicts := hostedNames[prefix]; conflicts {
+				changed = true
+				continue
+			}
+		}
+		filtered = append(filtered, tool)
+	}
+	if !changed {
+		return rawTools
+	}
+
+	result, err := common.Marshal(filtered)
+	if err != nil {
+		return rawTools
+	}
+	return result
 }
