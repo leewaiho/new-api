@@ -522,7 +522,7 @@ func TestAdaptorSelectsDuplicateResponsesRoutesByModel(t *testing.T) {
 	assert.Equal(t, "sse", parsedURL.Query().Get("alt"))
 }
 
-func TestAdaptorResponsesToolsModeDefaultsToCompatFlatten(t *testing.T) {
+func TestAdaptorResponsesToolsDefaultPreservesAllToolTypes(t *testing.T) {
 	adaptor := &Adaptor{}
 	info := advancedCustomRelayInfo(&dto.AdvancedCustomConfig{
 		Routes: []dto.AdvancedCustomRoute{
@@ -558,10 +558,10 @@ func TestAdaptorResponsesToolsModeDefaultsToCompatFlatten(t *testing.T) {
 
 	chatReq, ok := converted.(*dto.GeneralOpenAIRequest)
 	require.True(t, ok)
-	require.Len(t, chatReq.Tools, 1)
-	assert.Equal(t, "function", chatReq.Tools[0].Type)
-	assert.Equal(t, "mcp__demo__lookup_order", chatReq.Tools[0].Function.Name)
-	assert.Equal(t, dto.ResponsesToolNameMapping{Namespace: "mcp__demo__", Name: "lookup_order"}, info.ResponsesToolNameMappings["mcp__demo__lookup_order"])
+	require.Len(t, chatReq.Tools, 2)
+	assert.Equal(t, "namespace", chatReq.Tools[0].Type)
+	assert.Equal(t, "web_search", chatReq.Tools[1].Type)
+	assert.Empty(t, info.ResponsesToolNameMappings)
 }
 
 func TestAdaptorResponsesToolsPerToolPolicyPreservesNamespaceAndDropsWebSearch(t *testing.T) {
@@ -974,7 +974,7 @@ func TestAdaptorResponsesPassthroughSendsExpectedToolsToUpstream(t *testing.T) {
 	require.NoError(t, common.Unmarshal(upstreamBody, &upstreamRequest))
 	var tools []map[string]any
 	require.NoError(t, common.Unmarshal(upstreamRequest.Tools, &tools))
-	require.Len(t, tools, 5, "upstream must retain every client-defined tool type")
+	require.Len(t, tools, 8, "upstream must preserve all tools except the actual hosted/function conflict")
 	assert.Equal(t, "function", tools[0]["type"])
 	assert.Equal(t, "shell", tools[0]["name"])
 	assert.Equal(t, "function", tools[1]["type"])
@@ -982,6 +982,9 @@ func TestAdaptorResponsesPassthroughSendsExpectedToolsToUpstream(t *testing.T) {
 	assert.Equal(t, "namespace", tools[2]["type"])
 	assert.Equal(t, "custom", tools[3]["type"])
 	assert.Equal(t, "future_client_tool", tools[4]["type"])
+	assert.Equal(t, "image_gen", tools[5]["type"])
+	assert.Equal(t, "web_search", tools[6]["type"])
+	assert.Equal(t, "tool_search", tools[7]["type"])
 	assert.JSONEq(t, `{"type":"function","name":"shell"}`, string(upstreamRequest.ToolChoice))
 }
 
@@ -1069,4 +1072,145 @@ func mustAdvancedCustomRawMessage(t *testing.T, value any) []byte {
 	raw, err := common.Marshal(value)
 	require.NoError(t, err)
 	return raw
+}
+
+func TestAdaptorResponsesPassthroughModelOverrideDropsOnlyTargetModelImageTool(t *testing.T) {
+	service.InitHttpClient()
+	var upstreamBodies [][]byte
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		upstreamBodies = append(upstreamBodies, body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"resp_test","object":"response","output":[]}`))
+	}))
+	defer upstream.Close()
+
+	config := &dto.AdvancedCustomConfig{
+		Routes: []dto.AdvancedCustomRoute{
+			{
+				IncomingPath: "/v1/responses",
+				UpstreamPath: upstream.URL + "/v1/responses",
+				Converter:    dto.AdvancedCustomConverterNone,
+				ConverterOptions: &dto.AdvancedCustomConverterOptions{
+					ResponsesToolModelOverrides: []dto.AdvancedCustomResponsesToolModelOverride{
+						{
+							Models: []string{"glm-5.2"},
+							ResponsesTools: &dto.AdvancedCustomResponsesToolsOptions{
+								ImageGeneration: dto.AdvancedCustomResponsesToolPolicyDrop,
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	for _, model := range []string{"glm-5.2", "glm-5.1"} {
+		adaptor := &Adaptor{}
+		info := advancedCustomRelayInfo(config)
+		info.RelayMode = relayconstant.RelayModeResponses
+		info.RequestURLPath = "/v1/responses"
+		info.OriginModelName = model
+		c := advancedCustomGinContext("/v1/responses")
+		request := dto.OpenAIResponsesRequest{
+			Model: model,
+			Input: mustAdvancedCustomRawMessage(t, "use tools"),
+			Tools: mustAdvancedCustomRawMessage(t, []map[string]any{
+				{"type": "function", "name": "image_gen.imagegen"},
+				{"type": "image_gen"},
+				{"type": "function", "name": "shell"},
+			}),
+		}
+
+		converted, err := adaptor.ConvertOpenAIResponsesRequest(c, info, request)
+		require.NoError(t, err)
+		body, err := common.Marshal(converted)
+		require.NoError(t, err)
+		info.UpstreamRequestBodySize = int64(len(body))
+		response, err := adaptor.DoRequest(c, info, bytes.NewReader(body))
+		require.NoError(t, err)
+		resp := response.(*http.Response)
+		_ = resp.Body.Close()
+	}
+
+	require.Len(t, upstreamBodies, 2)
+	var targetRequest dto.OpenAIResponsesRequest
+	require.NoError(t, common.Unmarshal(upstreamBodies[0], &targetRequest))
+	var targetTools []map[string]any
+	require.NoError(t, common.Unmarshal(targetRequest.Tools, &targetTools))
+	require.Len(t, targetTools, 2)
+	assert.Equal(t, "image_gen.imagegen", targetTools[0]["name"], "dropping hosted image tool must preserve its function fallback")
+	assert.Equal(t, "shell", targetTools[1]["name"])
+
+	var otherRequest dto.OpenAIResponsesRequest
+	require.NoError(t, common.Unmarshal(upstreamBodies[1], &otherRequest))
+	var otherTools []map[string]any
+	require.NoError(t, common.Unmarshal(otherRequest.Tools, &otherTools))
+	require.Len(t, otherTools, 2, "other models keep hosted image support and only deduplicate the conflicting function")
+	assert.Equal(t, "image_gen", otherTools[0]["type"])
+	assert.Equal(t, "shell", otherTools[1]["name"])
+}
+
+func TestAdaptorResponsesPassthroughRejectsAllToolsRemovedWithAdminPath(t *testing.T) {
+	adaptor := &Adaptor{}
+	info := advancedCustomRelayInfo(&dto.AdvancedCustomConfig{
+		Routes: []dto.AdvancedCustomRoute{
+			{
+				IncomingPath: "/v1/responses",
+				UpstreamPath: "/v1/responses",
+				Converter:    dto.AdvancedCustomConverterNone,
+				ConverterOptions: &dto.AdvancedCustomConverterOptions{
+					ResponsesTools: &dto.AdvancedCustomResponsesToolsOptions{
+						ImageGeneration: dto.AdvancedCustomResponsesToolPolicyDrop,
+					},
+				},
+			},
+		},
+	})
+	info.RelayMode = relayconstant.RelayModeResponses
+	info.RequestURLPath = "/v1/responses"
+	info.OriginModelName = "glm-5.2"
+	c := advancedCustomGinContext("/v1/responses")
+
+	_, err := adaptor.ConvertOpenAIResponsesRequest(c, info, dto.OpenAIResponsesRequest{
+		Model: "glm-5.2",
+		Input: mustAdvancedCustomRawMessage(t, "generate image"),
+		Tools: mustAdvancedCustomRawMessage(t, []map[string]any{{"type": "image_gen"}}),
+	})
+	require.ErrorContains(t, err, "All Responses tools were removed")
+	require.ErrorContains(t, err, "Channel > Advanced Custom > Tool Handling > Model Tool Capabilities")
+	require.ErrorContains(t, err, "requested_model=glm-5.2")
+}
+
+func TestAdaptorResponsesPassthroughRejectsToolChoiceForDroppedTool(t *testing.T) {
+	adaptor := &Adaptor{}
+	info := advancedCustomRelayInfo(&dto.AdvancedCustomConfig{
+		Routes: []dto.AdvancedCustomRoute{
+			{
+				IncomingPath: "/v1/responses",
+				UpstreamPath: "/v1/responses",
+				Converter:    dto.AdvancedCustomConverterNone,
+				ConverterOptions: &dto.AdvancedCustomConverterOptions{
+					ResponsesTools: &dto.AdvancedCustomResponsesToolsOptions{
+						ImageGeneration: dto.AdvancedCustomResponsesToolPolicyDrop,
+					},
+				},
+			},
+		},
+	})
+	info.RelayMode = relayconstant.RelayModeResponses
+	info.RequestURLPath = "/v1/responses"
+	c := advancedCustomGinContext("/v1/responses")
+
+	_, err := adaptor.ConvertOpenAIResponsesRequest(c, info, dto.OpenAIResponsesRequest{
+		Model: "glm-5.2",
+		Input: mustAdvancedCustomRawMessage(t, "use selected tool"),
+		Tools: mustAdvancedCustomRawMessage(t, []map[string]any{
+			{"type": "image_gen"},
+			{"type": "function", "name": "shell"},
+		}),
+		ToolChoice: mustAdvancedCustomRawMessage(t, map[string]any{"type": "image_gen"}),
+	})
+	require.ErrorContains(t, err, "tool_choice selects a tool removed by the channel policy")
 }
