@@ -13,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/relayconvert"
 	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/types"
@@ -909,6 +910,125 @@ func TestAdaptorResponsesToolsModePreserveKeepsResponsesTools(t *testing.T) {
 	assert.Contains(t, string(chatReq.Tools[0].Custom), `"type":"namespace"`)
 	assert.Equal(t, "computer_use", chatReq.Tools[1].Type)
 	assert.Empty(t, info.ResponsesToolNameMappings)
+}
+
+func TestAdaptorResponsesPassthroughSendsExpectedToolsToUpstream(t *testing.T) {
+	service.InitHttpClient()
+	var upstreamBody []byte
+	var upstreamReadErr error
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamBody, upstreamReadErr = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"resp_test","object":"response","output":[]}`))
+	}))
+	defer upstream.Close()
+
+	adaptor := &Adaptor{}
+	info := advancedCustomRelayInfo(&dto.AdvancedCustomConfig{
+		Routes: []dto.AdvancedCustomRoute{
+			{
+				IncomingPath: "/v1/responses",
+				UpstreamPath: upstream.URL + "/v1/responses",
+				Converter:    dto.AdvancedCustomConverterNone,
+			},
+		},
+	})
+	info.RelayMode = relayconstant.RelayModeResponses
+	info.RequestURLPath = "/v1/responses"
+	c := advancedCustomGinContext("/v1/responses")
+
+	request := dto.OpenAIResponsesRequest{
+		Model: "gpt-test",
+		Input: mustAdvancedCustomRawMessage(t, "use a tool"),
+		Tools: mustAdvancedCustomRawMessage(t, []map[string]any{
+			{"type": "function", "name": "shell", "description": "run shell", "parameters": map[string]any{"type": "object"}},
+			{"type": "function", "name": "apply_patch", "description": "apply patch", "parameters": map[string]any{"type": "object"}},
+			{"type": "function", "name": "image_gen.imagegen", "description": "generate image", "parameters": map[string]any{"type": "object"}},
+			{"type": "image_gen"},
+			{"type": "web_search"},
+		}),
+		ToolChoice: mustAdvancedCustomRawMessage(t, map[string]any{
+			"type": "function",
+			"name": "shell",
+		}),
+	}
+
+	converted, err := adaptor.ConvertOpenAIResponsesRequest(c, info, request)
+	require.NoError(t, err)
+	body, err := common.Marshal(converted)
+	require.NoError(t, err)
+	info.UpstreamRequestBodySize = int64(len(body))
+
+	response, err := adaptor.DoRequest(c, info, bytes.NewReader(body))
+	require.NoError(t, err)
+	resp, ok := response.(*http.Response)
+	require.True(t, ok)
+	defer resp.Body.Close()
+
+	require.NoError(t, upstreamReadErr)
+	var upstreamRequest dto.OpenAIResponsesRequest
+	require.NoError(t, common.Unmarshal(upstreamBody, &upstreamRequest))
+	var tools []map[string]any
+	require.NoError(t, common.Unmarshal(upstreamRequest.Tools, &tools))
+	require.Len(t, tools, 2, "upstream must receive normal function tools only")
+	assert.Equal(t, "function", tools[0]["type"])
+	assert.Equal(t, "shell", tools[0]["name"])
+	assert.Equal(t, "function", tools[1]["type"])
+	assert.Equal(t, "apply_patch", tools[1]["name"])
+	assert.JSONEq(t, `{"type":"function","name":"shell"}`, string(upstreamRequest.ToolChoice))
+}
+
+func TestAdaptorResponsesPassthroughKeepsImageGenFunctionWithoutHostedConflict(t *testing.T) {
+	service.InitHttpClient()
+	var upstreamBody []byte
+	var upstreamReadErr error
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamBody, upstreamReadErr = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"resp_test","object":"response","output":[]}`))
+	}))
+	defer upstream.Close()
+
+	adaptor := &Adaptor{}
+	info := advancedCustomRelayInfo(&dto.AdvancedCustomConfig{
+		Routes: []dto.AdvancedCustomRoute{
+			{
+				IncomingPath: "/v1/responses",
+				UpstreamPath: upstream.URL + "/v1/responses",
+				Converter:    dto.AdvancedCustomConverterNone,
+			},
+		},
+	})
+	info.RelayMode = relayconstant.RelayModeResponses
+	info.RequestURLPath = "/v1/responses"
+	c := advancedCustomGinContext("/v1/responses")
+
+	request := dto.OpenAIResponsesRequest{
+		Model: "gpt-test",
+		Input: mustAdvancedCustomRawMessage(t, "generate an image"),
+		Tools: mustAdvancedCustomRawMessage(t, []map[string]any{
+			{"type": "function", "name": "image_gen.imagegen", "description": "generate image", "parameters": map[string]any{"type": "object"}},
+		}),
+	}
+	converted, err := adaptor.ConvertOpenAIResponsesRequest(c, info, request)
+	require.NoError(t, err)
+	body, err := common.Marshal(converted)
+	require.NoError(t, err)
+	info.UpstreamRequestBodySize = int64(len(body))
+
+	response, err := adaptor.DoRequest(c, info, bytes.NewReader(body))
+	require.NoError(t, err)
+	resp, ok := response.(*http.Response)
+	require.True(t, ok)
+	defer resp.Body.Close()
+
+	require.NoError(t, upstreamReadErr)
+	var upstreamRequest dto.OpenAIResponsesRequest
+	require.NoError(t, common.Unmarshal(upstreamBody, &upstreamRequest))
+	var tools []map[string]any
+	require.NoError(t, common.Unmarshal(upstreamRequest.Tools, &tools))
+	require.Len(t, tools, 1, "function tool must not be removed without an actual hosted-tool conflict")
+	assert.Equal(t, "image_gen.imagegen", tools[0]["name"])
 }
 
 func advancedCustomRelayInfo(config *dto.AdvancedCustomConfig) *relaycommon.RelayInfo {
