@@ -91,6 +91,12 @@ const (
 	AdvancedCustomResponsesToolPolicyReject   = "reject"
 )
 
+const (
+	AdvancedCustomResponsesToolConflictPolicyPreserve    = "preserve"
+	AdvancedCustomResponsesToolConflictPolicyDeduplicate = "deduplicate"
+	AdvancedCustomResponsesToolConflictPolicyReject      = "reject"
+)
+
 type AdvancedCustomConfig struct {
 	Routes []AdvancedCustomRoute `json:"advanced_routes,omitempty"`
 }
@@ -120,6 +126,13 @@ type AdvancedCustomConverterOptions struct {
 	// remove Responses-only fields (for example "metadata") that the chat
 	// upstream rejects.
 	ResponsesDropFields []string `json:"responses_drop_fields,omitempty"`
+	// ResponsesToolConflictPolicy controls conflicts between hosted tools and
+	// same-prefix function tools. The safe default is deduplicate.
+	ResponsesToolConflictPolicy string `json:"responses_tool_conflict_policy,omitempty"`
+	// ResponsesToolModelOverrides applies exact model-specific exceptions. A
+	// model matches either the requested model name or the mapped upstream model
+	// name. The same model may only appear in one override.
+	ResponsesToolModelOverrides []AdvancedCustomResponsesToolModelOverride `json:"responses_tool_model_overrides,omitempty"`
 }
 
 type AdvancedCustomResponsesToolsOptions struct {
@@ -129,6 +142,18 @@ type AdvancedCustomResponsesToolsOptions struct {
 	ToolSearch      string `json:"tool_search,omitempty"`
 	ImageGeneration string `json:"image_generation,omitempty"`
 	Unknown         string `json:"unknown,omitempty"`
+}
+
+type AdvancedCustomResponsesToolModelOverride struct {
+	Models         []string                                `json:"models,omitempty"`
+	ResponsesTools *AdvancedCustomResponsesToolsOptions    `json:"responses_tools,omitempty"`
+	ToolNames      []AdvancedCustomResponsesToolNamePolicy `json:"responses_tool_names,omitempty"`
+}
+
+type AdvancedCustomResponsesToolNamePolicy struct {
+	ToolType string `json:"tool_type,omitempty"`
+	ToolName string `json:"tool_name,omitempty"`
+	Policy   string `json:"policy,omitempty"`
 }
 
 type AdvancedCustomRouteAuth struct {
@@ -418,7 +443,7 @@ func (c *AdvancedCustomConfig) Validate() error {
 		if err := validateAdvancedCustomRouteAuth(i, route.Auth); err != nil {
 			return err
 		}
-		if err := validateAdvancedCustomConverterOptions(i, route.Converter, route.ConverterOptions); err != nil {
+		if err := validateAdvancedCustomConverterOptions(i, route.IncomingPath, route.Converter, route.ConverterOptions); err != nil {
 			return err
 		}
 	}
@@ -581,16 +606,25 @@ var allowedAdvancedCustomResponsesDropFields = map[string]struct{}{
 	"reasoning":              {},
 }
 
-func validateAdvancedCustomConverterOptions(index int, converter string, options *AdvancedCustomConverterOptions) error {
+func validateAdvancedCustomConverterOptions(index int, incomingPath string, converter string, options *AdvancedCustomConverterOptions) error {
+	if options == nil {
+		return nil
+	}
 	if !advancedCustomConverterOptionsPresent(options) {
 		return nil
 	}
-	if converter != advancedCustomConverterOpenAIResponsesToOpenAIChat {
-		return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options is only supported by %s", index, advancedCustomConverterOpenAIResponsesToOpenAIChat)
+	if converter != AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions && converter != AdvancedCustomConverterNone {
+		return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options is only supported by Responses routes", index)
+	}
+	if converter == AdvancedCustomConverterNone && incomingPath != "/v1/responses" {
+		return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options is only supported by Responses routes", index)
 	}
 
 	mode := strings.TrimSpace(options.ResponsesToolsMode)
 	if mode != "" {
+		if converter == AdvancedCustomConverterNone {
+			return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options.responses_tools_mode is not supported by converter none", index)
+		}
 		switch mode {
 		case AdvancedCustomResponsesToolsModeCompatFlatten, AdvancedCustomResponsesToolsModePreserve:
 		default:
@@ -598,8 +632,12 @@ func validateAdvancedCustomConverterOptions(index int, converter string, options
 		}
 	}
 
+	allowFlatten := converter == AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions
 	if options.ResponsesTools != nil {
-		if err := validateAdvancedCustomResponsesToolPolicy(index, "namespace", options.ResponsesTools.Namespace, true); err != nil {
+		if converter == AdvancedCustomConverterNone && strings.TrimSpace(options.ResponsesTools.Namespace) == AdvancedCustomResponsesToolPolicyFlatten {
+			return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options namespace flatten is not supported by converter none", index)
+		}
+		if err := validateAdvancedCustomResponsesToolPolicy(index, "namespace", options.ResponsesTools.Namespace, allowFlatten); err != nil {
 			return err
 		}
 		if err := validateAdvancedCustomResponsesToolPolicy(index, "custom", options.ResponsesTools.Custom, false); err != nil {
@@ -619,6 +657,9 @@ func validateAdvancedCustomConverterOptions(index int, converter string, options
 		}
 	}
 	if len(options.ResponsesDropFields) > 0 {
+		if converter == AdvancedCustomConverterNone {
+			return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options.responses_drop_fields is not supported by converter none", index)
+		}
 		seen := make(map[string]struct{}, len(options.ResponsesDropFields))
 		for _, raw := range options.ResponsesDropFields {
 			field := strings.ToLower(strings.TrimSpace(raw))
@@ -634,11 +675,24 @@ func validateAdvancedCustomConverterOptions(index int, converter string, options
 			return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options.responses_drop_fields must not be empty", index)
 		}
 	}
+	if err := validateAdvancedCustomResponsesToolConflictPolicy(index, options.ResponsesToolConflictPolicy); err != nil {
+		return err
+	}
+	if err := validateAdvancedCustomResponsesToolModelOverrides(index, allowFlatten, options); err != nil {
+		return err
+	}
 	return nil
 }
 
 func advancedCustomConverterOptionsPresent(options *AdvancedCustomConverterOptions) bool {
-	return options != nil && (strings.TrimSpace(options.ResponsesToolsMode) != "" || options.ResponsesTools != nil || len(options.ResponsesDropFields) > 0)
+	if options == nil {
+		return false
+	}
+	return strings.TrimSpace(options.ResponsesToolsMode) != "" ||
+		options.ResponsesTools != nil ||
+		len(options.ResponsesDropFields) > 0 ||
+		strings.TrimSpace(options.ResponsesToolConflictPolicy) != "" ||
+		len(options.ResponsesToolModelOverrides) > 0
 }
 
 func validateAdvancedCustomResponsesToolPolicy(index int, toolType string, policy string, allowFlatten bool) error {

@@ -49,6 +49,10 @@ type ResponsesRequestToChatOptions = oairesponses.ResponsesRequestToChatOptions
 // a Chat Completions-only upstream.
 type ResponsesToolPolicies = oairesponses.ResponsesToolPolicies
 
+type ResponsesToolPolicyResolver = oairesponses.ResponsesToolPolicyResolver
+
+type ResponsesToolPolicyDecision = oairesponses.ResponsesToolPolicyDecision
+
 const (
 	ResponsesToolPolicyPreserve = oairesponses.ResponsesToolPolicyPreserve
 	ResponsesToolPolicyFlatten  = oairesponses.ResponsesToolPolicyFlatten
@@ -62,6 +66,18 @@ func ResponsesRequestToChatCompletionsRequestWithOptions(req *dto.OpenAIResponse
 
 func ApplyResponsesToolPoliciesForPassthrough(rawTools json.RawMessage, policies ResponsesToolPolicies) json.RawMessage {
 	return oairesponses.ApplyResponsesToolPoliciesForPassthrough(rawTools, policies)
+}
+
+func ApplyResponsesToolPolicies(rawTools json.RawMessage, resolver ResponsesToolPolicyResolver) (json.RawMessage, []ResponsesToolPolicyDecision, error) {
+	return oairesponses.ApplyResponsesToolPolicies(rawTools, resolver)
+}
+
+func ApplyResponsesToolConflictPolicy(rawTools json.RawMessage, policy string) (json.RawMessage, []ResponsesToolPolicyDecision, error) {
+	return oairesponses.ApplyResponsesToolConflictPolicy(rawTools, policy)
+}
+
+func ValidateResponsesToolChoiceAfterPolicy(rawChoice json.RawMessage, decisions []ResponsesToolPolicyDecision) error {
+	return oairesponses.ValidateResponsesToolChoiceAfterPolicy(rawChoice, decisions)
 }
 
 func DeduplicateConflictingTools(rawTools json.RawMessage) json.RawMessage {

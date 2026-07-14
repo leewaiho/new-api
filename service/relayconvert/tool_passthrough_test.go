@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -147,4 +148,75 @@ func TestPassthroughToolHelpersReturnOriginalBytesForInvalidJSON(t *testing.T) {
 
 	require.Equal(t, raw, filtered)
 	require.Equal(t, raw, deduplicated)
+}
+
+func TestApplyResponsesToolPoliciesKeepsFunctionWhenHostedConflictIsDropped(t *testing.T) {
+	raw := mustRawMessage(t, []map[string]any{
+		{"type": "function", "name": "image_gen.imagegen"},
+		{"type": "image_gen"},
+	})
+
+	filtered, decisions, err := ApplyResponsesToolPolicies(raw, func(toolType string, toolName string) string {
+		if toolType == "image_gen" {
+			return ResponsesToolPolicyDrop
+		}
+		return ResponsesToolPolicyPreserve
+	})
+	require.NoError(t, err)
+	require.Len(t, decisions, 1)
+
+	got, _, err := ApplyResponsesToolConflictPolicy(filtered, dto.AdvancedCustomResponsesToolConflictPolicyDeduplicate)
+	require.NoError(t, err)
+	assert.JSONEq(t, `[{"type":"function","name":"image_gen.imagegen"}]`, string(got))
+}
+
+func TestApplyResponsesToolPoliciesRejectsAllToolsRemoved(t *testing.T) {
+	raw := mustRawMessage(t, []map[string]any{{"type": "image_gen"}})
+
+	_, decisions, err := ApplyResponsesToolPolicies(raw, func(toolType string, toolName string) string {
+		return ResponsesToolPolicyDrop
+	})
+	require.ErrorContains(t, err, "All Responses tools were removed")
+	require.Len(t, decisions, 1)
+}
+
+func TestApplyResponsesToolPoliciesRejectsConfiguredTool(t *testing.T) {
+	raw := mustRawMessage(t, []map[string]any{{"type": "image_gen"}})
+
+	_, decisions, err := ApplyResponsesToolPolicies(raw, func(toolType string, toolName string) string {
+		return ResponsesToolPolicyReject
+	})
+	require.ErrorContains(t, err, "rejected by the Advanced Custom route policy")
+	require.Len(t, decisions, 1)
+}
+
+func TestApplyResponsesToolConflictPolicy(t *testing.T) {
+	raw := mustRawMessage(t, []map[string]any{
+		{"type": "function", "name": "image_gen.imagegen"},
+		{"type": "image_gen"},
+	})
+
+	preserved, decisions, err := ApplyResponsesToolConflictPolicy(raw, dto.AdvancedCustomResponsesToolConflictPolicyPreserve)
+	require.NoError(t, err)
+	assert.Equal(t, json.RawMessage(raw), preserved)
+	assert.Empty(t, decisions)
+
+	deduplicated, decisions, err := ApplyResponsesToolConflictPolicy(raw, dto.AdvancedCustomResponsesToolConflictPolicyDeduplicate)
+	require.NoError(t, err)
+	assert.JSONEq(t, `[{"type":"image_gen"}]`, string(deduplicated))
+	require.Len(t, decisions, 1)
+
+	_, decisions, err = ApplyResponsesToolConflictPolicy(raw, dto.AdvancedCustomResponsesToolConflictPolicyReject)
+	require.ErrorContains(t, err, "conflicts with hosted tool")
+	require.Len(t, decisions, 1)
+}
+
+func TestValidateResponsesToolChoiceAfterPolicy(t *testing.T) {
+	choice := mustRawMessage(t, map[string]any{"type": "image_gen"})
+	decisions := []ResponsesToolPolicyDecision{
+		{ToolType: "image_gen", ToolName: "image_gen", Policy: ResponsesToolPolicyDrop},
+	}
+
+	err := ValidateResponsesToolChoiceAfterPolicy(choice, decisions)
+	require.ErrorContains(t, err, "tool_choice selects a tool removed by the channel policy")
 }
