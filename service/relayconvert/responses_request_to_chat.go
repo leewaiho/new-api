@@ -57,6 +57,14 @@ type ResponsesToolPolicies struct {
 	Unknown         string
 }
 
+type ResponsesToolPolicyResolver func(toolType string, toolName string) string
+
+type ResponsesToolPolicyDecision struct {
+	ToolType string
+	ToolName string
+	Policy   string
+}
+
 func ResponsesRequestToChatCompletionsRequest(req *dto.OpenAIResponsesRequest) (*dto.GeneralOpenAIRequest, error) {
 	return ResponsesRequestToChatCompletionsRequestWithOptions(req, ResponsesRequestToChatOptions{})
 }
@@ -795,20 +803,69 @@ func rawJSONPresent(raw json.RawMessage) bool {
 	return common.GetJsonType(raw) != "null"
 }
 
-// ApplyResponsesToolPoliciesForPassthrough filters hosted Responses tools without
-// converting the request to Chat Completions format. Function tools are always
-// preserved. In passthrough mode, reject has the same safe behavior as drop
-// because this helper cannot return a validation error.
-func ApplyResponsesToolPoliciesForPassthrough(rawTools json.RawMessage, policies ResponsesToolPolicies) json.RawMessage {
-	if len(rawTools) == 0 || !responsesToolPoliciesMutateTools(policies) {
-		return rawTools
+// ApplyResponsesToolPolicies filters Responses tools before passthrough or
+// format conversion. Function tools are protected and always preserved. Drop
+// removes a tool, while reject stops the request with an explicit error.
+func ApplyResponsesToolPolicies(rawTools json.RawMessage, resolver ResponsesToolPolicyResolver) (json.RawMessage, []ResponsesToolPolicyDecision, error) {
+	if !rawJSONPresent(rawTools) || resolver == nil {
+		return rawTools, nil, nil
 	}
 
 	var tools []map[string]any
 	if err := common.Unmarshal(rawTools, &tools); err != nil {
-		return rawTools
+		return nil, nil, fmt.Errorf("invalid tools: %w", err)
 	}
 
+	filtered := make([]map[string]any, 0, len(tools))
+	decisions := make([]ResponsesToolPolicyDecision, 0)
+	for _, tool := range tools {
+		toolType := strings.TrimSpace(common.Interface2String(tool["type"]))
+		toolName := responsesToolDisplayName(toolType, tool)
+		if toolType == "function" {
+			filtered = append(filtered, tool)
+			continue
+		}
+
+		policy := strings.TrimSpace(resolver(toolType, toolName))
+		if policy == "" {
+			policy = ResponsesToolPolicyPreserve
+		}
+		switch policy {
+		case ResponsesToolPolicyDrop:
+			decisions = append(decisions, ResponsesToolPolicyDecision{ToolType: toolType, ToolName: toolName, Policy: policy})
+		case ResponsesToolPolicyReject:
+			decisions = append(decisions, ResponsesToolPolicyDecision{ToolType: toolType, ToolName: toolName, Policy: policy})
+			return nil, decisions, fmt.Errorf("responses tool %s/%s was rejected by the Advanced Custom route policy", toolType, toolName)
+		default:
+			filtered = append(filtered, tool)
+		}
+	}
+
+	if len(tools) > 0 && len(filtered) == 0 {
+		return nil, decisions, fmt.Errorf("All Responses tools were removed by the Advanced Custom route policy: %s", formatResponsesToolPolicyDecisions(decisions))
+	}
+	if len(decisions) == 0 {
+		return rawTools, nil, nil
+	}
+	result, err := common.Marshal(filtered)
+	if err != nil {
+		return nil, decisions, err
+	}
+	return result, decisions, nil
+}
+
+// ApplyResponsesToolPoliciesForPassthrough is retained for compatibility with
+// existing callers that use only route-level type policies. New Advanced Custom
+// code should use ApplyResponsesToolPolicies so reject and empty-tool errors are
+// not hidden.
+func ApplyResponsesToolPoliciesForPassthrough(rawTools json.RawMessage, policies ResponsesToolPolicies) json.RawMessage {
+	if len(rawTools) == 0 || !responsesToolPoliciesMutateTools(policies) {
+		return rawTools
+	}
+	var tools []map[string]any
+	if err := common.Unmarshal(rawTools, &tools); err != nil {
+		return rawTools
+	}
 	filtered := make([]map[string]any, 0, len(tools))
 	changed := false
 	for _, tool := range tools {
@@ -817,7 +874,6 @@ func ApplyResponsesToolPoliciesForPassthrough(rawTools json.RawMessage, policies
 			filtered = append(filtered, tool)
 			continue
 		}
-
 		switch responsesToolPolicyForType(policies, toolType) {
 		case ResponsesToolPolicyDrop, ResponsesToolPolicyReject:
 			changed = true
@@ -828,7 +884,6 @@ func ApplyResponsesToolPoliciesForPassthrough(rawTools json.RawMessage, policies
 	if !changed {
 		return rawTools
 	}
-
 	result, err := common.Marshal(filtered)
 	if err != nil {
 		return rawTools
@@ -850,18 +905,22 @@ var responsesHostedToolTypes = map[string]struct{}{
 	"web_search_preview":   {},
 }
 
-// DeduplicateConflictingTools removes a function tool only when the same request
-// also declares a known hosted tool whose type matches the function name prefix.
-func DeduplicateConflictingTools(rawTools json.RawMessage) json.RawMessage {
-	if len(rawTools) == 0 {
-		return rawTools
+// ApplyResponsesToolConflictPolicy handles conflicts only after unsupported
+// tools have been filtered. This ordering prevents deleting a function tool for
+// a hosted tool that will not be sent upstream.
+func ApplyResponsesToolConflictPolicy(rawTools json.RawMessage, policy string) (json.RawMessage, []ResponsesToolPolicyDecision, error) {
+	policy = strings.TrimSpace(policy)
+	if policy == "" {
+		policy = dto.AdvancedCustomResponsesToolConflictPolicyDeduplicate
+	}
+	if policy == dto.AdvancedCustomResponsesToolConflictPolicyPreserve || !rawJSONPresent(rawTools) {
+		return rawTools, nil, nil
 	}
 
 	var tools []map[string]any
 	if err := common.Unmarshal(rawTools, &tools); err != nil {
-		return rawTools
+		return nil, nil, fmt.Errorf("invalid tools: %w", err)
 	}
-
 	hostedNames := make(map[string]struct{})
 	for _, tool := range tools {
 		toolType := strings.TrimSpace(common.Interface2String(tool["type"]))
@@ -870,11 +929,11 @@ func DeduplicateConflictingTools(rawTools json.RawMessage) json.RawMessage {
 		}
 	}
 	if len(hostedNames) == 0 {
-		return rawTools
+		return rawTools, nil, nil
 	}
 
 	filtered := make([]map[string]any, 0, len(tools))
-	changed := false
+	decisions := make([]ResponsesToolPolicyDecision, 0)
 	for _, tool := range tools {
 		toolType := strings.TrimSpace(common.Interface2String(tool["type"]))
 		if toolType == "function" {
@@ -884,19 +943,84 @@ func DeduplicateConflictingTools(rawTools json.RawMessage) json.RawMessage {
 				prefix = name[:idx]
 			}
 			if _, conflicts := hostedNames[prefix]; conflicts {
-				changed = true
-				continue
+				decision := ResponsesToolPolicyDecision{ToolType: toolType, ToolName: name, Policy: policy}
+				decisions = append(decisions, decision)
+				if policy == dto.AdvancedCustomResponsesToolConflictPolicyReject {
+					return nil, decisions, fmt.Errorf("responses function tool %q conflicts with hosted tool %q", name, prefix)
+				}
+				if policy == dto.AdvancedCustomResponsesToolConflictPolicyDeduplicate {
+					continue
+				}
 			}
 		}
 		filtered = append(filtered, tool)
 	}
-	if !changed {
-		return rawTools
+	if len(decisions) == 0 {
+		return rawTools, nil, nil
 	}
-
 	result, err := common.Marshal(filtered)
+	if err != nil {
+		return nil, decisions, err
+	}
+	return result, decisions, nil
+}
+
+// DeduplicateConflictingTools preserves the old helper contract.
+func DeduplicateConflictingTools(rawTools json.RawMessage) json.RawMessage {
+	result, _, err := ApplyResponsesToolConflictPolicy(rawTools, dto.AdvancedCustomResponsesToolConflictPolicyDeduplicate)
 	if err != nil {
 		return rawTools
 	}
 	return result
+}
+
+func ValidateResponsesToolChoiceAfterPolicy(rawChoice json.RawMessage, decisions []ResponsesToolPolicyDecision) error {
+	if !rawJSONPresent(rawChoice) || len(decisions) == 0 || common.GetJsonType(rawChoice) == "string" {
+		return nil
+	}
+	var choice map[string]any
+	if err := common.Unmarshal(rawChoice, &choice); err != nil {
+		return fmt.Errorf("invalid tool_choice: %w", err)
+	}
+	toolType := strings.TrimSpace(common.Interface2String(choice["type"]))
+	toolName := responsesToolDisplayName(toolType, choice)
+	for _, decision := range decisions {
+		if responsesToolIdentityMatches(toolType, toolName, decision.ToolType, decision.ToolName) {
+			return fmt.Errorf("tool_choice selects a tool removed by the channel policy: %s/%s", toolType, toolName)
+		}
+	}
+	return nil
+}
+
+func responsesToolDisplayName(toolType string, tool map[string]any) string {
+	name := strings.TrimSpace(common.Interface2String(tool["name"]))
+	if name != "" {
+		return name
+	}
+	return toolType
+}
+
+func responsesToolIdentityMatches(leftType string, leftName string, rightType string, rightName string) bool {
+	leftPolicyType := responsesToolPolicyType(leftType)
+	rightPolicyType := responsesToolPolicyType(rightType)
+	return leftPolicyType == rightPolicyType && strings.TrimSpace(leftName) == strings.TrimSpace(rightName)
+}
+
+func responsesToolPolicyType(toolType string) string {
+	switch strings.TrimSpace(toolType) {
+	case "image_gen", "image_generation":
+		return "image_generation"
+	case "web_search", "web_search_preview":
+		return "web_search"
+	default:
+		return strings.TrimSpace(toolType)
+	}
+}
+
+func formatResponsesToolPolicyDecisions(decisions []ResponsesToolPolicyDecision) string {
+	parts := make([]string, 0, len(decisions))
+	for _, decision := range decisions {
+		parts = append(parts, fmt.Sprintf("%s/%s=%s", decision.ToolType, decision.ToolName, decision.Policy))
+	}
+	return strings.Join(parts, ", ")
 }
