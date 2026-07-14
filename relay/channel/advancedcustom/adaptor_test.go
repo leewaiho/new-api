@@ -6,11 +6,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/service"
@@ -18,8 +20,10 @@ import (
 	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func TestAdaptorUsesExactRouteAndQueryAuth(t *testing.T) {
@@ -1280,4 +1284,52 @@ func TestAdaptorResponsesPassthroughRejectsToolChoiceForDroppedTool(t *testing.T
 		ToolChoice: mustAdvancedCustomRawMessage(t, map[string]any{"type": "image_gen"}),
 	})
 	require.ErrorContains(t, err, "tool_choice selects a tool removed by the channel policy")
+}
+
+func TestClassifyAdvancedCustomUpstreamToolErrorOnlySuggestsDropForExplicitUnsupportedTool(t *testing.T) {
+	eventType, suggestion := classifyAdvancedCustomUpstreamToolError(http.StatusBadRequest, "Unsupported tool type: image_generation", "image_gen")
+	require.Equal(t, model.ToolCompatibilityEventTypeUpstreamUnsupported, eventType)
+	require.Equal(t, dto.AdvancedCustomResponsesToolPolicyDrop, suggestion)
+
+	eventType, suggestion = classifyAdvancedCustomUpstreamToolError(http.StatusBadRequest, "Bad Request", "web_search")
+	require.Equal(t, model.ToolCompatibilityEventTypeUnclassified, eventType)
+	require.Empty(t, suggestion)
+
+	eventType, suggestion = classifyAdvancedCustomUpstreamToolError(http.StatusBadRequest, "tools[297].web_search cannot be empty", "web_search")
+	require.Equal(t, model.ToolCompatibilityEventTypeUnclassified, eventType)
+	require.Empty(t, suggestion)
+}
+
+func TestAdaptorRecordsPolicyDropCompatibilityEvent(t *testing.T) {
+	previousDB := model.DB
+	db, err := gorm.Open(sqlite.Open("file:advanced_custom_event_policy_drop?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.ToolCompatibilityEvent{}))
+	model.DB = db
+	t.Cleanup(func() { model.DB = previousDB })
+
+	adaptor := &Adaptor{}
+	info := advancedCustomRelayInfo(&dto.AdvancedCustomConfig{Routes: []dto.AdvancedCustomRoute{{
+		IncomingPath: "/v1/responses", UpstreamPath: "/v1/responses", Converter: dto.AdvancedCustomConverterNone,
+		ConverterOptions: &dto.AdvancedCustomConverterOptions{ResponsesTools: &dto.AdvancedCustomResponsesToolsOptions{
+			ImageGeneration: dto.AdvancedCustomResponsesToolPolicyDrop,
+		}},
+	}}})
+	info.ChannelId = 97
+	info.RelayMode = relayconstant.RelayModeResponses
+	info.RequestURLPath = "/v1/responses"
+	info.OriginModelName = "glm-5.2"
+
+	_, err = adaptor.ConvertOpenAIResponsesRequest(advancedCustomGinContext("/v1/responses"), info, dto.OpenAIResponsesRequest{
+		Model: "glm-5.2", Input: mustAdvancedCustomRawMessage(t, "generate"),
+		Tools: mustAdvancedCustomRawMessage(t, []map[string]any{{"type": "image_gen"}, {"type": "function", "name": "shell"}}),
+	})
+	require.NoError(t, err)
+	var events []model.ToolCompatibilityEvent
+	require.NoError(t, db.Find(&events).Error)
+	require.Len(t, events, 1)
+	require.Equal(t, model.ToolCompatibilityEventTypePolicyDrop, events[0].EventType)
+	require.Equal(t, "image_gen", events[0].ToolType)
+	require.Equal(t, "glm-5.2", events[0].RequestedModel)
+	require.False(t, strings.Contains(events[0].SanitizedError, "generate"))
 }

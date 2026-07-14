@@ -121,7 +121,8 @@ export const ADVANCED_CUSTOM_RESPONSES_TOOL_POLICY_OPTIONS: Array<{
   {
     value: 'flatten',
     label: 'Flatten',
-    description: 'Only valid for namespace: expand into individual function tools.',
+    description:
+      'Only valid for namespace: expand into individual function tools.',
   },
   {
     value: 'drop',
@@ -810,6 +811,29 @@ function normalizeAdvancedCustomRoute(
             unknown: route.converter_options.responses_tools.unknown,
           }
         : undefined,
+      responses_tool_conflict_policy:
+        route.converter_options.responses_tool_conflict_policy,
+      responses_tool_model_overrides: Array.isArray(
+        route.converter_options.responses_tool_model_overrides
+      )
+        ? route.converter_options.responses_tool_model_overrides.map(
+            (override) => ({
+              models: [
+                ...new Set(
+                  (override.models || [])
+                    .map((model) => model.trim())
+                    .filter(Boolean)
+                ),
+              ],
+              responses_tools: override.responses_tools
+                ? { ...override.responses_tools }
+                : undefined,
+              responses_tool_names: Array.isArray(override.responses_tool_names)
+                ? override.responses_tool_names.map((policy) => ({ ...policy }))
+                : undefined,
+            })
+          )
+        : undefined,
       responses_drop_fields: Array.isArray(
         route.converter_options.responses_drop_fields
       )
@@ -988,7 +1012,8 @@ export const ADVANCED_CUSTOM_RESPONSES_DROP_FIELDS: ReadonlyArray<{
   {
     value: 'metadata',
     label: 'metadata',
-    description: 'Drop the metadata object (Zhipu CodingPlan rejects it with 1210).',
+    description:
+      'Drop the metadata object (Zhipu CodingPlan rejects it with 1210).',
   },
   {
     value: 'store',
@@ -1033,7 +1058,8 @@ export const ADVANCED_CUSTOM_RESPONSES_DROP_FIELDS: ReadonlyArray<{
   {
     value: 'reasoning',
     label: 'reasoning',
-    description: 'Drop the reasoning object to avoid passing it to chat upstreams.',
+    description:
+      'Drop the reasoning object to avoid passing it to chat upstreams.',
   },
 ]
 
@@ -1043,10 +1069,26 @@ function validateRouteConverterOptions(
   const mode = route.converter_options?.responses_tools_mode
   const tools = route.converter_options?.responses_tools
   const dropFields = route.converter_options?.responses_drop_fields
-  if (!mode && !tools && (!dropFields || dropFields.length === 0)) return null
-  if (route.converter !== 'openai_responses_to_openai_chat_completions') {
-    return 'Responses tool options only work with OpenAI Responses to OpenAI Chat converter'
-  }
+  const conflictPolicy = route.converter_options?.responses_tool_conflict_policy
+  const overrides = route.converter_options?.responses_tool_model_overrides
+  if (
+    !mode &&
+    !tools &&
+    !conflictPolicy &&
+    (!overrides || overrides.length === 0) &&
+    (!dropFields || dropFields.length === 0)
+  )
+    {return null}
+  const isResponsesRoute =
+    route.incoming_path === '/v1/responses' ||
+    route.incoming_path === '/v1/responses/compact'
+  if (!isResponsesRoute)
+    {return 'Responses tool options require an OpenAI Responses route'}
+  if (
+    route.converter !== 'none' &&
+    route.converter !== 'openai_responses_to_openai_chat_completions'
+  )
+    {return 'Responses tool options only work with native forwarding or OpenAI Responses to OpenAI Chat converter'}
   if (
     mode &&
     !ADVANCED_CUSTOM_RESPONSES_TOOLS_MODE_OPTIONS.some(
@@ -1065,6 +1107,52 @@ function validateRouteConverterOptions(
       }
       if (policy === 'flatten' && toolType !== 'namespace') {
         return `Responses tool policy flatten only supports namespace`
+      }
+    }
+  }
+  if (
+    conflictPolicy &&
+    !['preserve', 'deduplicate', 'reject'].includes(conflictPolicy)
+  )
+    {return 'Responses tool conflict policy is invalid'}
+  if (route.converter === 'none' && tools?.namespace === 'flatten')
+    {return 'Native forwarding does not support namespace flatten'}
+  if (route.converter === 'none' && dropFields && dropFields.length > 0)
+    {return 'Native forwarding does not support Responses drop fields'}
+  if (overrides) {
+    const seenModels = new Set<string>()
+    const allowedPolicies = new Set(['preserve', 'flatten', 'drop', 'reject'])
+    for (const override of overrides) {
+      if (!override.models || override.models.length === 0)
+        {return 'Model override requires at least one model'}
+      const hasToolPolicies = Object.values(
+        override.responses_tools || {}
+      ).some(Boolean)
+      const namePolicies = override.responses_tool_names || []
+      if (!hasToolPolicies && namePolicies.length === 0)
+        {return 'Model override requires at least one tool policy'}
+      for (const rawModel of override.models || []) {
+        const model = rawModel.trim()
+        if (!model) return 'Model override contains an empty model name'
+        if (seenModels.has(model))
+          {return `Model override is duplicated: ${model}`}
+        seenModels.add(model)
+      }
+      const seenNames = new Set<string>()
+      for (const namePolicy of namePolicies) {
+        const toolType = (namePolicy.tool_type || '').trim()
+        const toolName = (namePolicy.tool_name || '').trim()
+        const policy = namePolicy.policy || ''
+        if (!toolType || !toolName || !policy)
+          {return 'Tool name rule requires a type, name, and policy'}
+        if (toolType === 'function')
+          {return 'Function tools are always preserved'}
+        if (policy === 'flatten' || !allowedPolicies.has(policy))
+          {return 'Tool name rule policy is invalid'}
+        const key = `${toolType}:${toolName}`
+        if (seenNames.has(key))
+          {return `Tool name rule is duplicated: ${toolType}/${toolName}`}
+        seenNames.add(key)
       }
     }
   }

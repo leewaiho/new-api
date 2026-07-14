@@ -101,15 +101,21 @@ import type {
   AdvancedCustomAuthType,
   AdvancedCustomConfig,
   AdvancedCustomConverter,
+  AdvancedCustomResponsesToolConflictPolicy,
+  AdvancedCustomResponsesToolModelOverride,
+  AdvancedCustomResponsesToolNamePolicy,
   AdvancedCustomResponsesToolPolicy,
   AdvancedCustomResponsesToolsMode,
   AdvancedCustomResponsesToolsOptions,
   AdvancedCustomRoute,
 } from '../../types'
+import { ToolCompatibilityEvents } from '../tool-compatibility-events'
 
 type AdvancedCustomEditorDialogProps = {
   open: boolean
   value: string
+  channelId?: number
+  channelModels?: string[]
   onOpenChange: (open: boolean) => void
   onSave: (value: string) => void
 }
@@ -176,6 +182,8 @@ function buildRouteGroups(
 export function AdvancedCustomEditorDialog({
   open,
   value,
+  channelId,
+  channelModels,
   onOpenChange,
   onSave,
 }: AdvancedCustomEditorDialogProps) {
@@ -630,7 +638,9 @@ export function AdvancedCustomEditorDialog({
             onApply={(generatedConfig) => {
               const normalized = normalizeAdvancedCustomConfig(generatedConfig)
               setConfig(normalized)
-              setRouteKeys(createRouteKeys(normalized.advanced_routes?.length || 0))
+              setRouteKeys(
+                createRouteKeys(normalized.advanced_routes?.length || 0)
+              )
               toast.success(t('Quick setup applied'))
             }}
           />
@@ -763,6 +773,10 @@ export function AdvancedCustomEditorDialog({
           ) : null}
         </div>
       )}
+      <ToolCompatibilityEvents
+        channelId={channelId}
+        channelModels={channelModels}
+      />
     </Dialog>
   )
 }
@@ -1038,7 +1052,8 @@ function RouteEditor({
     )?.triggerLabel || converterLabel
   const authLabel = getOptionLabel(ADVANCED_CUSTOM_AUTH_MODE_OPTIONS, authMode)
   const responsesToolsMode: AdvancedCustomResponsesToolsMode =
-    route.converter_options?.responses_tools_mode || 'compat_flatten'
+    route.converter_options?.responses_tools_mode ||
+    (converter === 'none' ? 'preserve' : 'compat_flatten')
   const responsesToolsModeLabel = getOptionLabel(
     ADVANCED_CUSTOM_RESPONSES_TOOLS_MODE_OPTIONS,
     responsesToolsMode
@@ -1068,6 +1083,12 @@ function RouteEditor({
     Boolean(route.converter_options?.responses_tools_mode) ||
     Boolean(route.converter_options?.responses_tools)
   const isNativeConverter = converter === 'none'
+  const isResponsesRoute =
+    incomingPath === '/v1/responses' || incomingPath === '/v1/responses/compact'
+  const supportsResponsesToolHandling =
+    isResponsesRoute &&
+    (isNativeConverter ||
+      converter === 'openai_responses_to_openai_chat_completions')
   const ConverterVisualIcon = isNativeConverter ? ArrowRight : Shuffle
   const modelsInputValue = route.models?.join(', ') || ''
   const parsedRouteModels = parseAdvancedCustomRouteModels(modelsInputValue)
@@ -1082,18 +1103,26 @@ function RouteEditor({
       nextConverter,
       nextIncomingPath
     )
+    const nextSupportsResponsesToolHandling =
+      (nextIncomingPath === '/v1/responses' ||
+        nextIncomingPath === '/v1/responses/compact') &&
+      (nextConverter === 'none' ||
+        nextConverter === 'openai_responses_to_openai_chat_completions')
     onChange({
       converter: nextConverter,
       incoming_path: nextIncomingPath,
       upstream_path: defaults.upstream_path,
       auth: defaults.auth,
       converter_options:
-        nextConverter === 'openai_responses_to_openai_chat_completions'
+        nextSupportsResponsesToolHandling
           ? hasResponsesToolOptions
             ? route.converter_options
             : {
-                responses_tools_mode: 'compat_flatten',
-                responses_tools: responsesToolsFromMode('compat_flatten'),
+                responses_tools_mode:
+                  nextConverter === 'none' ? 'preserve' : 'compat_flatten',
+                responses_tools: responsesToolsFromMode(
+                  nextConverter === 'none' ? 'preserve' : 'compat_flatten'
+                ),
               }
           : undefined,
     })
@@ -1116,7 +1145,7 @@ function RouteEditor({
   const setResponsesToolsMode = (mode: AdvancedCustomResponsesToolsMode) => {
     onChange({
       converter_options: {
-        ...(route.converter_options || {}),
+        ...route.converter_options,
         responses_tools_mode: mode,
         responses_tools: responsesToolsFromMode(mode),
       },
@@ -1129,12 +1158,89 @@ function RouteEditor({
   ) => {
     onChange({
       converter_options: {
-        ...(route.converter_options || {}),
+        ...route.converter_options,
         responses_tools: {
           ...responseToolPolicies,
           [key]: policy,
         },
       },
+    })
+  }
+
+  const responseToolConflictPolicy: AdvancedCustomResponsesToolConflictPolicy =
+    route.converter_options?.responses_tool_conflict_policy || 'deduplicate'
+  const modelToolOverrides =
+    route.converter_options?.responses_tool_model_overrides || []
+
+  const patchConverterOptions = (
+    patch: Partial<NonNullable<AdvancedCustomRoute['converter_options']>>
+  ) => {
+    onChange({
+      converter_options: { ...route.converter_options, ...patch },
+    })
+  }
+  const setModelToolOverride = (
+    index: number,
+    patch: Partial<AdvancedCustomResponsesToolModelOverride>
+  ) => {
+    patchConverterOptions({
+      responses_tool_model_overrides: modelToolOverrides.map(
+        (override, currentIndex) =>
+          currentIndex === index ? { ...override, ...patch } : override
+      ),
+    })
+  }
+  const setModelToolOverridePolicy = (
+    index: number,
+    key: keyof AdvancedCustomResponsesToolsOptions,
+    policy: AdvancedCustomResponsesToolPolicy
+  ) => {
+    const override = modelToolOverrides[index]
+    setModelToolOverride(index, {
+      responses_tools: { ...override.responses_tools, [key]: policy },
+    })
+  }
+  const removeModelToolOverride = (index: number) =>
+    patchConverterOptions({
+      responses_tool_model_overrides: modelToolOverrides.filter(
+        (_, currentIndex) => currentIndex !== index
+      ),
+    })
+  const addModelToolOverride = () =>
+    patchConverterOptions({
+      responses_tool_model_overrides: [
+        ...modelToolOverrides,
+        { models: [], responses_tools: {}, responses_tool_names: [] },
+      ],
+    })
+  const setNamePolicy = (
+    overrideIndex: number,
+    policyIndex: number,
+    patch: Partial<AdvancedCustomResponsesToolNamePolicy>
+  ) => {
+    const override = modelToolOverrides[overrideIndex]
+    const policies = override.responses_tool_names || []
+    setModelToolOverride(overrideIndex, {
+      responses_tool_names: policies.map((policy, currentIndex) =>
+        currentIndex === policyIndex ? { ...policy, ...patch } : policy
+      ),
+    })
+  }
+  const addNamePolicy = (overrideIndex: number) => {
+    const override = modelToolOverrides[overrideIndex]
+    setModelToolOverride(overrideIndex, {
+      responses_tool_names: [
+        ...(override.responses_tool_names || []),
+        { tool_type: 'web_search', tool_name: '', policy: 'preserve' },
+      ],
+    })
+  }
+  const removeNamePolicy = (overrideIndex: number, policyIndex: number) => {
+    const override = modelToolOverrides[overrideIndex]
+    setModelToolOverride(overrideIndex, {
+      responses_tool_names: (override.responses_tool_names || []).filter(
+        (_, currentIndex) => currentIndex !== policyIndex
+      ),
     })
   }
 
@@ -1162,7 +1268,7 @@ function RouteEditor({
       : current.filter((f) => f !== field)
     onChange({
       converter_options: {
-        ...(route.converter_options || {}),
+        ...route.converter_options,
         responses_drop_fields: next,
       },
     })
@@ -1444,7 +1550,7 @@ function RouteEditor({
         <p className='text-destructive text-xs'>{t(errorMessage)}</p>
       ) : null}
 
-      {converter === 'openai_responses_to_openai_chat_completions' ? (
+      {supportsResponsesToolHandling ? (
         <>
           <Separator className='lg:hidden' />
           <div
@@ -1462,7 +1568,9 @@ function RouteEditor({
               <Select
                 value={responsesToolsMode}
                 onValueChange={(value) =>
-                  setResponsesToolsMode(value as AdvancedCustomResponsesToolsMode)
+                  setResponsesToolsMode(
+                    value as AdvancedCustomResponsesToolsMode
+                  )
                 }
               >
                 <SelectTrigger className='w-full max-w-full lg:h-8'>
@@ -1534,7 +1642,9 @@ function RouteEditor({
                   >
                     <SelectGroup>
                       {ADVANCED_CUSTOM_RESPONSES_TOOL_POLICY_OPTIONS.filter(
-                        (option) => field.allowFlatten || option.value !== 'flatten'
+                        (option) =>
+                          (!isNativeConverter && field.allowFlatten) ||
+                          option.value !== 'flatten'
                       ).map((option) => (
                         <SelectItem
                           key={option.value}
@@ -1555,55 +1665,251 @@ function RouteEditor({
               </FieldBlock>
             ))}
           </div>
-          <div
-            className={cn(
-              'grid gap-4 md:grid-cols-2 lg:items-end lg:gap-2 lg:border-t lg:pt-2',
-              routeEditorGridClassName
-            )}
-          >
-            <span className='hidden lg:block' aria-hidden='true' />
-            <FieldBlock
-              label={t('Drop Responses fields')}
-              description={t(
-                'Strip these Responses request fields before forwarding to the chat-only upstream.'
-              )}
-              className='lg:gap-1'
-              labelClassName='lg:text-xs'
-            >
-              <div className='grid grid-cols-1 gap-1.5 text-xs sm:grid-cols-2'>
-                {ADVANCED_CUSTOM_RESPONSES_DROP_FIELDS.map((option) => {
-                  const checked = responsesDropFields.includes(option.value)
-                  return (
-                    <label
-                      key={option.value}
-                      className='flex cursor-pointer items-start gap-2 rounded border border-border/60 px-2 py-1.5 hover:bg-muted/40'
-                      title={`${option.label} — ${option.description}`}
-                    >
-                      <input
-                        type='checkbox'
-                        className='mt-0.5 h-3.5 w-3.5 shrink-0 accent-current'
-                        checked={checked}
-                        onChange={(event) =>
-                          setResponsesDropField(
-                            option.value,
-                            event.target.checked
-                          )
-                        }
-                      />
-                      <span className='flex min-w-0 flex-col leading-snug'>
-                        <span className='truncate font-medium'>
-                          {option.label}
-                        </span>
-                        <span className='text-muted-foreground truncate text-[11px]'>
-                          {option.description}
-                        </span>
-                      </span>
-                    </label>
-                  )
-                })}
+          <div className='space-y-3 border-t pt-3'>
+            <div className='flex flex-wrap items-center justify-between gap-2'>
+              <div>
+                <p className='text-sm font-medium'>{t('Tool Handling')}</p>
+                <p className='text-muted-foreground text-xs'>
+                  {t(
+                    'Function tools are always preserved. Model overrides take precedence over route policies.'
+                  )}
+                </p>
               </div>
-            </FieldBlock>
+              <Select
+                value={responseToolConflictPolicy}
+                onValueChange={(value) =>
+                  patchConverterOptions({
+                    responses_tool_conflict_policy:
+                      value as AdvancedCustomResponsesToolConflictPolicy,
+                  })
+                }
+              >
+                <SelectTrigger className='w-40'>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value='deduplicate'>
+                    {t('Deduplicate conflicts')}
+                  </SelectItem>
+                  <SelectItem value='preserve'>
+                    {t('Preserve conflicts')}
+                  </SelectItem>
+                  <SelectItem value='reject'>
+                    {t('Reject conflicts')}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className='space-y-2'>
+              {modelToolOverrides.map((override, overrideIndex) => (
+                <div
+                  key={override.models?.join(',') || JSON.stringify(override)}
+                  className='space-y-2 rounded border p-2'
+                >
+                  <div className='flex gap-2'>
+                    <Input
+                      value={(override.models || []).join(', ')}
+                      onChange={(event) =>
+                        setModelToolOverride(overrideIndex, {
+                          models: [
+                            ...new Set(
+                              event.target.value
+                                .split(',')
+                                .map((model) => model.trim())
+                                .filter(Boolean)
+                            ),
+                          ],
+                        })
+                      }
+                      placeholder={t('Models, comma separated')}
+                    />
+                    <Button
+                      type='button'
+                      variant='ghost'
+                      size='icon'
+                      onClick={() => removeModelToolOverride(overrideIndex)}
+                    >
+                      <Trash2 className='h-4 w-4' />
+                      <span className='sr-only'>{t('Delete')}</span>
+                    </Button>
+                  </div>
+                  <div className='grid gap-2 sm:grid-cols-2 lg:grid-cols-3'>
+                    {responseToolPolicyFields.map((field) => (
+                      <FieldBlock
+                        key={field.key}
+                        label={t(field.label)}
+                        labelClassName='text-xs'
+                      >
+                        <Select
+                          value={
+                            override.responses_tools?.[field.key] || 'preserve'
+                          }
+                          onValueChange={(value) =>
+                            setModelToolOverridePolicy(
+                              overrideIndex,
+                              field.key,
+                              value as AdvancedCustomResponsesToolPolicy
+                            )
+                          }
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {ADVANCED_CUSTOM_RESPONSES_TOOL_POLICY_OPTIONS.filter(
+                              (option) =>
+                                (!isNativeConverter && field.allowFlatten) ||
+                                option.value !== 'flatten'
+                            ).map((option) => (
+                              <SelectItem
+                                key={option.value}
+                                value={option.value}
+                              >
+                                {t(option.label)}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </FieldBlock>
+                    ))}
+                  </div>
+                  {(override.responses_tool_names || []).map(
+                    (namePolicy, policyIndex) => (
+                      <div
+                        key={`${namePolicy.tool_type || 'tool'}:${namePolicy.tool_name || namePolicy.policy || 'policy'}`}
+                        className='grid gap-2 sm:grid-cols-[9rem_1fr_9rem_2rem]'
+                      >
+                        <Input
+                          value={namePolicy.tool_type || ''}
+                          onChange={(event) =>
+                            setNamePolicy(overrideIndex, policyIndex, {
+                              tool_type: event.target.value,
+                            })
+                          }
+                          placeholder={t('Tool type')}
+                        />
+                        <Input
+                          value={namePolicy.tool_name || ''}
+                          onChange={(event) =>
+                            setNamePolicy(overrideIndex, policyIndex, {
+                              tool_name: event.target.value,
+                            })
+                          }
+                          placeholder={t('Tool name')}
+                        />
+                        <Select
+                          value={namePolicy.policy || 'preserve'}
+                          onValueChange={(value) =>
+                            setNamePolicy(overrideIndex, policyIndex, {
+                              policy:
+                                value as AdvancedCustomResponsesToolPolicy,
+                            })
+                          }
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {ADVANCED_CUSTOM_RESPONSES_TOOL_POLICY_OPTIONS.filter(
+                              (option) =>
+                                !isNativeConverter || option.value !== 'flatten'
+                            ).map((option) => (
+                              <SelectItem
+                                key={option.value}
+                                value={option.value}
+                              >
+                                {t(option.label)}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Button
+                          type='button'
+                          variant='ghost'
+                          size='icon'
+                          onClick={() =>
+                            removeNamePolicy(overrideIndex, policyIndex)
+                          }
+                        >
+                          <Trash2 className='h-4 w-4' />
+                          <span className='sr-only'>{t('Delete')}</span>
+                        </Button>
+                      </div>
+                    )
+                  )}
+                  <Button
+                    type='button'
+                    size='sm'
+                    variant='outline'
+                    onClick={() => addNamePolicy(overrideIndex)}
+                  >
+                    <Plus className='mr-1 h-3.5 w-3.5' />
+                    {t('Add tool name rule')}
+                  </Button>
+                </div>
+              ))}
+              <Button
+                type='button'
+                size='sm'
+                variant='outline'
+                onClick={addModelToolOverride}
+              >
+                <Plus className='mr-1 h-3.5 w-3.5' />
+                {t('Add model capability')}
+              </Button>
+            </div>
           </div>
+          {!isNativeConverter ? (
+            <div
+              className={cn(
+                'grid gap-4 md:grid-cols-2 lg:items-end lg:gap-2 lg:border-t lg:pt-2',
+                routeEditorGridClassName
+              )}
+            >
+              <span className='hidden lg:block' aria-hidden='true' />
+              <FieldBlock
+                label={t('Drop Responses fields')}
+                description={t(
+                  'Strip these Responses request fields before forwarding to the chat-only upstream.'
+                )}
+                className='lg:gap-1'
+                labelClassName='lg:text-xs'
+              >
+                <div className='grid grid-cols-1 gap-1.5 text-xs sm:grid-cols-2'>
+                  {ADVANCED_CUSTOM_RESPONSES_DROP_FIELDS.map((option) => {
+                    const checked = responsesDropFields.includes(option.value)
+                    return (
+                      <label
+                        key={option.value}
+                        className='border-border/60 hover:bg-muted/40 flex cursor-pointer items-start gap-2 rounded border px-2 py-1.5'
+                        title={`${option.label} — ${option.description}`}
+                      >
+                        <input
+                          type='checkbox'
+                          className='mt-0.5 h-3.5 w-3.5 shrink-0 accent-current'
+                          checked={checked}
+                          onChange={(event) =>
+                            setResponsesDropField(
+                              option.value,
+                              event.target.checked
+                            )
+                          }
+                        />
+                        <span className='flex min-w-0 flex-col leading-snug'>
+                          <span className='truncate font-medium'>
+                            {option.label}
+                          </span>
+                          <span className='text-muted-foreground truncate text-[11px]'>
+                            {option.description}
+                          </span>
+                        </span>
+                      </label>
+                    )
+                  })}
+                </div>
+              </FieldBlock>
+            </div>
+          ) : null}
         </>
       ) : null}
 
@@ -1796,10 +2102,7 @@ function DualEndpointQuickSetup({
       setError(t('Anthropic-compatible Base URL is required'))
       return
     }
-    if (
-      (enableOpenAIChat || enableOpenAIResponses) &&
-      !openaiBaseURL.trim()
-    ) {
+    if ((enableOpenAIChat || enableOpenAIResponses) && !openaiBaseURL.trim()) {
       setError(t('OpenAI-compatible Base URL is required'))
       return
     }
@@ -1830,17 +2133,11 @@ function DualEndpointQuickSetup({
   return (
     <Popover open={open} onOpenChange={handleOpenChange}>
       <PopoverTrigger
-        render={
-          <Button type='button' variant='outline' size='sm' />
-        }
+        render={<Button type='button' variant='outline' size='sm' />}
       >
         {t('Quick Setup')}
       </PopoverTrigger>
-      <PopoverContent
-        align='end'
-        className='w-[420px] p-4'
-        sideOffset={8}
-      >
+      <PopoverContent align='end' className='w-[420px] p-4' sideOffset={8}>
         <div className='flex flex-col gap-3'>
           <div className='flex flex-col gap-1'>
             <div className='text-sm font-medium'>
@@ -1887,16 +2184,22 @@ function DualEndpointQuickSetup({
               <label className='flex items-center gap-2 text-sm'>
                 <Checkbox
                   checked={enableAnthropic}
-                  onCheckedChange={(value) => setEnableAnthropic(value === true)}
+                  onCheckedChange={(value) =>
+                    setEnableAnthropic(value === true)
+                  }
                 />
                 <span>{t('Claude Messages (/v1/messages)')}</span>
               </label>
               <label className='flex items-center gap-2 text-sm'>
                 <Checkbox
                   checked={enableOpenAIChat}
-                  onCheckedChange={(value) => setEnableOpenAIChat(value === true)}
+                  onCheckedChange={(value) =>
+                    setEnableOpenAIChat(value === true)
+                  }
                 />
-                <span>{t('OpenAI Chat Completions (/v1/chat/completions)')}</span>
+                <span>
+                  {t('OpenAI Chat Completions (/v1/chat/completions)')}
+                </span>
               </label>
               <label className='flex items-center gap-2 text-sm'>
                 <Checkbox
@@ -1931,9 +2234,7 @@ function DualEndpointQuickSetup({
               </Select>
             </div>
             <div className='flex flex-col gap-1.5'>
-              <Label className='text-xs font-medium'>
-                {t('OpenAI auth')}
-              </Label>
+              <Label className='text-xs font-medium'>{t('OpenAI auth')}</Label>
               <Select
                 value={openaiAuth}
                 onValueChange={(value) =>
@@ -1951,9 +2252,7 @@ function DualEndpointQuickSetup({
             </div>
           </div>
 
-          {error ? (
-            <p className='text-destructive text-xs'>{error}</p>
-          ) : null}
+          {error ? <p className='text-destructive text-xs'>{error}</p> : null}
 
           <div className='flex justify-end gap-2 pt-1'>
             <Button

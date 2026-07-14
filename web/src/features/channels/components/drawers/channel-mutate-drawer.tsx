@@ -4721,6 +4721,11 @@ export function ChannelMutateDrawer({
         <AdvancedCustomEditorDialog
           open={advancedCustomEditorOpen}
           value={form.watch('advanced_custom') || ''}
+          channelId={channelId || undefined}
+          channelModels={(form.watch('models') || '')
+            .split(',')
+            .map((model) => model.trim())
+            .filter(Boolean)}
           onOpenChange={setAdvancedCustomEditorOpen}
           onSave={(nextValue) => {
             form.setValue('advanced_custom', nextValue, {
@@ -4730,7 +4735,6 @@ export function ChannelMutateDrawer({
           }}
         />
       )}
-
 
       <VendorModelImportDialog
         open={vendorModelImportDialogOpen}
