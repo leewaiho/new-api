@@ -471,8 +471,10 @@ func (a *Adaptor) convertGeminiToOpenAICompatibleRequest(c *gin.Context, info *r
 }
 
 func (a *Adaptor) convertOpenAICompatibleResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.OpenAIResponsesRequest) (any, error) {
-	policies := advancedCustomResponsesToolPolicies(a.route.ConverterOptions)
-	request.Tools = relayconvert.ApplyResponsesToolPoliciesForPassthrough(request.Tools, policies)
+	request.Tools = relayconvert.ApplyResponsesToolPoliciesForPassthrough(
+		request.Tools,
+		advancedCustomResponsesPassthroughToolPolicies(),
+	)
 
 	old := info.ChannelType
 	info.ChannelType = constant.ChannelTypeOpenAI
@@ -503,6 +505,17 @@ func (a *Adaptor) convertOpenAICompatibleImageRequest(c *gin.Context, info *rela
 	converted, err := a.openaiAdaptor.ConvertImageRequest(c, info, request)
 	info.ChannelType = old
 	return converted, err
+}
+
+func advancedCustomResponsesPassthroughToolPolicies() relayconvert.ResponsesToolPolicies {
+	return relayconvert.ResponsesToolPolicies{
+		Namespace:       relayconvert.ResponsesToolPolicyPreserve,
+		Custom:          relayconvert.ResponsesToolPolicyPreserve,
+		WebSearch:       relayconvert.ResponsesToolPolicyDrop,
+		ToolSearch:      relayconvert.ResponsesToolPolicyDrop,
+		ImageGeneration: relayconvert.ResponsesToolPolicyDrop,
+		Unknown:         relayconvert.ResponsesToolPolicyPreserve,
+	}
 }
 
 func advancedCustomResponsesToolPolicies(options *dto.AdvancedCustomConverterOptions) relayconvert.ResponsesToolPolicies {
