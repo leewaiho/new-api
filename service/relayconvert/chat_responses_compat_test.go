@@ -460,6 +460,7 @@ func TestChatCompletionsResponseToResponsesPreservesTextToolCallsAndUsage(t *tes
 	assert.Equal(t, 5, resp.Usage.OutputTokens)
 	require.Len(t, resp.Output, 2)
 	assert.Equal(t, responsesOutputTypeMessage, resp.Output[0].Type)
+	assert.Equal(t, "msg_resp_1_0", resp.Output[0].ID)
 	assert.Equal(t, "I will call.", resp.Output[0].Content[0].Text)
 	assert.Equal(t, responsesOutputTypeFunctionCall, resp.Output[1].Type)
 	assert.Equal(t, "call_1", resp.Output[1].CallId)
@@ -546,7 +547,11 @@ func TestChatCompletionsStreamToResponsesEventsAggregatesUsageAndToolArgs(t *tes
 
 	require.Len(t, events, 10)
 	assert.Equal(t, responsesEventCreated, events[0].Type)
+	assert.Equal(t, responsesEventOutputItemAdded, events[1].Type)
+	require.NotNil(t, events[1].Payload.Item)
+	assert.Equal(t, "msg_resp_1_0", events[1].Payload.Item.ID)
 	assert.Equal(t, responsesEventOutputTextDelta, events[2].Type)
+	assert.Equal(t, "msg_resp_1_0", events[2].Payload.ItemID)
 	assert.Equal(t, "hello", events[2].Payload.Delta)
 	assert.Equal(t, responsesEventFunctionArgsDelta, events[4].Type)
 	assert.Equal(t, `{"q":"x"}`, events[4].Payload.Delta)
@@ -554,6 +559,7 @@ func TestChatCompletionsStreamToResponsesEventsAggregatesUsageAndToolArgs(t *tes
 	require.NotNil(t, events[9].Payload.Response)
 	assert.Equal(t, 6, events[9].Payload.Response.Usage.TotalTokens)
 	require.Len(t, events[9].Payload.Response.Output, 2)
+	assert.Equal(t, "msg_resp_1_0", events[9].Payload.Response.Output[0].ID)
 	assert.Equal(t, "hello", events[9].Payload.Response.Output[0].Content[0].Text)
 	assert.Equal(t, `"{\"q\":\"x\"}"`, string(events[9].Payload.Response.Output[1].Arguments))
 }
