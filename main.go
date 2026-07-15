@@ -28,6 +28,7 @@ import (
 	"github.com/QuantumNous/new-api/router"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
+	"github.com/QuantumNous/new-api/setting/auth_setting"
 	_ "github.com/QuantumNous/new-api/setting/performance_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
@@ -186,13 +187,10 @@ func main() {
 	middleware.SetUpLogger(server)
 	// Initialize session store
 	store := cookie.NewStore([]byte(common.SessionSecret))
-	store.Options(sessions.Options{
-		Path:     "/",
-		MaxAge:   2592000, // 30 days
-		HttpOnly: true,
-		Secure:   false,
-		SameSite: http.SameSiteStrictMode,
-	})
+	if err := auth_setting.ConfigureDashboardSessionCookieStore(store); err != nil {
+		common.FatalLog("failed to configure session cookie store: " + err.Error())
+		return
+	}
 	server.Use(sessions.Sessions("session", store))
 
 	InjectUmamiAnalytics()
