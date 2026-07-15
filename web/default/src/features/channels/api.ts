@@ -40,6 +40,11 @@ import type {
   SearchChannelsParams,
   SearchChannelsResponse,
   TagOperationParams,
+  ToolCompatibilityEvent,
+  ToolCompatibilityEventsResponse,
+  ToolCompatibilityMutationRequest,
+  ToolCompatibilityMutationResult,
+  ToolCompatibilityResolutionStatus,
 } from './types'
 
 const channelActionConfig = (
@@ -243,9 +248,7 @@ export async function fetchUpstreamModels(
   id: number,
   fetchURL?: string
 ): Promise<FetchModelsResponse> {
-  const query = fetchURL
-    ? `?fetch_url=${encodeURIComponent(fetchURL)}`
-    : ''
+  const query = fetchURL ? `?fetch_url=${encodeURIComponent(fetchURL)}` : ''
   const res = await api.get(
     `/api/channel/fetch_models/${id}${query}`,
     channelActionConfig()
@@ -677,4 +680,99 @@ export async function getPrefillGroups(
 }> {
   const res = await api.get('/api/prefill_group', { params: { type } })
   return res.data
+}
+
+export async function getToolCompatibilityEvents(params: {
+  channel_id?: number
+  route?: string
+  requested_model?: string
+  upstream_model?: string
+  tool_type?: string
+  event_type?: string
+  resolution_status?: string
+  page?: number
+  page_size?: number
+}): Promise<ToolCompatibilityEventsResponse> {
+  const res = await api.get('/api/tool-compatibility/events', { params })
+  const result = res.data as ToolCompatibilityEventsResponse
+  if (!result.success) {
+    throw new Error(result.message || 'Failed to load compatibility issues')
+  }
+  return result
+}
+
+export async function updateToolCompatibilityEventStatus(
+  id: number,
+  status: ToolCompatibilityResolutionStatus
+): Promise<{
+  success: boolean
+  message?: string
+  data?: ToolCompatibilityEvent
+}> {
+  const res = await api.patch(
+    `/api/tool-compatibility/events/${id}/status`,
+    { status },
+    channelActionConfig()
+  )
+  const result = res.data as {
+    success: boolean
+    message?: string
+    data?: ToolCompatibilityEvent
+  }
+  if (!result.success) {
+    throw new Error(result.message || 'Failed to update compatibility issue')
+  }
+  return result
+}
+
+export async function applyToolCompatibilityEventSuggestion(
+  id: number,
+  request: ToolCompatibilityMutationRequest = {}
+): Promise<{
+  success: boolean
+  message?: string
+  data?: ToolCompatibilityMutationResult
+}> {
+  const res = await api.post(
+    `/api/tool-compatibility/events/${id}/apply-suggestion`,
+    request,
+    channelActionConfig()
+  )
+  const result = res.data as {
+    success: boolean
+    message?: string
+    data?: ToolCompatibilityMutationResult
+  }
+  if (!result.success) {
+    throw new Error(
+      result.message || 'Failed to apply compatibility suggestion'
+    )
+  }
+  return result
+}
+
+export async function restoreToolCompatibilityEventModelDefault(
+  id: number,
+  request: ToolCompatibilityMutationRequest = {}
+): Promise<{
+  success: boolean
+  message?: string
+  data?: ToolCompatibilityMutationResult
+}> {
+  const res = await api.post(
+    `/api/tool-compatibility/events/${id}/restore-default`,
+    request,
+    channelActionConfig()
+  )
+  const result = res.data as {
+    success: boolean
+    message?: string
+    data?: ToolCompatibilityMutationResult
+  }
+  if (!result.success) {
+    throw new Error(
+      result.message || 'Failed to restore compatibility defaults'
+    )
+  }
+  return result
 }

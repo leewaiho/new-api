@@ -1,6 +1,7 @@
 package relayconvert
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -511,4 +512,71 @@ func TestResponsesRequestToChatCompletionsRequestKeepsFieldsByDefault(t *testing
 	assert.Equal(t, "auto", strings.Trim(string(got.ServiceTier), `"`))
 	assert.Equal(t, "cache-key", got.PromptCacheKey)
 	assert.Equal(t, "high", got.ReasoningEffort)
+}
+
+func TestResponsesRequestToolsToChatConvertsWebSearchForChatUpstream(t *testing.T) {
+	tools := mustRawMessage(t, []map[string]any{{"type": "web_search"}, {"type": "web_search_preview"}})
+	converted, err := responsesRequestToolsToChat(tools, ResponsesRequestToChatOptions{
+		ToolPolicies: ResponsesToolPolicies{WebSearch: ResponsesToolPolicyPreserve},
+	})
+	require.NoError(t, err)
+	require.Len(t, converted, 2)
+	for _, tool := range converted {
+		require.Equal(t, "web_search", tool.Type)
+		require.Equal(t, true, tool.WebSearch["enable"])
+		require.Equal(t, true, tool.WebSearch["search_result"])
+		require.Empty(t, tool.Custom)
+	}
+}
+
+func TestResponsesRequestToolsToChatPreservesExplicitWebSearchOptions(t *testing.T) {
+	tools := mustRawMessage(t, []map[string]any{{
+		"type":       "web_search",
+		"web_search": map[string]any{"enable": true, "search_result": false, "search_engine": "search_std"},
+	}})
+	converted, err := responsesRequestToolsToChat(tools, ResponsesRequestToChatOptions{
+		ToolPolicies: ResponsesToolPolicies{WebSearch: ResponsesToolPolicyPreserve},
+	})
+	require.NoError(t, err)
+	require.Len(t, converted, 1)
+	require.Equal(t, false, converted[0].WebSearch["search_result"])
+	require.Equal(t, "search_std", converted[0].WebSearch["search_engine"])
+}
+
+func TestResponsesRequestToChatCompletionsRequestSerializesWebSearchAtTopLevel(t *testing.T) {
+	request, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
+		Model: "glm-5.2",
+		Input: mustRawMessage(t, "search for a fact"),
+		Tools: mustRawMessage(t, []map[string]any{{"type": "web_search"}}),
+	}, ResponsesRequestToChatOptions{ToolPolicies: ResponsesToolPolicies{WebSearch: ResponsesToolPolicyPreserve}})
+	require.NoError(t, err)
+	encoded, err := common.Marshal(request)
+	require.NoError(t, err)
+	require.True(t, gjson.GetBytes(encoded, "tools.0.web_search.enable").Bool())
+	require.True(t, gjson.GetBytes(encoded, "tools.0.web_search.search_result").Bool())
+	require.False(t, gjson.GetBytes(encoded, "tools.0.custom").Exists())
+}
+
+func TestResponsesRequestToChatCompletionsRequestPopulatesWebSearchAtIndex297(t *testing.T) {
+	tools := make([]map[string]any, 298)
+	for i := 0; i < 297; i++ {
+		tools[i] = map[string]any{
+			"type":       "function",
+			"name":       fmt.Sprintf("tool_%d", i),
+			"parameters": map[string]any{"type": "object"},
+		}
+	}
+	tools[297] = map[string]any{"type": "web_search"}
+
+	request, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
+		Model: "glm-5.2",
+		Input: mustRawMessage(t, "search for a fact"),
+		Tools: mustRawMessage(t, tools),
+	}, ResponsesRequestToChatOptions{ToolPolicies: ResponsesToolPolicies{WebSearch: ResponsesToolPolicyPreserve}})
+	require.NoError(t, err)
+	encoded, err := common.Marshal(request)
+	require.NoError(t, err)
+	require.Equal(t, "web_search", gjson.GetBytes(encoded, "tools.297.type").String())
+	require.True(t, gjson.GetBytes(encoded, "tools.297.web_search.enable").Bool())
+	require.True(t, gjson.GetBytes(encoded, "tools.297.web_search.search_result").Bool())
 }
