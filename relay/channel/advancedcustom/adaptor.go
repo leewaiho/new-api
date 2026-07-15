@@ -105,13 +105,39 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 	if err != nil {
 		return nil, err
 	}
+	requestedModel, upstreamModel := advancedCustomResponsesModelNames(info, request.Model)
+	policyResolver := func(toolType string, toolName string) string {
+		return dto.ResolveAdvancedCustomResponsesToolPolicy(
+			a.route.ConverterOptions,
+			requestedModel,
+			upstreamModel,
+			toolType,
+			toolName,
+		).Policy
+	}
+	filteredTools, policyDecisions, err := relayconvert.ApplyResponsesToolPolicies(request.Tools, policyResolver)
+	if err != nil {
+		return nil, advancedCustomResponsesToolPolicyError(info, a.route, requestedModel, upstreamModel, policyDecisions, err)
+	}
+	filteredTools, conflictDecisions, err := relayconvert.ApplyResponsesToolConflictPolicy(
+		filteredTools,
+		dto.ResolveAdvancedCustomResponsesToolConflictPolicy(a.route.ConverterOptions),
+	)
+	if err != nil {
+		return nil, advancedCustomResponsesToolPolicyError(info, a.route, requestedModel, upstreamModel, conflictDecisions, err)
+	}
+	decisions := append(policyDecisions, conflictDecisions...)
+	if err := relayconvert.ValidateResponsesToolChoiceAfterPolicy(request.ToolChoice, decisions); err != nil {
+		return nil, advancedCustomResponsesToolPolicyError(info, a.route, requestedModel, upstreamModel, decisions, err)
+	}
+	request.Tools = filteredTools
 	switch converter {
 	case dto.AdvancedCustomConverterNone:
 		return a.convertOpenAICompatibleResponsesRequest(c, info, request)
 	case dto.AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions:
 		mappings := map[string]dto.ResponsesToolNameMapping{}
 		chatOptions := relayconvert.ResponsesRequestToChatOptions{
-			ToolPolicies:       advancedCustomResponsesToolPolicies(a.route.ConverterOptions),
+			ToolPolicies:       advancedCustomResponsesToolPolicies(a.route.ConverterOptions, requestedModel, upstreamModel),
 			ToolNameMappings:   mappings,
 			DropResponseFields: advancedCustomResponsesDropFields(a.route.ConverterOptions),
 		}
@@ -501,48 +527,57 @@ func (a *Adaptor) convertOpenAICompatibleImageRequest(c *gin.Context, info *rela
 	return converted, err
 }
 
-func advancedCustomResponsesToolPolicies(options *dto.AdvancedCustomConverterOptions) relayconvert.ResponsesToolPolicies {
-	mode := dto.AdvancedCustomResponsesToolsModeCompatFlatten
-	if options != nil && strings.TrimSpace(options.ResponsesToolsMode) != "" {
-		mode = strings.TrimSpace(options.ResponsesToolsMode)
+func advancedCustomResponsesToolPolicies(options *dto.AdvancedCustomConverterOptions, requestedModel string, upstreamModel string) relayconvert.ResponsesToolPolicies {
+	resolve := func(toolType string) string {
+		return dto.ResolveAdvancedCustomResponsesToolPolicy(options, requestedModel, upstreamModel, toolType, "").Policy
 	}
-
-	policies := relayconvert.ResponsesToolPolicies{
-		Namespace:       relayconvert.ResponsesToolPolicyFlatten,
-		Custom:          relayconvert.ResponsesToolPolicyDrop,
-		WebSearch:       relayconvert.ResponsesToolPolicyDrop,
-		ToolSearch:      relayconvert.ResponsesToolPolicyDrop,
-		ImageGeneration: relayconvert.ResponsesToolPolicyDrop,
-		Unknown:         relayconvert.ResponsesToolPolicyDrop,
+	return relayconvert.ResponsesToolPolicies{
+		Namespace:       resolve("namespace"),
+		Custom:          resolve("custom"),
+		WebSearch:       resolve("web_search"),
+		ToolSearch:      resolve("tool_search"),
+		ImageGeneration: resolve("image_generation"),
+		Unknown:         resolve("unknown"),
 	}
-	if mode == dto.AdvancedCustomResponsesToolsModePreserve {
-		policies = relayconvert.ResponsesToolPolicies{
-			Namespace:       relayconvert.ResponsesToolPolicyPreserve,
-			Custom:          relayconvert.ResponsesToolPolicyPreserve,
-			WebSearch:       relayconvert.ResponsesToolPolicyPreserve,
-			ToolSearch:      relayconvert.ResponsesToolPolicyPreserve,
-			ImageGeneration: relayconvert.ResponsesToolPolicyPreserve,
-			Unknown:         relayconvert.ResponsesToolPolicyPreserve,
-		}
-	}
-
-	if options == nil || options.ResponsesTools == nil {
-		return policies
-	}
-	overrides := options.ResponsesTools
-	applyAdvancedCustomResponsesToolPolicyOverride(&policies.Namespace, overrides.Namespace)
-	applyAdvancedCustomResponsesToolPolicyOverride(&policies.Custom, overrides.Custom)
-	applyAdvancedCustomResponsesToolPolicyOverride(&policies.WebSearch, overrides.WebSearch)
-	applyAdvancedCustomResponsesToolPolicyOverride(&policies.ToolSearch, overrides.ToolSearch)
-	applyAdvancedCustomResponsesToolPolicyOverride(&policies.ImageGeneration, overrides.ImageGeneration)
-	applyAdvancedCustomResponsesToolPolicyOverride(&policies.Unknown, overrides.Unknown)
-	return policies
 }
 
-func applyAdvancedCustomResponsesToolPolicyOverride(target *string, policy string) {
-	if mapped := mapAdvancedCustomResponsesToolPolicy(policy); mapped != "" {
-		*target = mapped
+func advancedCustomResponsesModelNames(info *relaycommon.RelayInfo, requestModel string) (string, string) {
+	requestedModel := strings.TrimSpace(info.OriginModelName)
+	if requestedModel == "" {
+		requestedModel = strings.TrimSpace(requestModel)
 	}
+	upstreamModel := strings.TrimSpace(requestModel)
+	if info.ChannelMeta != nil && strings.TrimSpace(info.UpstreamModelName) != "" {
+		upstreamModel = strings.TrimSpace(info.UpstreamModelName)
+	}
+	return requestedModel, upstreamModel
+}
+
+func advancedCustomResponsesToolPolicyError(
+	info *relaycommon.RelayInfo,
+	route dto.AdvancedCustomRoute,
+	requestedModel string,
+	upstreamModel string,
+	decisions []relayconvert.ResponsesToolPolicyDecision,
+	cause error,
+) error {
+	dropped := make([]string, 0, len(decisions))
+	for _, decision := range decisions {
+		dropped = append(dropped, fmt.Sprintf("%s/%s=%s", decision.ToolType, decision.ToolName, decision.Policy))
+	}
+	channelID := 0
+	if info.ChannelMeta != nil {
+		channelID = info.ChannelId
+	}
+	return fmt.Errorf(
+		"advanced custom Responses tool handling failed: channel_id=%d route=%s requested_model=%s upstream_model=%s decisions=[%s]; configure Channel > Advanced Custom > Tool Handling > Model Tool Capabilities: %w",
+		channelID,
+		route.IncomingPath,
+		requestedModel,
+		upstreamModel,
+		strings.Join(dropped, ", "),
+		cause,
+	)
 }
 
 func advancedCustomResponsesDropFields(options *dto.AdvancedCustomConverterOptions) map[string]struct{} {
@@ -558,19 +593,4 @@ func advancedCustomResponsesDropFields(options *dto.AdvancedCustomConverterOptio
 		out[field] = struct{}{}
 	}
 	return out
-}
-
-func mapAdvancedCustomResponsesToolPolicy(policy string) string {
-	switch strings.TrimSpace(policy) {
-	case dto.AdvancedCustomResponsesToolPolicyPreserve:
-		return relayconvert.ResponsesToolPolicyPreserve
-	case dto.AdvancedCustomResponsesToolPolicyFlatten:
-		return relayconvert.ResponsesToolPolicyFlatten
-	case dto.AdvancedCustomResponsesToolPolicyDrop:
-		return relayconvert.ResponsesToolPolicyDrop
-	case dto.AdvancedCustomResponsesToolPolicyReject:
-		return relayconvert.ResponsesToolPolicyReject
-	default:
-		return ""
-	}
 }
