@@ -122,8 +122,11 @@ type AdvancedCustomConverterOptions struct {
 	// upstream rejects.
 	ResponsesDropFields []string `json:"responses_drop_fields,omitempty"`
 	// ResponsesToolConflictPolicy controls conflicts between hosted tools and
-	// same-prefix function tools. The safe default is deduplicate.
+	// same-capability client tools. The safe default is deduplicate.
 	ResponsesToolConflictPolicy string `json:"responses_tool_conflict_policy,omitempty"`
+	// ResponsesImplicitHostedTools declares capabilities automatically supplied by
+	// the upstream even when they are absent from the incoming tools array.
+	ResponsesImplicitHostedTools []string `json:"responses_implicit_hosted_tools,omitempty"`
 	// ResponsesToolModelOverrides applies exact model-specific exceptions. A
 	// model matches either the requested model name or the mapped upstream model
 	// name. The same model may only appear in one override.
@@ -140,9 +143,10 @@ type AdvancedCustomResponsesToolsOptions struct {
 }
 
 type AdvancedCustomResponsesToolModelOverride struct {
-	Models         []string                                `json:"models,omitempty"`
-	ResponsesTools *AdvancedCustomResponsesToolsOptions    `json:"responses_tools,omitempty"`
-	ToolNames      []AdvancedCustomResponsesToolNamePolicy `json:"responses_tool_names,omitempty"`
+	Models                       []string                                `json:"models,omitempty"`
+	ResponsesTools               *AdvancedCustomResponsesToolsOptions    `json:"responses_tools,omitempty"`
+	ToolNames                    []AdvancedCustomResponsesToolNamePolicy `json:"responses_tool_names,omitempty"`
+	ResponsesImplicitHostedTools []string                                `json:"responses_implicit_hosted_tools,omitempty"`
 }
 
 type AdvancedCustomResponsesToolNamePolicy struct {
@@ -457,6 +461,16 @@ func validateAdvancedCustomConverterOptions(index int, incomingPath string, conv
 	if err := validateAdvancedCustomResponsesToolConflictPolicy(index, options.ResponsesToolConflictPolicy); err != nil {
 		return err
 	}
+	if err := validateAdvancedCustomResponsesImplicitHostedTools(
+		index,
+		"converter_options.responses_implicit_hosted_tools",
+		options.ResponsesImplicitHostedTools,
+	); err != nil {
+		return err
+	}
+	if err := validateAdvancedCustomResponsesImplicitHostedConflictPolicy(index, options); err != nil {
+		return err
+	}
 	if err := validateAdvancedCustomResponsesToolModelOverrides(index, allowFlatten, options); err != nil {
 		return err
 	}
@@ -471,6 +485,7 @@ func advancedCustomConverterOptionsPresent(options *AdvancedCustomConverterOptio
 		options.ResponsesTools != nil ||
 		len(options.ResponsesDropFields) > 0 ||
 		strings.TrimSpace(options.ResponsesToolConflictPolicy) != "" ||
+		len(options.ResponsesImplicitHostedTools) > 0 ||
 		len(options.ResponsesToolModelOverrides) > 0
 }
 

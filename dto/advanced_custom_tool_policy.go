@@ -30,6 +30,47 @@ func ResolveAdvancedCustomResponsesToolConflictPolicy(options *AdvancedCustomCon
 	return policy
 }
 
+func ResolveAdvancedCustomResponsesImplicitHostedTools(
+	options *AdvancedCustomConverterOptions,
+	requestedModel string,
+	upstreamModel string,
+) []string {
+	if options == nil {
+		return nil
+	}
+	values := [][]string{options.ResponsesImplicitHostedTools}
+	if override, _, ok := matchAdvancedCustomResponsesToolModelOverride(options, requestedModel, upstreamModel); ok {
+		values = append(values, override.ResponsesImplicitHostedTools)
+	}
+	seen := make(map[string]struct{})
+	resolved := make([]string, 0)
+	for _, group := range values {
+		for _, raw := range group {
+			capability := normalizeAdvancedCustomResponsesHostedCapability(raw)
+			if capability == "" {
+				continue
+			}
+			if _, exists := seen[capability]; exists {
+				continue
+			}
+			seen[capability] = struct{}{}
+			resolved = append(resolved, capability)
+		}
+	}
+	return resolved
+}
+
+func normalizeAdvancedCustomResponsesHostedCapability(capability string) string {
+	switch strings.TrimSpace(capability) {
+	case "image_gen", "image_generation":
+		return "image_generation"
+	case "web_search", "web_search_preview":
+		return "web_search"
+	default:
+		return strings.TrimSpace(capability)
+	}
+}
+
 func ResolveAdvancedCustomResponsesToolPolicy(
 	options *AdvancedCustomConverterOptions,
 	requestedModel string,
@@ -207,6 +248,36 @@ func validateAdvancedCustomResponsesToolConflictPolicy(index int, policy string)
 	}
 }
 
+func validateAdvancedCustomResponsesImplicitHostedTools(index int, field string, values []string) error {
+	seen := make(map[string]struct{}, len(values))
+	for valueIndex, raw := range values {
+		capability := normalizeAdvancedCustomResponsesHostedCapability(raw)
+		if capability == "" {
+			return fmt.Errorf("advanced_custom.advanced_routes[%d].%s[%d] must not be empty", index, field, valueIndex)
+		}
+		if _, exists := seen[capability]; exists {
+			return fmt.Errorf("advanced_custom.advanced_routes[%d].%s contains duplicate capability: %s", index, field, capability)
+		}
+		seen[capability] = struct{}{}
+	}
+	return nil
+}
+
+func validateAdvancedCustomResponsesImplicitHostedConflictPolicy(index int, options *AdvancedCustomConverterOptions) error {
+	if options == nil || ResolveAdvancedCustomResponsesToolConflictPolicy(options) != AdvancedCustomResponsesToolConflictPolicyPreserve {
+		return nil
+	}
+	if len(options.ResponsesImplicitHostedTools) > 0 {
+		return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options.responses_implicit_hosted_tools requires responses_tool_conflict_policy deduplicate or reject", index)
+	}
+	for overrideIndex, override := range options.ResponsesToolModelOverrides {
+		if len(override.ResponsesImplicitHostedTools) > 0 {
+			return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options.responses_tool_model_overrides[%d].responses_implicit_hosted_tools requires responses_tool_conflict_policy deduplicate or reject", index, overrideIndex)
+		}
+	}
+	return nil
+}
+
 func validateAdvancedCustomResponsesToolModelOverrides(index int, allowFlatten bool, options *AdvancedCustomConverterOptions) error {
 	if options == nil || len(options.ResponsesToolModelOverrides) == 0 {
 		return nil
@@ -227,8 +298,15 @@ func validateAdvancedCustomResponsesToolModelOverrides(index int, allowFlatten b
 			seenModels[model] = struct{}{}
 		}
 
-		if override.ResponsesTools == nil && len(override.ToolNames) == 0 {
-			return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options.responses_tool_model_overrides[%d] requires a tool policy", index, overrideIndex)
+		if override.ResponsesTools == nil && len(override.ToolNames) == 0 && len(override.ResponsesImplicitHostedTools) == 0 {
+			return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options.responses_tool_model_overrides[%d] requires a tool policy or implicit hosted tool", index, overrideIndex)
+		}
+		if err := validateAdvancedCustomResponsesImplicitHostedTools(
+			index,
+			fmt.Sprintf("converter_options.responses_tool_model_overrides[%d].responses_implicit_hosted_tools", overrideIndex),
+			override.ResponsesImplicitHostedTools,
+		); err != nil {
+			return err
 		}
 		if override.ResponsesTools != nil {
 			fields := []struct {
@@ -258,8 +336,8 @@ func validateAdvancedCustomResponsesToolModelOverrides(index int, allowFlatten b
 					return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options.responses_tool_model_overrides[%d].responses_tools.%s must differ from the route policy", index, overrideIndex, field.name)
 				}
 			}
-			if !configured && len(override.ToolNames) == 0 {
-				return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options.responses_tool_model_overrides[%d] requires a non-empty tool policy", index, overrideIndex)
+			if !configured && len(override.ToolNames) == 0 && len(override.ResponsesImplicitHostedTools) == 0 {
+				return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options.responses_tool_model_overrides[%d] requires a non-empty tool policy or implicit hosted tool", index, overrideIndex)
 			}
 		}
 

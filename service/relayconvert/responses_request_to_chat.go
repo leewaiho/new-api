@@ -906,9 +906,17 @@ var responsesHostedToolTypes = map[string]struct{}{
 }
 
 // ApplyResponsesToolConflictPolicy handles conflicts only after unsupported
-// tools have been filtered. This ordering prevents deleting a function tool for
-// a hosted tool that will not be sent upstream.
+// tools have been filtered. This ordering prevents deleting a client tool for
+// a hosted capability that will not be sent upstream.
 func ApplyResponsesToolConflictPolicy(rawTools json.RawMessage, policy string) (json.RawMessage, []ResponsesToolPolicyDecision, error) {
+	return ApplyResponsesToolConflictPolicyWithImplicitHostedTools(rawTools, policy, nil)
+}
+
+func ApplyResponsesToolConflictPolicyWithImplicitHostedTools(
+	rawTools json.RawMessage,
+	policy string,
+	implicitHostedTools []string,
+) (json.RawMessage, []ResponsesToolPolicyDecision, error) {
 	policy = strings.TrimSpace(policy)
 	if policy == "" {
 		policy = dto.AdvancedCustomResponsesToolConflictPolicyDeduplicate
@@ -921,14 +929,20 @@ func ApplyResponsesToolConflictPolicy(rawTools json.RawMessage, policy string) (
 	if err := common.Unmarshal(rawTools, &tools); err != nil {
 		return nil, nil, fmt.Errorf("invalid tools: %w", err)
 	}
-	hostedNames := make(map[string]struct{})
+	hostedCapabilities := make(map[string]struct{}, len(implicitHostedTools))
+	for _, rawCapability := range implicitHostedTools {
+		capability := responsesToolPolicyType(rawCapability)
+		if capability != "" {
+			hostedCapabilities[capability] = struct{}{}
+		}
+	}
 	for _, tool := range tools {
 		toolType := strings.TrimSpace(common.Interface2String(tool["type"]))
 		if _, isHosted := responsesHostedToolTypes[toolType]; isHosted {
-			hostedNames[toolType] = struct{}{}
+			hostedCapabilities[responsesToolPolicyType(toolType)] = struct{}{}
 		}
 	}
-	if len(hostedNames) == 0 {
+	if len(hostedCapabilities) == 0 {
 		return rawTools, nil, nil
 	}
 
@@ -936,17 +950,24 @@ func ApplyResponsesToolConflictPolicy(rawTools json.RawMessage, policy string) (
 	decisions := make([]ResponsesToolPolicyDecision, 0)
 	for _, tool := range tools {
 		toolType := strings.TrimSpace(common.Interface2String(tool["type"]))
-		if toolType == "function" {
-			name := strings.TrimSpace(common.Interface2String(tool["name"]))
-			prefix := name
-			if idx := strings.IndexByte(name, '.'); idx > 0 {
-				prefix = name[:idx]
+		toolName := strings.TrimSpace(common.Interface2String(tool["name"]))
+		capability := ""
+		switch toolType {
+		case "function":
+			capability = toolName
+			if idx := strings.IndexByte(toolName, '.'); idx > 0 {
+				capability = toolName[:idx]
 			}
-			if _, conflicts := hostedNames[prefix]; conflicts {
-				decision := ResponsesToolPolicyDecision{ToolType: toolType, ToolName: name, Policy: policy}
+		case "namespace":
+			capability = toolName
+		}
+		capability = responsesToolPolicyType(capability)
+		if capability != "" {
+			if _, conflicts := hostedCapabilities[capability]; conflicts {
+				decision := ResponsesToolPolicyDecision{ToolType: toolType, ToolName: toolName, Policy: policy}
 				decisions = append(decisions, decision)
 				if policy == dto.AdvancedCustomResponsesToolConflictPolicyReject {
-					return nil, decisions, fmt.Errorf("responses function tool %q conflicts with hosted tool %q", name, prefix)
+					return nil, decisions, fmt.Errorf("responses %s tool %q conflicts with hosted tool %q", toolType, toolName, capability)
 				}
 				if policy == dto.AdvancedCustomResponsesToolConflictPolicyDeduplicate {
 					continue
@@ -1001,9 +1022,25 @@ func responsesToolDisplayName(toolType string, tool map[string]any) string {
 }
 
 func responsesToolIdentityMatches(leftType string, leftName string, rightType string, rightName string) bool {
+	leftType = strings.TrimSpace(leftType)
+	rightType = strings.TrimSpace(rightType)
+	if leftType == "function" && rightType == "namespace" {
+		return responsesFunctionBelongsToNamespace(leftName, rightName)
+	}
+	if leftType == "namespace" && rightType == "function" {
+		return responsesFunctionBelongsToNamespace(rightName, leftName)
+	}
 	leftPolicyType := responsesToolPolicyType(leftType)
 	rightPolicyType := responsesToolPolicyType(rightType)
 	return leftPolicyType == rightPolicyType && strings.TrimSpace(leftName) == strings.TrimSpace(rightName)
+}
+
+func responsesFunctionBelongsToNamespace(functionName string, namespaceName string) bool {
+	prefix := strings.TrimSpace(functionName)
+	if idx := strings.IndexByte(prefix, '.'); idx > 0 {
+		prefix = prefix[:idx]
+	}
+	return responsesToolPolicyType(prefix) == responsesToolPolicyType(namespaceName)
 }
 
 func responsesToolPolicyType(toolType string) string {
