@@ -2,22 +2,29 @@ package advancedcustom
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/relayconvert"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func TestAdaptorUsesExactRouteAndQueryAuth(t *testing.T) {
@@ -361,7 +368,61 @@ func TestAdaptorResponsesToolsDefaultPreservesAllToolTypes(t *testing.T) {
 	require.Len(t, chatReq.Tools, 2)
 	assert.Equal(t, "namespace", chatReq.Tools[0].Type)
 	assert.Equal(t, "web_search", chatReq.Tools[1].Type)
+	assert.Equal(t, true, chatReq.Tools[1].WebSearch["enable"])
+	assert.Equal(t, true, chatReq.Tools[1].WebSearch["search_result"])
+	assert.Empty(t, chatReq.Tools[1].Custom)
 	assert.Empty(t, info.ResponsesToolNameMappings)
+}
+
+func TestAdaptorResponsesToolsNamespaceOnlyPolicyFlattensNamespaceAndPreservesWebSearch(t *testing.T) {
+	adaptor := &Adaptor{}
+	info := advancedCustomRelayInfo(&dto.AdvancedCustomConfig{
+		Routes: []dto.AdvancedCustomRoute{
+			{
+				IncomingPath: "/v1/responses",
+				UpstreamPath: "/v1/chat/completions",
+				Converter:    dto.AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions,
+				ConverterOptions: &dto.AdvancedCustomConverterOptions{
+					ResponsesTools: &dto.AdvancedCustomResponsesToolsOptions{
+						Namespace: dto.AdvancedCustomResponsesToolPolicyFlatten,
+					},
+				},
+			},
+		},
+	})
+	info.RelayMode = relayconstant.RelayModeResponses
+	info.RequestURLPath = "/v1/responses"
+	c := advancedCustomGinContext("/v1/responses")
+
+	converted, err := adaptor.ConvertOpenAIResponsesRequest(c, info, dto.OpenAIResponsesRequest{
+		Model: "glm-5.2",
+		Input: mustAdvancedCustomRawMessage(t, "hello"),
+		Tools: mustAdvancedCustomRawMessage(t, []map[string]any{
+			{
+				"type": "namespace",
+				"name": "mcp__demo__",
+				"tools": []map[string]any{
+					{
+						"type":       "function",
+						"name":       "lookup_order",
+						"parameters": map[string]any{"type": "object"},
+					},
+				},
+			},
+			{"type": "web_search"},
+		}),
+	})
+	require.NoError(t, err)
+
+	chatReq, ok := converted.(*dto.GeneralOpenAIRequest)
+	require.True(t, ok)
+	require.Len(t, chatReq.Tools, 2)
+	assert.Equal(t, "function", chatReq.Tools[0].Type)
+	assert.Equal(t, "mcp__demo__lookup_order", chatReq.Tools[0].Function.Name)
+	assert.Equal(t, "web_search", chatReq.Tools[1].Type)
+	assert.Equal(t, true, chatReq.Tools[1].WebSearch["enable"])
+	assert.Equal(t, true, chatReq.Tools[1].WebSearch["search_result"])
+	assert.Empty(t, chatReq.Tools[1].Custom)
 }
 
 func TestAdaptorResponsesToolsPerToolPolicyPreservesNamespaceAndDropsWebSearch(t *testing.T) {
@@ -575,6 +636,75 @@ func TestAdaptorResponsesPassthroughKeepsImageGenFunctionWithoutHostedConflict(t
 	require.NoError(t, common.Unmarshal(upstreamRequest.Tools, &tools))
 	require.Len(t, tools, 1, "function tool must not be removed without an actual hosted-tool conflict")
 	assert.Equal(t, "image_gen.imagegen", tools[0]["name"])
+}
+
+func TestAdaptorChatPassthroughPopulatesEmptyWebSearchForGLMAtIndex419(t *testing.T) {
+	adaptor := &Adaptor{}
+	info := advancedCustomRelayInfo(&dto.AdvancedCustomConfig{
+		Routes: []dto.AdvancedCustomRoute{
+			{
+				IncomingPath: "/v1/chat/completions",
+				UpstreamPath: "/v1/chat/completions",
+				Converter:    dto.AdvancedCustomConverterNone,
+			},
+		},
+	})
+	info.OriginModelName = "glm-5.2"
+	info.UpstreamModelName = "glm-5.2"
+	c := advancedCustomGinContext("/v1/chat/completions")
+
+	tools := make([]dto.ToolCallRequest, 420)
+	for i := 0; i < len(tools)-1; i++ {
+		tools[i] = dto.ToolCallRequest{
+			Type: "function",
+			Function: dto.FunctionRequest{
+				Name:       fmt.Sprintf("tool_%03d", i),
+				Parameters: map[string]any{"type": "object"},
+			},
+		}
+	}
+	tools[419] = dto.ToolCallRequest{Type: "web_search"}
+
+	converted, err := adaptor.ConvertOpenAIRequest(c, info, &dto.GeneralOpenAIRequest{
+		Model:    "glm-5.2",
+		Messages: []dto.Message{{Role: "user", Content: "hello"}},
+		Tools:    tools,
+	})
+	require.NoError(t, err)
+	chatReq, ok := converted.(*dto.GeneralOpenAIRequest)
+	require.True(t, ok)
+	require.Len(t, chatReq.Tools, 420)
+	assert.Equal(t, "web_search", chatReq.Tools[419].Type)
+	assert.Equal(t, true, chatReq.Tools[419].WebSearch["enable"])
+	assert.Equal(t, true, chatReq.Tools[419].WebSearch["search_result"])
+}
+
+func TestAdaptorChatPassthroughKeepsEmptyWebSearchForNonGLM(t *testing.T) {
+	adaptor := &Adaptor{}
+	info := advancedCustomRelayInfo(&dto.AdvancedCustomConfig{
+		Routes: []dto.AdvancedCustomRoute{
+			{
+				IncomingPath: "/v1/chat/completions",
+				UpstreamPath: "/v1/chat/completions",
+				Converter:    dto.AdvancedCustomConverterNone,
+			},
+		},
+	})
+	info.OriginModelName = "gpt-5.4-mini"
+	info.UpstreamModelName = "gpt-5.4-mini"
+	c := advancedCustomGinContext("/v1/chat/completions")
+
+	converted, err := adaptor.ConvertOpenAIRequest(c, info, &dto.GeneralOpenAIRequest{
+		Model:    "gpt-5.4-mini",
+		Messages: []dto.Message{{Role: "user", Content: "hello"}},
+		Tools:    []dto.ToolCallRequest{{Type: "web_search"}},
+	})
+	require.NoError(t, err)
+	chatReq, ok := converted.(*dto.GeneralOpenAIRequest)
+	require.True(t, ok)
+	require.Len(t, chatReq.Tools, 1)
+	assert.Equal(t, "web_search", chatReq.Tools[0].Type)
+	assert.Empty(t, chatReq.Tools[0].WebSearch)
 }
 
 func advancedCustomRelayInfo(config *dto.AdvancedCustomConfig) *relaycommon.RelayInfo {
@@ -814,4 +944,132 @@ func TestAdaptorResponsesPassthroughRejectsToolChoiceForDroppedTool(t *testing.T
 		ToolChoice: mustAdvancedCustomRawMessage(t, map[string]any{"type": "image_gen"}),
 	})
 	require.ErrorContains(t, err, "tool_choice selects a tool removed by the channel policy")
+}
+
+func TestClassifyAdvancedCustomUpstreamToolErrorOnlySuggestsDropForExplicitUnsupportedTool(t *testing.T) {
+	eventType, suggestion := classifyAdvancedCustomUpstreamToolError(http.StatusBadRequest, "Unsupported tool type: image_generation", "image_gen")
+	require.Equal(t, model.ToolCompatibilityEventTypeUpstreamUnsupported, eventType)
+	require.Equal(t, dto.AdvancedCustomResponsesToolPolicyDrop, suggestion)
+
+	eventType, suggestion = classifyAdvancedCustomUpstreamToolError(http.StatusBadRequest, "Bad Request", "web_search")
+	require.Equal(t, model.ToolCompatibilityEventTypeUnclassified, eventType)
+	require.Empty(t, suggestion)
+
+	eventType, suggestion = classifyAdvancedCustomUpstreamToolError(http.StatusBadRequest, "tools[297].web_search cannot be empty", "web_search")
+	require.Equal(t, model.ToolCompatibilityEventTypeUnclassified, eventType)
+	require.Empty(t, suggestion)
+}
+
+func TestAdaptorRecordsPolicyDropCompatibilityEvent(t *testing.T) {
+	previousDB := model.DB
+	db, err := gorm.Open(sqlite.Open("file:advanced_custom_event_policy_drop?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.ToolCompatibilityEvent{}))
+	model.DB = db
+	t.Cleanup(func() { model.DB = previousDB })
+
+	adaptor := &Adaptor{}
+	info := advancedCustomRelayInfo(&dto.AdvancedCustomConfig{Routes: []dto.AdvancedCustomRoute{{
+		IncomingPath: "/v1/responses", UpstreamPath: "/v1/responses", Converter: dto.AdvancedCustomConverterNone,
+		ConverterOptions: &dto.AdvancedCustomConverterOptions{ResponsesTools: &dto.AdvancedCustomResponsesToolsOptions{
+			ImageGeneration: dto.AdvancedCustomResponsesToolPolicyDrop,
+		}},
+	}}})
+	info.ChannelId = 97
+	info.RelayMode = relayconstant.RelayModeResponses
+	info.RequestURLPath = "/v1/responses"
+	info.OriginModelName = "glm-5.2"
+
+	_, err = adaptor.ConvertOpenAIResponsesRequest(advancedCustomGinContext("/v1/responses"), info, dto.OpenAIResponsesRequest{
+		Model: "glm-5.2", Input: mustAdvancedCustomRawMessage(t, "generate"),
+		Tools: mustAdvancedCustomRawMessage(t, []map[string]any{{"type": "image_gen"}, {"type": "function", "name": "shell"}}),
+	})
+	require.NoError(t, err)
+	var events []model.ToolCompatibilityEvent
+	require.NoError(t, db.Find(&events).Error)
+	require.Len(t, events, 1)
+	require.Equal(t, model.ToolCompatibilityEventTypePolicyDrop, events[0].EventType)
+	require.Equal(t, "image_gen", events[0].ToolType)
+	require.Equal(t, "glm-5.2", events[0].RequestedModel)
+	require.False(t, strings.Contains(events[0].SanitizedError, "generate"))
+}
+
+func TestRecordAdvancedCustomUpstreamToolCompatibilityEventsAttributesOnlyMentionedTool(t *testing.T) {
+	previousDB := model.DB
+	db, err := gorm.Open(sqlite.Open("file:advanced_custom_upstream_event_attribution?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.ToolCompatibilityEvent{}))
+	model.DB = db
+	t.Cleanup(func() { model.DB = previousDB })
+
+	info := advancedCustomRelayInfo(nil)
+	info.ChannelMeta.ChannelId = 97
+	route := dto.AdvancedCustomRoute{IncomingPath: "/v1/responses"}
+	tools := []relayconvert.ResponsesToolPolicyDecision{
+		{ToolType: "image_gen"},
+		{ToolType: "web_search"},
+	}
+
+	recordAdvancedCustomUpstreamToolCompatibilityEvents(
+		info, route, "glm-5.2", "glm-5.2", tools,
+		types.NewErrorWithStatusCode(errors.New("Unsupported tool type: image_generation"), types.ErrorCodeBadResponse, http.StatusBadRequest),
+	)
+	var events []model.ToolCompatibilityEvent
+	require.NoError(t, db.Find(&events).Error)
+	require.Len(t, events, 1)
+	require.Equal(t, "image_gen", events[0].ToolType)
+	require.Equal(t, model.ToolCompatibilityEventTypeUpstreamUnsupported, events[0].EventType)
+	require.Equal(t, dto.AdvancedCustomResponsesToolPolicyDrop, events[0].SuggestedPolicy)
+
+	require.NoError(t, db.Exec("DELETE FROM tool_compatibility_events").Error)
+	recordAdvancedCustomUpstreamToolCompatibilityEvents(
+		info, route, "glm-5.2", "glm-5.2", tools,
+		types.NewErrorWithStatusCode(errors.New("tools[297].web_search cannot be empty"), types.ErrorCodeBadResponse, http.StatusBadRequest),
+	)
+	events = nil
+	require.NoError(t, db.Find(&events).Error)
+	require.Len(t, events, 1)
+	require.Equal(t, "web_search", events[0].ToolType)
+	require.Equal(t, model.ToolCompatibilityEventTypeUnclassified, events[0].EventType)
+	require.Empty(t, events[0].SuggestedPolicy)
+
+	require.NoError(t, db.Exec("DELETE FROM tool_compatibility_events").Error)
+	recordAdvancedCustomUpstreamToolCompatibilityEvents(
+		info, route, "glm-5.2", "glm-5.2", tools,
+		types.NewErrorWithStatusCode(errors.New("Bad Request"), types.ErrorCodeBadResponse, http.StatusBadRequest),
+	)
+	events = nil
+	require.NoError(t, db.Find(&events).Error)
+	require.Len(t, events, 1)
+	require.Empty(t, events[0].ToolType)
+	require.Equal(t, model.ToolCompatibilityEventTypeUnclassified, events[0].EventType)
+	require.Empty(t, events[0].SuggestedPolicy)
+}
+
+func TestRecordAdvancedCustomToolCompatibilityEventsRecordsInvalidSchema(t *testing.T) {
+	previousDB := model.DB
+	db, err := gorm.Open(sqlite.Open("file:advanced_custom_invalid_schema_event?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.ToolCompatibilityEvent{}))
+	model.DB = db
+	t.Cleanup(func() { model.DB = previousDB })
+
+	info := advancedCustomRelayInfo(nil)
+	info.ChannelMeta.ChannelId = 97
+	recordAdvancedCustomToolCompatibilityEvents(
+		info,
+		dto.AdvancedCustomRoute{IncomingPath: "/v1/responses"},
+		"glm-5.2",
+		"glm-5.2",
+		[]relayconvert.ResponsesToolPolicyDecision{{ToolType: "namespace", ToolName: "mcp__broken__"}},
+		errors.New("namespace tool has invalid nested tools"),
+	)
+
+	var events []model.ToolCompatibilityEvent
+	require.NoError(t, db.Find(&events).Error)
+	require.Len(t, events, 1)
+	require.Equal(t, model.ToolCompatibilityEventTypeInvalidToolSchema, events[0].EventType)
+	require.Equal(t, "namespace", events[0].ToolType)
+	require.Equal(t, "mcp__broken__", events[0].ToolName)
+	require.Empty(t, events[0].SuggestedPolicy)
 }

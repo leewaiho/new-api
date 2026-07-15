@@ -466,3 +466,23 @@ func TestResolveAdvancedCustomResponsesToolPolicyKeepsLegacyMode(t *testing.T) {
 	assert.Equal(t, AdvancedCustomResponsesToolPolicyDrop, image.Policy)
 	assert.Equal(t, AdvancedCustomResponsesToolPolicySourceRoute, image.Source)
 }
+
+func TestResolveAdvancedCustomResponsesToolPolicyPrefersRequestedModelOverride(t *testing.T) {
+	options := &AdvancedCustomConverterOptions{
+		ResponsesToolModelOverrides: []AdvancedCustomResponsesToolModelOverride{
+			{
+				Models:         []string{"glm-5.2"},
+				ResponsesTools: &AdvancedCustomResponsesToolsOptions{ImageGeneration: AdvancedCustomResponsesToolPolicyDrop},
+			},
+			{
+				Models:         []string{"alias-model"},
+				ResponsesTools: &AdvancedCustomResponsesToolsOptions{ImageGeneration: AdvancedCustomResponsesToolPolicyReject},
+			},
+		},
+	}
+
+	resolution := ResolveAdvancedCustomResponsesToolPolicy(options, "alias-model", "glm-5.2", "image_gen", "")
+	require.Equal(t, AdvancedCustomResponsesToolPolicyReject, resolution.Policy)
+	require.Equal(t, AdvancedCustomResponsesToolPolicySourceModelToolType, resolution.Source)
+	require.Equal(t, "alias-model", resolution.MatchedModel)
+}
