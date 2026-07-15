@@ -763,6 +763,73 @@ func TestResolveAdvancedCustomResponsesToolConflictPolicy(t *testing.T) {
 	)
 }
 
+func TestResolveAdvancedCustomResponsesImplicitHostedTools(t *testing.T) {
+	options := &AdvancedCustomConverterOptions{
+		ResponsesImplicitHostedTools: []string{"web_search_preview", "image_gen"},
+		ResponsesToolModelOverrides: []AdvancedCustomResponsesToolModelOverride{
+			{
+				Models:                       []string{"gpt-5.6-sol"},
+				ResponsesImplicitHostedTools: []string{"image_generation", "future_hosted_tool"},
+			},
+		},
+	}
+
+	assert.Equal(
+		t,
+		[]string{"web_search", "image_generation", "future_hosted_tool"},
+		ResolveAdvancedCustomResponsesImplicitHostedTools(options, "gpt-5.6-sol", ""),
+	)
+	assert.Equal(
+		t,
+		[]string{"web_search", "image_generation", "future_hosted_tool"},
+		ResolveAdvancedCustomResponsesImplicitHostedTools(options, "alias-model", "gpt-5.6-sol"),
+	)
+	assert.Equal(
+		t,
+		[]string{"web_search", "image_generation"},
+		ResolveAdvancedCustomResponsesImplicitHostedTools(options, "gpt-5.6-terra", ""),
+	)
+}
+
+func TestAdvancedCustomValidateResponsesImplicitHostedTools(t *testing.T) {
+	valid := &AdvancedCustomConfig{
+		Routes: []AdvancedCustomRoute{
+			{
+				IncomingPath: "/v1/responses",
+				UpstreamPath: "/v1/responses",
+				Converter:    AdvancedCustomConverterNone,
+				ConverterOptions: &AdvancedCustomConverterOptions{
+					ResponsesToolModelOverrides: []AdvancedCustomResponsesToolModelOverride{
+						{
+							Models:                       []string{"gpt-5.6-sol"},
+							ResponsesImplicitHostedTools: []string{"image_generation"},
+						},
+					},
+				},
+			},
+		},
+	}
+	require.NoError(t, valid.Validate())
+
+	duplicateAlias := *valid
+	duplicateRoute := valid.Routes[0]
+	duplicateOptions := *valid.Routes[0].ConverterOptions
+	duplicateOverride := duplicateOptions.ResponsesToolModelOverrides[0]
+	duplicateOverride.ResponsesImplicitHostedTools = []string{"image_gen", "image_generation"}
+	duplicateOptions.ResponsesToolModelOverrides = []AdvancedCustomResponsesToolModelOverride{duplicateOverride}
+	duplicateRoute.ConverterOptions = &duplicateOptions
+	duplicateAlias.Routes = []AdvancedCustomRoute{duplicateRoute}
+	require.ErrorContains(t, duplicateAlias.Validate(), "duplicate capability: image_generation")
+
+	preserve := *valid
+	preserveRoute := valid.Routes[0]
+	preserveOptions := *valid.Routes[0].ConverterOptions
+	preserveOptions.ResponsesToolConflictPolicy = AdvancedCustomResponsesToolConflictPolicyPreserve
+	preserveRoute.ConverterOptions = &preserveOptions
+	preserve.Routes = []AdvancedCustomRoute{preserveRoute}
+	require.ErrorContains(t, preserve.Validate(), "requires responses_tool_conflict_policy deduplicate or reject")
+}
+
 func TestAdvancedCustomValidateResponsesToolModelOverrideRequiresDifference(t *testing.T) {
 	config := &AdvancedCustomConfig{
 		Routes: []AdvancedCustomRoute{
