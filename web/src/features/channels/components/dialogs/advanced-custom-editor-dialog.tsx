@@ -1280,6 +1280,16 @@ function RouteEditor({
       },
     })
   }
+  const applyRouteGlmWebSearchDefaults = () => {
+    patchConverterOptions({
+      responses_tool_parameters: {
+        web_search: {
+          when_nested_options_missing: 'populate_defaults',
+          defaults: { enable: true, search_result: true },
+        },
+      },
+    })
+  }
   const setRouteWebSearchDefault = (
     key: 'enable' | 'search_result' | 'search_engine',
     value: boolean | string | undefined
@@ -1362,6 +1372,16 @@ function RouteEditor({
                 },
               }
             : { when_nested_options_missing: mode },
+      },
+    })
+  }
+  const applyModelGlmWebSearchDefaults = (index: number) => {
+    setModelToolOverride(index, {
+      responses_tool_parameters: {
+        web_search: {
+          when_nested_options_missing: 'populate_defaults',
+          defaults: { enable: true, search_result: true },
+        },
       },
     })
   }
@@ -1940,23 +1960,59 @@ function RouteEditor({
                 </p>
               </div>
               {!isNativeConverter ? (
-                <div className='space-y-2 rounded-md border p-3'>
+                <div className='space-y-3 rounded-md border p-3'>
                   <div className='space-y-1'>
                     <p className='text-sm font-medium'>
                       {t(
-                        'Web search parameter compatibility (Responses to Chat)'
+                        'Web search empty-parameter compatibility (GLM / Responses to Chat)'
                       )}
                     </p>
                     <p className='text-muted-foreground text-xs'>
                       {t(
-                        'Use this when a Chat-compatible upstream rejects web_search tools whose nested options are missing or empty.'
+                        'Fixes upstream errors when a Responses web_search tool is converted to Chat format without the required nested parameters.'
                       )}
                     </p>
                   </div>
+                  <Alert>
+                    <AlertDescription className='space-y-2 text-xs'>
+                      <p>
+                        {t('Before compatibility')}:{' '}
+                        <code>{'{"type":"web_search"}'}</code>
+                      </p>
+                      <p>
+                        {t('After compatibility')}:{' '}
+                        <code>
+                          {
+                            '{"type":"web_search","web_search":{"enable":true,"search_result":true}}'
+                          }
+                        </code>
+                      </p>
+                      <p>
+                        {t(
+                          'This transformation runs only when nested options are missing or empty. Explicit client values are never overwritten.'
+                        )}
+                      </p>
+                    </AlertDescription>
+                  </Alert>
+                  <div className='flex flex-wrap items-center gap-2'>
+                    <Button
+                      type='button'
+                      variant='outline'
+                      size='sm'
+                      onClick={applyRouteGlmWebSearchDefaults}
+                    >
+                      {t('Apply recommended GLM defaults')}
+                    </Button>
+                    <span className='text-muted-foreground text-xs'>
+                      {t('Current status')}:{' '}
+                      {routeWebSearchParameters?.when_nested_options_missing ===
+                      'populate_defaults'
+                        ? t('Enabled: fill missing parameters')
+                        : t('Disabled: pass through unchanged')}
+                    </span>
+                  </div>
                   <FieldBlock
-                    label={t(
-                      'When nested web_search options are missing or empty'
-                    )}
+                    label={t('Compatibility action')}
                     labelClassName='text-xs'
                   >
                     <Select
@@ -1975,10 +2031,10 @@ function RouteEditor({
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value='preserve'>
-                          {t('Pass through unchanged')}
+                          {t('Disabled: pass through unchanged')}
                         </SelectItem>
                         <SelectItem value='populate_defaults'>
-                          {t('Fill configured defaults')}
+                          {t('Enabled: fill missing parameters')}
                         </SelectItem>
                       </SelectContent>
                     </Select>
@@ -1989,7 +2045,11 @@ function RouteEditor({
                       {(['enable', 'search_result'] as const).map((key) => (
                         <FieldBlock
                           key={key}
-                          label={key}
+                          label={t(
+                            key === 'enable'
+                              ? 'Enable web search (enable)'
+                              : 'Return search results (search_result)'
+                          )}
                           labelClassName='text-xs'
                         >
                           <Select
@@ -2023,7 +2083,7 @@ function RouteEditor({
                         </FieldBlock>
                       ))}
                       <FieldBlock
-                        label='search_engine'
+                        label={t('Search engine (optional)')}
                         labelClassName='text-xs sm:col-span-2'
                       >
                         <Input
@@ -2037,19 +2097,16 @@ function RouteEditor({
                               event.target.value
                             )
                           }
-                          placeholder={t('Optional')}
+                          placeholder={t(
+                            'Leave empty to use the upstream default'
+                          )}
                         />
                       </FieldBlock>
                     </div>
                   ) : null}
                   <p className='text-muted-foreground text-xs'>
                     {t(
-                      'Common GLM Chat defaults are enable=true and search_result=true. Select fill defaults to apply them.'
-                    )}
-                  </p>
-                  <p className='text-muted-foreground text-xs'>
-                    {t(
-                      'Only applies during Responses to Chat conversion. Explicit client values always take priority.'
+                      'Scope: this route and all matching models. Add a model override below when only specific GLM models need the compatibility behavior.'
                     )}
                   </p>
                 </div>
@@ -2139,18 +2196,38 @@ function RouteEditor({
                       <div className='space-y-2 rounded-md border p-3'>
                         <div className='space-y-1'>
                           <p className='text-xs font-medium'>
-                            {t('Web search parameter compatibility (model)')}
+                            {t(
+                              'Web search empty-parameter compatibility (model override)'
+                            )}
                           </p>
                           <p className='text-muted-foreground text-xs'>
                             {t(
-                              'This model rule overrides the route setting only for models selected above.'
+                              'Use this override when only the models selected above require GLM-style web_search parameters.'
                             )}
                           </p>
                         </div>
+                        <div className='flex flex-wrap items-center gap-2'>
+                          <Button
+                            type='button'
+                            variant='outline'
+                            size='sm'
+                            onClick={() =>
+                              applyModelGlmWebSearchDefaults(overrideIndex)
+                            }
+                          >
+                            {t(
+                              'Apply recommended GLM defaults to these models'
+                            )}
+                          </Button>
+                          <span className='text-muted-foreground text-xs'>
+                            {t('Selected models')}:{' '}
+                            {override.models?.length
+                              ? override.models.join(', ')
+                              : t('none')}
+                          </span>
+                        </div>
                         <FieldBlock
-                          label={t(
-                            'When nested web_search options are missing or empty'
-                          )}
+                          label={t('Compatibility action')}
                           labelClassName='text-xs'
                         >
                           <Select
@@ -2175,10 +2252,10 @@ function RouteEditor({
                                 {t('Inherit route setting')}
                               </SelectItem>
                               <SelectItem value='preserve'>
-                                {t('Pass through unchanged')}
+                                {t('Disabled: pass through unchanged')}
                               </SelectItem>
                               <SelectItem value='populate_defaults'>
-                                {t('Fill configured defaults')}
+                                {t('Enabled: fill missing parameters')}
                               </SelectItem>
                             </SelectContent>
                           </Select>
@@ -2191,7 +2268,11 @@ function RouteEditor({
                               (key) => (
                                 <FieldBlock
                                   key={key}
-                                  label={key}
+                                  label={t(
+                                    key === 'enable'
+                                      ? 'Enable web search (enable)'
+                                      : 'Return search results (search_result)'
+                                  )}
                                   labelClassName='text-xs'
                                 >
                                   <Select
@@ -2232,7 +2313,7 @@ function RouteEditor({
                               )
                             )}
                             <FieldBlock
-                              label='search_engine'
+                              label={t('Search engine (optional)')}
                               labelClassName='text-xs sm:col-span-2'
                             >
                               <Input
@@ -2247,19 +2328,21 @@ function RouteEditor({
                                     event.target.value
                                   )
                                 }
-                                placeholder={t('Optional')}
+                                placeholder={t(
+                                  'Leave empty to use the upstream default'
+                                )}
                               />
                             </FieldBlock>
                           </div>
                         ) : null}
                         <p className='text-muted-foreground text-xs'>
                           {t(
-                            'Common GLM Chat defaults are enable=true and search_result=true. Select fill defaults to apply them.'
+                            'Recommended GLM values are enable=true and search_result=true. Use the button above to apply both.'
                           )}
                         </p>
                         <p className='text-muted-foreground text-xs'>
                           {t(
-                            'Only applies during Responses to Chat conversion. Explicit client values always take priority.'
+                            'The model override takes priority over the route setting, but explicit client values still take priority over both.'
                           )}
                         </p>
                       </div>
