@@ -39,6 +39,7 @@ jobs:
             TAG="test"
           fi
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          echo "created=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_OUTPUT
           echo "IMAGE_REF=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG}" >> $GITHUB_ENV
 
       - name: Set up Docker Buildx
@@ -58,6 +59,10 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: ${{ env.IMAGE_REF }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.created=${{ steps.meta.outputs.created }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
