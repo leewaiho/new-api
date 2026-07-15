@@ -4,6 +4,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/glebarez/sqlite"
@@ -73,6 +74,20 @@ func TestSanitizeToolCompatibilityErrorRedactsSecretsAndStructuredPayloads(t *te
 		if strings.Contains(got, forbidden) {
 			t.Fatalf("sanitized error leaked %q: %q", forbidden, got)
 		}
+	}
+}
+
+func TestSanitizeToolCompatibilityErrorTruncatesUnicodeWithoutInvalidUTF8(t *testing.T) {
+	message := strings.Repeat("错", 600)
+	got := SanitizeToolCompatibilityError(message)
+	if !strings.HasSuffix(got, "…") {
+		t.Fatalf("sanitized error was not truncated: %q", got)
+	}
+	if len([]rune(strings.TrimSuffix(got, "…"))) != 512 {
+		t.Fatalf("sanitized rune count = %d, want 512", len([]rune(strings.TrimSuffix(got, "…"))))
+	}
+	if !utf8.ValidString(got) {
+		t.Fatal("sanitized error contains invalid UTF-8")
 	}
 }
 
@@ -159,5 +174,48 @@ func TestRecordToolCompatibilityEventAggregatesConcurrentWrites(t *testing.T) {
 	}
 	if events[0].OccurrenceCount != writers {
 		t.Fatalf("occurrence_count = %d, want %d", events[0].OccurrenceCount, writers)
+	}
+}
+
+func TestRecordToolCompatibilityEventRefreshesPoliciesAndReopensResolvedEvent(t *testing.T) {
+	withToolCompatibilityEventTestDB(t)
+	input := validToolCompatibilityEventInput()
+	input.CurrentPolicy = "preserve"
+	input.SuggestedPolicy = "drop"
+	first, err := RecordToolCompatibilityEvent(input)
+	if err != nil {
+		t.Fatalf("record first event: %v", err)
+	}
+	if _, err := UpdateToolCompatibilityEventResolutionStatus(first.Id, ToolCompatibilityResolutionStatusResolved); err != nil {
+		t.Fatalf("resolve event: %v", err)
+	}
+
+	input.CurrentPolicy = "reject"
+	input.SuggestedPolicy = "preserve"
+	second, err := RecordToolCompatibilityEvent(input)
+	if err != nil {
+		t.Fatalf("record recurring event: %v", err)
+	}
+	if second.Id != first.Id {
+		t.Fatalf("recurring event id = %d, want %d", second.Id, first.Id)
+	}
+	if second.OccurrenceCount != 2 {
+		t.Fatalf("occurrence_count = %d, want 2", second.OccurrenceCount)
+	}
+	if second.CurrentPolicy != "reject" || second.SuggestedPolicy != "preserve" {
+		t.Fatalf("latest policies not refreshed: current=%q suggested=%q", second.CurrentPolicy, second.SuggestedPolicy)
+	}
+	if second.ResolutionStatus != ToolCompatibilityResolutionStatusOpen {
+		t.Fatalf("recurring resolved event status = %q, want open", second.ResolutionStatus)
+	}
+}
+
+func TestToolCompatibilityEventMigrationCreatesLookupIndexes(t *testing.T) {
+	withToolCompatibilityEventTestDB(t)
+	migrator := DB.Migrator()
+	for _, field := range []string{"EventKey", "ChannelId", "RequestedModel", "EventType", "LastSeenAt", "ResolutionStatus"} {
+		if !migrator.HasIndex(&ToolCompatibilityEvent{}, field) {
+			t.Fatalf("missing index for %s", field)
+		}
 	}
 }

@@ -108,7 +108,7 @@ func isToolCompatibilityEventType(eventType string) bool {
 }
 
 func SanitizeToolCompatibilityError(raw string) string {
-	message := strings.TrimSpace(raw)
+	message := strings.TrimSpace(strings.ToValidUTF8(raw, "�"))
 	if message == "" {
 		return ""
 	}
@@ -120,9 +120,10 @@ func SanitizeToolCompatibilityError(raw string) string {
 	message = toolCompatibilitySensitiveAssignmentPattern.ReplaceAllString(message, "$1=[redacted]")
 	message = toolCompatibilityLongTokenPattern.ReplaceAllString(message, "[redacted]")
 	message = toolCompatibilityWhitespacePattern.ReplaceAllString(message, " ")
-	const maxLength = 512
-	if len(message) > maxLength {
-		message = message[:maxLength] + "…"
+	const maxRunes = 512
+	runes := []rune(message)
+	if len(runes) > maxRunes {
+		message = string(runes[:maxRunes]) + "…"
 	}
 	return message
 }
@@ -184,6 +185,11 @@ func recordToolCompatibilityEventAttempt(input ToolCompatibilityEventInput, even
 				"occurrence_count": gorm.Expr("occurrence_count + ?", 1),
 				"last_seen_at":     now,
 				"sanitized_error":  sanitizedError,
+				"current_policy":   input.CurrentPolicy,
+				"suggested_policy": input.SuggestedPolicy,
+			}
+			if existing.ResolutionStatus == ToolCompatibilityResolutionStatusResolved {
+				updates["resolution_status"] = ToolCompatibilityResolutionStatusOpen
 			}
 			if err := tx.Model(&ToolCompatibilityEvent{}).Where("id = ?", existing.Id).Updates(updates).Error; err != nil {
 				return err

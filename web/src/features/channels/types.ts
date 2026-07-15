@@ -111,6 +111,7 @@ export interface ChannelOtherSettings {
 
 export interface AdvancedCustomConfig {
   advanced_routes?: AdvancedCustomRoute[]
+  [key: string]: unknown
 }
 
 export interface AdvancedCustomRoute {
@@ -120,6 +121,7 @@ export interface AdvancedCustomRoute {
   models?: string[]
   auth?: AdvancedCustomRouteAuth
   converter_options?: AdvancedCustomConverterOptions
+  [key: string]: unknown
 }
 
 export interface AdvancedCustomConverterOptions {
@@ -128,18 +130,21 @@ export interface AdvancedCustomConverterOptions {
   responses_drop_fields?: string[]
   responses_tool_conflict_policy?: AdvancedCustomResponsesToolConflictPolicy
   responses_tool_model_overrides?: AdvancedCustomResponsesToolModelOverride[]
+  [key: string]: unknown
 }
 
 export interface AdvancedCustomResponsesToolModelOverride {
   models?: string[]
   responses_tools?: AdvancedCustomResponsesToolsOptions
   responses_tool_names?: AdvancedCustomResponsesToolNamePolicy[]
+  [key: string]: unknown
 }
 
 export interface AdvancedCustomResponsesToolNamePolicy {
   tool_type?: string
   tool_name?: string
   policy?: AdvancedCustomResponsesToolPolicy
+  [key: string]: unknown
 }
 
 export type AdvancedCustomResponsesToolConflictPolicy =
@@ -154,6 +159,7 @@ export interface AdvancedCustomResponsesToolsOptions {
   tool_search?: AdvancedCustomResponsesToolPolicy
   image_generation?: AdvancedCustomResponsesToolPolicy
   unknown?: AdvancedCustomResponsesToolPolicy
+  [key: string]: unknown
 }
 
 export type AdvancedCustomResponsesToolsMode = 'compat_flatten' | 'preserve'
@@ -167,6 +173,7 @@ export interface AdvancedCustomRouteAuth {
   type?: AdvancedCustomAuthType
   name?: string
   value?: string
+  [key: string]: unknown
 }
 
 export type AdvancedCustomConverter =
@@ -480,4 +487,22 @@ export interface ToolCompatibilityEventsResponse {
   total: number
   page: number
   page_size: number
+}
+
+export type ToolCompatibilityMutationScope = 'model' | 'route'
+
+export interface ToolCompatibilityMutationRequest {
+  target_model?: string
+  scope?: ToolCompatibilityMutationScope
+  confirm_route?: boolean
+}
+
+export interface ToolCompatibilityMutationResult {
+  event: ToolCompatibilityEvent
+  model?: string
+  route: string
+  route_config?: AdvancedCustomRoute
+  scope: ToolCompatibilityMutationScope
+  effective_policy: string
+  policy_source: string
 }

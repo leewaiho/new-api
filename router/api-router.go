@@ -1,6 +1,8 @@
 package router
 
 import (
+	"net/http"
+
 	"github.com/QuantumNous/new-api/controller"
 	"github.com/QuantumNous/new-api/middleware"
 
@@ -10,6 +12,27 @@ import (
 	"github.com/gin-contrib/gzip"
 	"github.com/gin-gonic/gin"
 )
+
+type toolCompatibilityRouteAccess string
+
+const (
+	toolCompatibilityRouteAccessAdmin toolCompatibilityRouteAccess = "admin"
+	toolCompatibilityRouteAccessRoot  toolCompatibilityRouteAccess = "root"
+)
+
+type toolCompatibilityRouteSpec struct {
+	method  string
+	path    string
+	access  toolCompatibilityRouteAccess
+	handler gin.HandlerFunc
+}
+
+var toolCompatibilityRouteSpecs = []toolCompatibilityRouteSpec{
+	{method: http.MethodGet, path: "/events", access: toolCompatibilityRouteAccessAdmin, handler: controller.ListToolCompatibilityEvents},
+	{method: http.MethodPatch, path: "/events/:id/status", access: toolCompatibilityRouteAccessRoot, handler: controller.UpdateToolCompatibilityEventStatus},
+	{method: http.MethodPost, path: "/events/:id/apply-suggestion", access: toolCompatibilityRouteAccessRoot, handler: controller.ApplyToolCompatibilityEventSuggestion},
+	{method: http.MethodPost, path: "/events/:id/restore-default", access: toolCompatibilityRouteAccessRoot, handler: controller.RestoreToolCompatibilityEventModelDefault},
+}
 
 func SetApiRouter(router *gin.Engine) {
 	apiRouter := router.Group("/api")
@@ -25,11 +48,7 @@ func SetApiRouter(router *gin.Engine) {
 		apiRouter.GET("/uptime/status", controller.GetUptimeKumaStatus)
 		apiRouter.GET("/models", middleware.UserAuth(), controller.DashboardListModels)
 		apiRouter.GET("/status/test", middleware.AdminAuth(), controller.TestStatus)
-		toolCompatibilityRoute := apiRouter.Group("/tool-compatibility")
-		toolCompatibilityRoute.GET("/events", middleware.AdminAuth(), controller.ListToolCompatibilityEvents)
-		toolCompatibilityRoute.PATCH("/events/:id/status", middleware.RootAuth(), controller.UpdateToolCompatibilityEventStatus)
-		toolCompatibilityRoute.POST("/events/:id/apply-suggestion", middleware.RootAuth(), controller.ApplyToolCompatibilityEventSuggestion)
-		toolCompatibilityRoute.POST("/events/:id/restore-default", middleware.RootAuth(), controller.RestoreToolCompatibilityEventModelDefault)
+		registerToolCompatibilityRoutes(apiRouter)
 		apiRouter.GET("/notice", controller.GetNotice)
 		apiRouter.GET("/user-agreement", controller.GetUserAgreement)
 		apiRouter.GET("/privacy-policy", controller.GetPrivacyPolicy)
@@ -385,5 +404,16 @@ func SetApiRouter(router *gin.Engine) {
 			deploymentsRoute.POST("/:id/extend", controller.ExtendDeployment)
 			deploymentsRoute.DELETE("/:id", controller.DeleteDeployment)
 		}
+	}
+}
+
+func registerToolCompatibilityRoutes(apiRouter *gin.RouterGroup) {
+	routes := apiRouter.Group("/tool-compatibility")
+	for _, spec := range toolCompatibilityRouteSpecs {
+		auth := middleware.AdminAuth()
+		if spec.access == toolCompatibilityRouteAccessRoot {
+			auth = middleware.RootAuth()
+		}
+		routes.Handle(spec.method, spec.path, auth, spec.handler)
 	}
 }

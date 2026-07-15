@@ -2,6 +2,8 @@ package controller
 
 import (
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -18,6 +20,27 @@ import (
 type toolCompatibilityEventStatusRequest struct {
 	Status string `json:"status"`
 }
+
+type toolCompatibilityEventMutationRequest struct {
+	TargetModel  string `json:"target_model"`
+	Scope        string `json:"scope"`
+	ConfirmRoute bool   `json:"confirm_route"`
+}
+
+type toolCompatibilityEventMutationResult struct {
+	Event           *model.ToolCompatibilityEvent `json:"event"`
+	Model           string                        `json:"model,omitempty"`
+	Route           string                        `json:"route"`
+	RouteConfig     *dto.AdvancedCustomRoute      `json:"route_config,omitempty"`
+	Scope           string                        `json:"scope"`
+	EffectivePolicy string                        `json:"effective_policy"`
+	PolicySource    string                        `json:"policy_source"`
+}
+
+const (
+	toolCompatibilityMutationScopeModel = "model"
+	toolCompatibilityMutationScopeRoute = "route"
+)
 
 func ListToolCompatibilityEvents(c *gin.Context) {
 	channelID, _ := strconv.Atoi(c.Query("channel_id"))
@@ -63,19 +86,30 @@ func mutateToolCompatibilityEventConfig(c *gin.Context, restore bool) {
 		common.ApiError(c, err)
 		return
 	}
+	var request toolCompatibilityEventMutationRequest
+	if err := c.ShouldBindJSON(&request); err != nil && !errors.Is(err, io.EOF) {
+		common.ApiError(c, err)
+		return
+	}
+	request.Scope = strings.TrimSpace(request.Scope)
+	if request.Scope == "" {
+		request.Scope = toolCompatibilityMutationScopeModel
+	}
+	if request.Scope != toolCompatibilityMutationScopeModel && request.Scope != toolCompatibilityMutationScopeRoute {
+		common.ApiError(c, errors.New("scope must be model or route"))
+		return
+	}
+
 	event, err := model.GetToolCompatibilityEventByID(id)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	modelName := strings.TrimSpace(event.RequestedModel)
-	if modelName == "" {
-		modelName = strings.TrimSpace(event.UpstreamModel)
+	defaultModel := strings.TrimSpace(event.RequestedModel)
+	if defaultModel == "" {
+		defaultModel = strings.TrimSpace(event.UpstreamModel)
 	}
-	if modelName == "" {
-		common.ApiError(c, errors.New("event has no model to modify"))
-		return
-	}
+	result := toolCompatibilityEventMutationResult{Route: event.Route, Scope: request.Scope}
 
 	// Lock the channel row for the short read-modify-write transaction. Applying
 	// one event must not overwrite a concurrent edit of the same settings JSON.
@@ -105,26 +139,100 @@ func mutateToolCompatibilityEventConfig(c *gin.Context, restore bool) {
 		if route.ConverterOptions == nil {
 			route.ConverterOptions = &dto.AdvancedCustomConverterOptions{}
 		}
-		if restore {
-			removeModelToolCompatibilityOverride(route.ConverterOptions, modelName, event.ToolType, event.ToolName)
-		} else if err := applyModelToolCompatibilitySuggestion(route.ConverterOptions, modelName, event); err != nil {
-			return err
+
+		if request.Scope == toolCompatibilityMutationScopeRoute {
+			if !request.ConfirmRoute {
+				return errors.New("route-scoped compatibility changes require confirm_route=true")
+			}
+			if restore {
+				restoreAdvancedCustomRouteToolDefaults(route)
+			} else {
+				if event.EventType != model.ToolCompatibilityEventTypeNameConflict {
+					return errors.New("only name-conflict suggestions can be applied to an entire route")
+				}
+				policy := strings.TrimSpace(event.SuggestedPolicy)
+				if policy == "" {
+					return errors.New("event has no actionable suggestion")
+				}
+				route.ConverterOptions.ResponsesToolConflictPolicy = policy
+			}
+			result.EffectivePolicy = dto.ResolveAdvancedCustomResponsesToolConflictPolicy(route.ConverterOptions)
+			result.PolicySource = dto.AdvancedCustomResponsesToolPolicySourceRoute
+		} else {
+			if event.EventType == model.ToolCompatibilityEventTypeNameConflict {
+				return errors.New("name-conflict suggestions are route-scoped and require explicit confirmation")
+			}
+			modelName := strings.TrimSpace(request.TargetModel)
+			if modelName == "" {
+				modelName = defaultModel
+			}
+			if modelName == "" {
+				return errors.New("event has no model to modify")
+			}
+			if !channelHasModel(&channel, modelName) {
+				return fmt.Errorf("target model %q is not configured on this channel", modelName)
+			}
+			if restore {
+				removeModelToolCompatibilityOverride(route.ConverterOptions, modelName, event.ToolType, event.ToolName)
+			} else if err := applyModelToolCompatibilitySuggestion(route.ConverterOptions, modelName, event); err != nil {
+				return err
+			}
+			resolution := dto.ResolveAdvancedCustomResponsesToolPolicy(route.ConverterOptions, modelName, modelName, event.ToolType, event.ToolName)
+			result.Model = modelName
+			result.EffectivePolicy = resolution.Policy
+			result.PolicySource = resolution.Source
 		}
+
 		if err := config.Validate(); err != nil {
 			return err
 		}
 		channel.SetOtherSettings(settings)
-		return tx.Model(&model.Channel{}).Where("id = ?", channel.Id).Update("settings", channel.OtherSettings).Error
+		if err := tx.Model(&model.Channel{}).Where("id = ?", channel.Id).Update("settings", channel.OtherSettings).Error; err != nil {
+			return err
+		}
+		result.RouteConfig, err = common.DeepCopy(route)
+		if err != nil {
+			return err
+		}
+		if !restore {
+			return tx.Model(&model.ToolCompatibilityEvent{}).Where("id = ?", event.Id).Update("resolution_status", model.ToolCompatibilityResolutionStatusResolved).Error
+		}
+		return nil
 	})
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
 	model.InitChannelCache()
-	if !restore {
-		_, _ = model.UpdateToolCompatibilityEventResolutionStatus(event.Id, model.ToolCompatibilityResolutionStatusResolved)
+	result.Event, err = model.GetToolCompatibilityEventByID(event.Id)
+	if err != nil {
+		common.ApiError(c, err)
+		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{"event": event, "model": modelName}})
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": result})
+}
+
+func channelHasModel(channel *model.Channel, target string) bool {
+	for _, configured := range channel.GetModels() {
+		if strings.TrimSpace(configured) == strings.TrimSpace(target) {
+			return true
+		}
+	}
+	return false
+}
+
+func restoreAdvancedCustomRouteToolDefaults(route *dto.AdvancedCustomRoute) {
+	if route.ConverterOptions == nil {
+		route.ConverterOptions = &dto.AdvancedCustomConverterOptions{}
+	}
+	options := route.ConverterOptions
+	options.ResponsesToolsMode = ""
+	options.ResponsesToolConflictPolicy = dto.AdvancedCustomResponsesToolConflictPolicyDeduplicate
+	if strings.TrimSpace(route.Converter) == dto.AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions {
+		options.ResponsesTools = &dto.AdvancedCustomResponsesToolsOptions{Namespace: dto.AdvancedCustomResponsesToolPolicyFlatten}
+	} else {
+		options.ResponsesTools = nil
+	}
 }
 
 func applyModelToolCompatibilitySuggestion(options *dto.AdvancedCustomConverterOptions, modelName string, event *model.ToolCompatibilityEvent) error {
@@ -133,9 +241,7 @@ func applyModelToolCompatibilitySuggestion(options *dto.AdvancedCustomConverterO
 		return errors.New("event has no actionable suggestion")
 	}
 	if event.EventType == model.ToolCompatibilityEventTypeNameConflict {
-		// Conflict policy is route-scoped in the current Advanced Custom schema.
-		options.ResponsesToolConflictPolicy = policy
-		return nil
+		return errors.New("name-conflict suggestions require an explicitly confirmed route-scoped action")
 	}
 	if event.ToolType == "function" {
 		return errors.New("function tools cannot be disabled")
