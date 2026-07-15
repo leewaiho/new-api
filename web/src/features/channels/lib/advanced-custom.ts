@@ -20,6 +20,7 @@ import type {
   AdvancedCustomAuthType,
   AdvancedCustomConfig,
   AdvancedCustomConverter,
+  AdvancedCustomResponsesToolParameters,
   AdvancedCustomResponsesToolPolicy,
   AdvancedCustomResponsesToolsOptions,
   AdvancedCustomResponsesToolsMode,
@@ -150,6 +151,21 @@ export const ADVANCED_CUSTOM_RESPONSES_TOOL_TYPES = [
 export type AdvancedCustomResponsesToolType =
   (typeof ADVANCED_CUSTOM_RESPONSES_TOOL_TYPES)[number]
 
+export const ADVANCED_CUSTOM_IMPLICIT_HOSTED_TOOL_OPTIONS = [
+  {
+    value: 'image_generation',
+    label: 'Image generation',
+    description:
+      'The upstream provides hosted image generation even when it is not listed in the request.',
+  },
+  {
+    value: 'web_search',
+    label: 'Web search',
+    description:
+      'The upstream provides hosted web search even when it is not listed in the request.',
+  },
+] as const
+
 export type AdvancedCustomResponsesToolPolicySource =
   | 'protected'
   | 'model_tool_name'
@@ -258,7 +274,9 @@ export function resolveAdvancedCustomResponsesToolPolicy(
   if (override) {
     const namePolicy = (override.responses_tool_names || []).find(
       (candidate) => {
-        if ((candidate.tool_name || '').trim() !== toolName.trim()) return false
+        if ((candidate.tool_name || '').trim() !== toolName.trim()) {
+          return false
+        }
         const configuredType = (candidate.tool_type || '').trim()
         return (
           configuredType === toolType.trim() ||
@@ -786,6 +804,9 @@ export function mergeAdvancedCustomRouteCompatibilityConfig(
       responses_tools: incomingOptions.responses_tools,
       responses_tool_conflict_policy:
         incomingOptions.responses_tool_conflict_policy,
+      responses_implicit_hosted_tools:
+        incomingOptions.responses_implicit_hosted_tools,
+      responses_tool_parameters: incomingOptions.responses_tool_parameters,
       responses_tool_model_overrides:
         incomingOptions.responses_tool_model_overrides,
     },
@@ -977,6 +998,59 @@ export function buildAdvancedCustomAuth(
   }
 }
 
+function normalizeStringList(values: unknown): string[] | undefined {
+  if (!Array.isArray(values)) return undefined
+  const normalized = [
+    ...new Set(
+      values
+        .map((value) => (typeof value === 'string' ? value.trim() : ''))
+        .filter(Boolean)
+    ),
+  ]
+  return normalized.length > 0 ? normalized : undefined
+}
+
+function normalizeWebSearchParameterCompatibility(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined
+  }
+  const input = value as Record<string, unknown>
+  const defaultsInput =
+    input.defaults &&
+    typeof input.defaults === 'object' &&
+    !Array.isArray(input.defaults)
+      ? (input.defaults as Record<string, unknown>)
+      : {}
+  const defaults = {
+    ...(typeof defaultsInput.enable === 'boolean'
+      ? { enable: defaultsInput.enable }
+      : {}),
+    ...(typeof defaultsInput.search_result === 'boolean'
+      ? { search_result: defaultsInput.search_result }
+      : {}),
+    ...(typeof defaultsInput.search_engine === 'string' &&
+    defaultsInput.search_engine.trim()
+      ? { search_engine: defaultsInput.search_engine.trim() }
+      : {}),
+  }
+  return {
+    when_nested_options_missing:
+      input.when_nested_options_missing === 'populate_defaults'
+        ? 'populate_defaults'
+        : 'preserve',
+    ...(Object.keys(defaults).length > 0 ? { defaults } : {}),
+  } as const
+}
+
+function normalizeResponsesToolParameters(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined
+  }
+  const input = value as Record<string, unknown>
+  const webSearch = normalizeWebSearchParameterCompatibility(input.web_search)
+  return webSearch ? { web_search: webSearch } : undefined
+}
+
 function normalizeAdvancedCustomRoute(
   route: AdvancedCustomRoute
 ): AdvancedCustomRoute {
@@ -1016,6 +1090,12 @@ function normalizeAdvancedCustomRoute(
         : undefined,
       responses_tool_conflict_policy:
         route.converter_options.responses_tool_conflict_policy,
+      responses_implicit_hosted_tools: normalizeStringList(
+        route.converter_options.responses_implicit_hosted_tools
+      ),
+      responses_tool_parameters: normalizeResponsesToolParameters(
+        route.converter_options.responses_tool_parameters
+      ),
       responses_tool_model_overrides: Array.isArray(
         route.converter_options.responses_tool_model_overrides
       )
@@ -1048,6 +1128,12 @@ function normalizeAdvancedCustomRoute(
                     policy: policy.policy,
                   }))
                 : undefined,
+              responses_implicit_hosted_tools: normalizeStringList(
+                override.responses_implicit_hosted_tools
+              ),
+              responses_tool_parameters: normalizeResponsesToolParameters(
+                override.responses_tool_parameters
+              ),
             })
           )
         : undefined,
@@ -1287,11 +1373,16 @@ function validateRouteConverterOptions(
   const tools = route.converter_options?.responses_tools
   const dropFields = route.converter_options?.responses_drop_fields
   const conflictPolicy = route.converter_options?.responses_tool_conflict_policy
+  const implicitHostedTools =
+    route.converter_options?.responses_implicit_hosted_tools
+  const toolParameters = route.converter_options?.responses_tool_parameters
   const overrides = route.converter_options?.responses_tool_model_overrides
   if (
     !mode &&
     !tools &&
     !conflictPolicy &&
+    (!implicitHostedTools || implicitHostedTools.length === 0) &&
+    !toolParameters &&
     (!overrides || overrides.length === 0) &&
     (!dropFields || dropFields.length === 0)
   ) {
@@ -1336,11 +1427,59 @@ function validateRouteConverterOptions(
   ) {
     return 'Responses tool conflict policy is invalid'
   }
+  const hasImplicitHostedTools =
+    Boolean(implicitHostedTools && implicitHostedTools.length > 0) ||
+    Boolean(
+      overrides?.some(
+        (override) =>
+          (override.responses_implicit_hosted_tools || []).length > 0
+      )
+    )
+  if (hasImplicitHostedTools && conflictPolicy === 'preserve') {
+    return 'Implicit hosted tools require deduplicate or reject conflict handling'
+  }
+  if (
+    toolParameters &&
+    route.converter !== 'openai_responses_to_openai_chat_completions'
+  ) {
+    return 'Tool parameter compatibility requires OpenAI Responses to OpenAI Chat converter'
+  }
+  const validateWebSearchParameters = (
+    parameters: AdvancedCustomResponsesToolParameters | undefined
+  ): string | null => {
+    if (!parameters) return null
+    const webSearch = parameters.web_search
+    if (!webSearch) return 'Tool parameter compatibility requires web_search'
+    const mode = webSearch.when_nested_options_missing
+    if (mode !== 'preserve' && mode !== 'populate_defaults') {
+      return 'Web search missing-options policy is invalid'
+    }
+    const defaults = webSearch.defaults || {}
+    const hasDefaults =
+      typeof defaults.enable === 'boolean' ||
+      typeof defaults.search_result === 'boolean' ||
+      Boolean((defaults.search_engine || '').trim())
+    if (mode === 'populate_defaults' && !hasDefaults) {
+      return 'Web search defaults must not be empty'
+    }
+    if (mode === 'preserve' && hasDefaults) {
+      return 'Web search defaults require populate defaults mode'
+    }
+    return null
+  }
+  const routeParameterError = validateWebSearchParameters(toolParameters)
+  if (routeParameterError) return routeParameterError
   if (route.converter === 'none' && tools?.namespace === 'flatten') {
     return 'Native forwarding does not support namespace flatten'
   }
   if (route.converter === 'none' && dropFields && dropFields.length > 0) {
     return 'Native forwarding does not support Responses drop fields'
+  }
+  if (
+    overrides?.some((override) => override.responses_tool_parameters) &&
+    route.converter !== 'openai_responses_to_openai_chat_completions'
+  ) {
+    return 'Tool parameter compatibility requires OpenAI Responses to OpenAI Chat converter'
   }
   if (overrides) {
     const seenModels = new Set<string>()
@@ -1353,9 +1492,18 @@ function validateRouteConverterOptions(
         override.responses_tools || {}
       ).some(Boolean)
       const namePolicies = override.responses_tool_names || []
-      if (!hasToolPolicies && namePolicies.length === 0) {
-        return 'Model override requires at least one tool policy'
+      const implicitTools = override.responses_implicit_hosted_tools || []
+      const overrideParameters = override.responses_tool_parameters
+      if (
+        !hasToolPolicies &&
+        namePolicies.length === 0 &&
+        implicitTools.length === 0 &&
+        !overrideParameters
+      ) {
+        return 'Model override requires a tool policy, implicit hosted tool, or tool parameter rule'
       }
+      const parameterError = validateWebSearchParameters(overrideParameters)
+      if (parameterError) return parameterError
       for (const rawModel of override.models || []) {
         const model = rawModel.trim()
         if (!model) return 'Model override contains an empty model name'

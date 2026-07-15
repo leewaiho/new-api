@@ -35,6 +35,20 @@ describe('advanced custom config round trip', () => {
           converter_options: {
             future_converter: { version: 2 },
             responses_tool_conflict_policy: 'deduplicate',
+            responses_implicit_hosted_tools: [
+              ' image_gen ',
+              'image_generation',
+            ],
+            responses_tool_parameters: {
+              web_search: {
+                when_nested_options_missing: 'populate_defaults',
+                defaults: {
+                  enable: true,
+                  search_result: false,
+                  search_engine: ' search_std ',
+                },
+              },
+            },
             responses_tools: {
               namespace: 'flatten',
               web_search: 'preserve',
@@ -47,6 +61,12 @@ describe('advanced custom config round trip', () => {
                 responses_tools: {
                   image_generation: 'drop',
                   future_model_tool: 'preserve-later',
+                },
+                responses_implicit_hosted_tools: ['web_search'],
+                responses_tool_parameters: {
+                  web_search: {
+                    when_nested_options_missing: 'preserve',
+                  },
                 },
                 responses_tool_names: [
                   {
@@ -78,9 +98,23 @@ describe('advanced custom config round trip', () => {
     assert.equal(route?.auth?.future_auth, 1)
     assert.deepEqual(options?.future_converter, { version: 2 })
     assert.equal(options?.responses_tool_conflict_policy, 'deduplicate')
+    assert.deepEqual(options?.responses_implicit_hosted_tools, [
+      'image_gen',
+      'image_generation',
+    ])
+    assert.equal(
+      options?.responses_tool_parameters?.web_search?.defaults?.search_engine,
+      'search_std'
+    )
     assert.equal(options?.responses_tools?.future_tool_policy, 'future-value')
     assert.equal(override?.future_override, true)
     assert.deepEqual(override?.models, ['glm-5.2'])
+    assert.deepEqual(override?.responses_implicit_hosted_tools, ['web_search'])
+    assert.equal(
+      override?.responses_tool_parameters?.web_search
+        ?.when_nested_options_missing,
+      'preserve'
+    )
     assert.equal(override?.responses_tools?.future_model_tool, 'preserve-later')
     assert.equal(namePolicy?.tool_type, 'web_search_preview')
     assert.equal(namePolicy?.tool_name, 'search_preview')
@@ -118,6 +152,13 @@ describe('advanced custom compatibility mutation merge', () => {
       upstream_path: '/persisted-should-not-overwrite-local',
       converter_options: {
         responses_tool_conflict_policy: 'deduplicate',
+        responses_implicit_hosted_tools: ['image_generation'],
+        responses_tool_parameters: {
+          web_search: {
+            when_nested_options_missing: 'populate_defaults',
+            defaults: { enable: true, search_result: true },
+          },
+        },
         responses_tools: { namespace: 'flatten' },
         responses_tool_model_overrides: [
           {
@@ -157,6 +198,16 @@ describe('advanced custom compatibility mutation merge', () => {
       merged.advanced_routes?.[0]?.converter_options
         ?.responses_tool_conflict_policy,
       'deduplicate'
+    )
+    assert.deepEqual(
+      merged.advanced_routes?.[0]?.converter_options
+        ?.responses_implicit_hosted_tools,
+      ['image_generation']
+    )
+    assert.equal(
+      merged.advanced_routes?.[0]?.converter_options?.responses_tool_parameters
+        ?.web_search?.defaults?.enable,
+      true
     )
     const mergedOverrides =
       merged.advanced_routes?.[0]?.converter_options
@@ -321,5 +372,101 @@ describe('advanced custom tool policy validation', () => {
     })
 
     assert.equal(error, null)
+  })
+
+  test('accepts implicit hosted tools and configurable web search defaults', () => {
+    const error = validateAdvancedCustomConfig({
+      advanced_routes: [
+        {
+          ...validResponsesRoute,
+          converter_options: {
+            responses_tool_conflict_policy: 'deduplicate',
+            responses_implicit_hosted_tools: ['image_generation'],
+            responses_tool_parameters: {
+              web_search: {
+                when_nested_options_missing: 'populate_defaults',
+                defaults: { enable: true, search_result: true },
+              },
+            },
+            responses_tool_model_overrides: [
+              {
+                models: ['glm-5.2'],
+                responses_implicit_hosted_tools: ['web_search'],
+                responses_tool_parameters: {
+                  web_search: {
+                    when_nested_options_missing: 'preserve',
+                  },
+                },
+              },
+            ],
+          },
+        },
+      ],
+    })
+
+    assert.equal(error, null)
+  })
+
+  test('rejects model implicit hosted tools with preserve conflict handling', () => {
+    const error = validateAdvancedCustomConfig({
+      advanced_routes: [
+        {
+          ...validResponsesRoute,
+          converter_options: {
+            responses_tool_conflict_policy: 'preserve',
+            responses_tool_model_overrides: [
+              {
+                models: ['gpt-5.6-sol'],
+                responses_implicit_hosted_tools: ['image_generation'],
+              },
+            ],
+          },
+        },
+      ],
+    })
+
+    assert.match(
+      error?.message || '',
+      /implicit hosted tools require deduplicate or reject/i
+    )
+  })
+
+  test('rejects empty web search defaults and native converter parameter rules', () => {
+    const emptyDefaults = validateAdvancedCustomConfig({
+      advanced_routes: [
+        {
+          ...validResponsesRoute,
+          converter_options: {
+            responses_tool_parameters: {
+              web_search: {
+                when_nested_options_missing: 'populate_defaults',
+              },
+            },
+          },
+        },
+      ],
+    })
+    assert.match(emptyDefaults?.message || '', /defaults must not be empty/)
+
+    const native = validateAdvancedCustomConfig({
+      advanced_routes: [
+        {
+          incoming_path: '/v1/responses',
+          upstream_path: '/v1/responses',
+          converter: 'none',
+          converter_options: {
+            responses_tool_parameters: {
+              web_search: {
+                when_nested_options_missing: 'preserve',
+              },
+            },
+          },
+        },
+      ],
+    })
+    assert.match(
+      native?.message || '',
+      /requires OpenAI Responses to OpenAI Chat converter/
+    )
   })
 })

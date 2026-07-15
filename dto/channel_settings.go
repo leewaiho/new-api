@@ -132,6 +132,9 @@ type AdvancedCustomConverterOptions struct {
 	// ResponsesImplicitHostedTools declares capabilities automatically supplied by
 	// the upstream even when they are absent from the incoming tools array.
 	ResponsesImplicitHostedTools []string `json:"responses_implicit_hosted_tools,omitempty"`
+	// ResponsesToolParameters configures safe, tool-specific compatibility
+	// rewrites after a Responses request is converted to Chat Completions.
+	ResponsesToolParameters *AdvancedCustomResponsesToolParameters `json:"responses_tool_parameters,omitempty"`
 	// ResponsesToolModelOverrides applies exact model-specific exceptions. A
 	// model matches either the requested model name or the mapped upstream model
 	// name. The same model may only appear in one override.
@@ -152,6 +155,22 @@ type AdvancedCustomResponsesToolModelOverride struct {
 	ResponsesTools               *AdvancedCustomResponsesToolsOptions    `json:"responses_tools,omitempty"`
 	ToolNames                    []AdvancedCustomResponsesToolNamePolicy `json:"responses_tool_names,omitempty"`
 	ResponsesImplicitHostedTools []string                                `json:"responses_implicit_hosted_tools,omitempty"`
+	ResponsesToolParameters      *AdvancedCustomResponsesToolParameters  `json:"responses_tool_parameters,omitempty"`
+}
+
+type AdvancedCustomResponsesToolParameters struct {
+	WebSearch *AdvancedCustomWebSearchParameterCompatibility `json:"web_search,omitempty"`
+}
+
+type AdvancedCustomWebSearchParameterCompatibility struct {
+	WhenNestedOptionsMissing string                                   `json:"when_nested_options_missing,omitempty"`
+	Defaults                 AdvancedCustomWebSearchParameterDefaults `json:"defaults,omitempty"`
+}
+
+type AdvancedCustomWebSearchParameterDefaults struct {
+	Enable       *bool  `json:"enable,omitempty"`
+	SearchResult *bool  `json:"search_result,omitempty"`
+	SearchEngine string `json:"search_engine,omitempty"`
 }
 
 type AdvancedCustomResponsesToolNamePolicy struct {
@@ -692,6 +711,14 @@ func validateAdvancedCustomConverterOptions(index int, incomingPath string, conv
 	if err := validateAdvancedCustomResponsesImplicitHostedConflictPolicy(index, options); err != nil {
 		return err
 	}
+	if options.ResponsesToolParameters != nil || advancedCustomResponsesModelOverridesHaveToolParameters(options.ResponsesToolModelOverrides) {
+		if converter != AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions {
+			return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options.responses_tool_parameters requires Responses to Chat conversion", index)
+		}
+	}
+	if err := validateAdvancedCustomResponsesToolParameters(index, "converter_options.responses_tool_parameters", options.ResponsesToolParameters); err != nil {
+		return err
+	}
 	if err := validateAdvancedCustomResponsesToolModelOverrides(index, allowFlatten, options); err != nil {
 		return err
 	}
@@ -707,7 +734,17 @@ func advancedCustomConverterOptionsPresent(options *AdvancedCustomConverterOptio
 		len(options.ResponsesDropFields) > 0 ||
 		strings.TrimSpace(options.ResponsesToolConflictPolicy) != "" ||
 		len(options.ResponsesImplicitHostedTools) > 0 ||
+		options.ResponsesToolParameters != nil ||
 		len(options.ResponsesToolModelOverrides) > 0
+}
+
+func advancedCustomResponsesModelOverridesHaveToolParameters(overrides []AdvancedCustomResponsesToolModelOverride) bool {
+	for _, override := range overrides {
+		if override.ResponsesToolParameters != nil {
+			return true
+		}
+	}
+	return false
 }
 
 func validateAdvancedCustomResponsesToolPolicy(index int, toolType string, policy string, allowFlatten bool) error {
