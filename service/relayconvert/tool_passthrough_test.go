@@ -211,10 +211,61 @@ func TestApplyResponsesToolConflictPolicy(t *testing.T) {
 	require.Len(t, decisions, 1)
 }
 
+func TestApplyResponsesToolConflictPolicyUsesImplicitHostedCapabilities(t *testing.T) {
+	raw := mustRawMessage(t, []map[string]any{
+		{
+			"type":  "namespace",
+			"name":  "image_gen",
+			"tools": []map[string]any{{"type": "function", "name": "imagegen"}},
+		},
+		{"type": "function", "name": "image_gen.imagegen"},
+		{"type": "namespace", "name": "mcp__demo", "tools": []map[string]any{}},
+		{"type": "function", "name": "shell"},
+		{"type": "web_search"},
+	})
+
+	got, decisions, err := ApplyResponsesToolConflictPolicyWithImplicitHostedTools(
+		raw,
+		dto.AdvancedCustomResponsesToolConflictPolicyDeduplicate,
+		[]string{"image_generation"},
+	)
+	require.NoError(t, err)
+	assert.JSONEq(t, `[
+		{"type":"namespace","name":"mcp__demo","tools":[]},
+		{"type":"function","name":"shell"},
+		{"type":"web_search"}
+	]`, string(got))
+	require.Len(t, decisions, 2)
+	assert.Equal(t, ResponsesToolPolicyDecision{
+		ToolType: "namespace",
+		ToolName: "image_gen",
+		Policy:   dto.AdvancedCustomResponsesToolConflictPolicyDeduplicate,
+	}, decisions[0])
+	assert.Equal(t, ResponsesToolPolicyDecision{
+		ToolType: "function",
+		ToolName: "image_gen.imagegen",
+		Policy:   dto.AdvancedCustomResponsesToolConflictPolicyDeduplicate,
+	}, decisions[1])
+}
+
 func TestValidateResponsesToolChoiceAfterPolicy(t *testing.T) {
 	choice := mustRawMessage(t, map[string]any{"type": "image_gen"})
 	decisions := []ResponsesToolPolicyDecision{
 		{ToolType: "image_gen", ToolName: "image_gen", Policy: ResponsesToolPolicyDrop},
+	}
+
+	err := ValidateResponsesToolChoiceAfterPolicy(choice, decisions)
+	require.ErrorContains(t, err, "tool_choice selects a tool removed by the channel policy")
+}
+
+func TestValidateResponsesToolChoiceAfterPolicyMatchesNamespaceFunction(t *testing.T) {
+	choice := mustRawMessage(t, map[string]any{"type": "function", "name": "image_gen.imagegen"})
+	decisions := []ResponsesToolPolicyDecision{
+		{
+			ToolType: "namespace",
+			ToolName: "image_gen",
+			Policy:   dto.AdvancedCustomResponsesToolConflictPolicyDeduplicate,
+		},
 	}
 
 	err := ValidateResponsesToolChoiceAfterPolicy(choice, decisions)

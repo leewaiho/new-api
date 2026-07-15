@@ -1,6 +1,7 @@
 package relayconvert
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -511,4 +512,58 @@ func TestResponsesRequestToChatCompletionsRequestKeepsFieldsByDefault(t *testing
 	assert.Equal(t, "auto", strings.Trim(string(got.ServiceTier), `"`))
 	assert.Equal(t, "cache-key", got.PromptCacheKey)
 	assert.Equal(t, "high", got.ReasoningEffort)
+}
+
+func TestApplyResponsesToolConflictPolicyDeduplicatesAlias(t *testing.T) {
+	mkTools := func(t *testing.T, items ...map[string]any) json.RawMessage {
+		t.Helper()
+		raw, err := common.Marshal(items)
+		require.NoError(t, err)
+		return json.RawMessage(raw)
+	}
+
+	// Regression: Codex registers a built-in function tool "image_gen.imagegen"
+	// while the upstream advertises hosted "image_generation". Without alias
+	// normalization the function tool survives and the upstream rejects with
+	// "Function 'image_gen.imagegen' conflicts with a hosted tool".
+	t.Run("drops function image_gen.imagegen conflicting with hosted image_generation", func(t *testing.T) {
+		in := mkTools(t,
+			map[string]any{"type": "function", "name": "image_gen.imagegen", "parameters": map[string]any{"type": "object"}},
+			map[string]any{"type": "image_generation"},
+		)
+		out, decisions, err := ApplyResponsesToolConflictPolicy(in, dto.AdvancedCustomResponsesToolConflictPolicyDeduplicate)
+		require.NoError(t, err)
+		var got []map[string]any
+		require.NoError(t, common.Unmarshal(out, &got))
+		require.Len(t, got, 1, "conflicting function tool dropped, hosted image_generation kept")
+		assert.Equal(t, "image_generation", got[0]["type"])
+		require.Len(t, decisions, 1)
+		assert.Equal(t, "image_gen.imagegen", decisions[0].ToolName)
+	})
+
+	t.Run("drops function web_search.* conflicting with hosted web_search_preview", func(t *testing.T) {
+		in := mkTools(t,
+			map[string]any{"type": "function", "name": "web_search.search", "parameters": map[string]any{"type": "object"}},
+			map[string]any{"type": "web_search_preview"},
+		)
+		out, _, err := ApplyResponsesToolConflictPolicy(in, dto.AdvancedCustomResponsesToolConflictPolicyDeduplicate)
+		require.NoError(t, err)
+		var got []map[string]any
+		require.NoError(t, common.Unmarshal(out, &got))
+		require.Len(t, got, 1)
+		assert.Equal(t, "web_search_preview", got[0]["type"])
+	})
+
+	t.Run("keeps unrelated function tool alongside hosted tool", func(t *testing.T) {
+		in := mkTools(t,
+			map[string]any{"type": "function", "name": "calculator", "parameters": map[string]any{"type": "object"}},
+			map[string]any{"type": "image_generation"},
+		)
+		out, decisions, err := ApplyResponsesToolConflictPolicy(in, dto.AdvancedCustomResponsesToolConflictPolicyDeduplicate)
+		require.NoError(t, err)
+		var got []map[string]any
+		require.NoError(t, common.Unmarshal(out, &got))
+		require.Len(t, got, 2, "unrelated function tool must be preserved")
+		require.Empty(t, decisions)
+	})
 }
