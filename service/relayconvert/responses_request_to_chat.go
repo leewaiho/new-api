@@ -925,7 +925,10 @@ func ApplyResponsesToolConflictPolicy(rawTools json.RawMessage, policy string) (
 	for _, tool := range tools {
 		toolType := strings.TrimSpace(common.Interface2String(tool["type"]))
 		if _, isHosted := responsesHostedToolTypes[toolType]; isHosted {
-			hostedNames[toolType] = struct{}{}
+			// Normalize so aliases collapse: hosted "image_generation" must
+			// match function prefix "image_gen" (image_gen.imagegen), and
+			// "web_search_preview" must match "web_search".
+			hostedNames[responsesToolPolicyType(toolType)] = struct{}{}
 		}
 	}
 	if len(hostedNames) == 0 {
@@ -942,7 +945,7 @@ func ApplyResponsesToolConflictPolicy(rawTools json.RawMessage, policy string) (
 			if idx := strings.IndexByte(name, '.'); idx > 0 {
 				prefix = name[:idx]
 			}
-			if _, conflicts := hostedNames[prefix]; conflicts {
+			if _, conflicts := hostedNames[responsesToolPolicyType(prefix)]; conflicts {
 				decision := ResponsesToolPolicyDecision{ToolType: toolType, ToolName: name, Policy: policy}
 				decisions = append(decisions, decision)
 				if policy == dto.AdvancedCustomResponsesToolConflictPolicyReject {
