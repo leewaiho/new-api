@@ -98,15 +98,31 @@ func matchAdvancedCustomResponsesToolModelOverride(
 	}
 	requestedModel = strings.TrimSpace(requestedModel)
 	upstreamModel = strings.TrimSpace(upstreamModel)
+	if override, ok := findAdvancedCustomResponsesToolModelOverride(options, requestedModel); ok {
+		return override, requestedModel, true
+	}
+	if upstreamModel == requestedModel {
+		return AdvancedCustomResponsesToolModelOverride{}, "", false
+	}
+	if override, ok := findAdvancedCustomResponsesToolModelOverride(options, upstreamModel); ok {
+		return override, upstreamModel, true
+	}
+	return AdvancedCustomResponsesToolModelOverride{}, "", false
+}
+
+func findAdvancedCustomResponsesToolModelOverride(options *AdvancedCustomConverterOptions, modelName string) (AdvancedCustomResponsesToolModelOverride, bool) {
+	if modelName == "" {
+		return AdvancedCustomResponsesToolModelOverride{}, false
+	}
 	for _, override := range options.ResponsesToolModelOverrides {
 		for _, rawModel := range override.Models {
 			model := strings.TrimSpace(rawModel)
-			if model != "" && (model == requestedModel || model == upstreamModel) {
-				return override, model, true
+			if model == modelName {
+				return override, true
 			}
 		}
 	}
-	return AdvancedCustomResponsesToolModelOverride{}, "", false
+	return AdvancedCustomResponsesToolModelOverride{}, false
 }
 
 func advancedCustomResponsesToolNamePolicyMatches(policy AdvancedCustomResponsesToolNamePolicy, toolType string, toolName string) bool {

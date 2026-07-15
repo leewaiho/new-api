@@ -1,6 +1,7 @@
 package relayconvert
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -554,4 +555,28 @@ func TestResponsesRequestToChatCompletionsRequestSerializesWebSearchAtTopLevel(t
 	require.True(t, gjson.GetBytes(encoded, "tools.0.web_search.enable").Bool())
 	require.True(t, gjson.GetBytes(encoded, "tools.0.web_search.search_result").Bool())
 	require.False(t, gjson.GetBytes(encoded, "tools.0.custom").Exists())
+}
+
+func TestResponsesRequestToChatCompletionsRequestPopulatesWebSearchAtIndex297(t *testing.T) {
+	tools := make([]map[string]any, 298)
+	for i := 0; i < 297; i++ {
+		tools[i] = map[string]any{
+			"type":       "function",
+			"name":       fmt.Sprintf("tool_%d", i),
+			"parameters": map[string]any{"type": "object"},
+		}
+	}
+	tools[297] = map[string]any{"type": "web_search"}
+
+	request, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
+		Model: "glm-5.2",
+		Input: mustRawMessage(t, "search for a fact"),
+		Tools: mustRawMessage(t, tools),
+	}, ResponsesRequestToChatOptions{ToolPolicies: ResponsesToolPolicies{WebSearch: ResponsesToolPolicyPreserve}})
+	require.NoError(t, err)
+	encoded, err := common.Marshal(request)
+	require.NoError(t, err)
+	require.Equal(t, "web_search", gjson.GetBytes(encoded, "tools.297.type").String())
+	require.True(t, gjson.GetBytes(encoded, "tools.297.web_search.enable").Bool())
+	require.True(t, gjson.GetBytes(encoded, "tools.297.web_search.search_result").Bool())
 }

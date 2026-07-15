@@ -136,11 +136,11 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 		return nil, advancedCustomResponsesToolPolicyError(info, a.route, requestedModel, upstreamModel, conflictDecisions, err)
 	}
 	decisions := append(policyDecisions, conflictDecisions...)
-	recordAdvancedCustomToolCompatibilityEvents(info, a.route, requestedModel, upstreamModel, decisions, nil)
 	if err := relayconvert.ValidateResponsesToolChoiceAfterPolicy(request.ToolChoice, decisions); err != nil {
 		recordAdvancedCustomToolCompatibilityEvents(info, a.route, requestedModel, upstreamModel, decisions, err)
 		return nil, advancedCustomResponsesToolPolicyError(info, a.route, requestedModel, upstreamModel, decisions, err)
 	}
+	recordAdvancedCustomToolCompatibilityEvents(info, a.route, requestedModel, upstreamModel, decisions, nil)
 	a.compatibilityRequestedModel = requestedModel
 	a.compatibilityUpstreamModel = upstreamModel
 	a.compatibilityTools = summarizeAdvancedCustomResponsesTools(filteredTools)
@@ -157,6 +157,9 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 		}
 		chatReq, err := service.ResponsesRequestToChatCompletionsRequestWithOptions(&request, chatOptions)
 		if err != nil {
+			if isAdvancedCustomToolConversionError(err) {
+				recordAdvancedCustomToolCompatibilityEvents(info, a.route, requestedModel, upstreamModel, summarizeAdvancedCustomResponsesTools(filteredTools), err)
+			}
 			return nil, err
 		}
 		if len(mappings) > 0 {
@@ -492,11 +495,44 @@ func isJSONRequest(c *gin.Context) bool {
 }
 
 func (a *Adaptor) convertOpenAICompatibleRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.GeneralOpenAIRequest) (any, error) {
+	advancedCustomPopulateChatWebSearchOptions(info, request)
+
 	old := info.ChannelType
 	info.ChannelType = constant.ChannelTypeOpenAI
 	converted, err := a.openaiAdaptor.ConvertOpenAIRequest(c, info, request)
 	info.ChannelType = old
 	return converted, err
+}
+
+func advancedCustomPopulateChatWebSearchOptions(info *relaycommon.RelayInfo, request *dto.GeneralOpenAIRequest) {
+	if request == nil || !advancedCustomUsesGLMChatWebSearchSchema(info, request.Model) {
+		return
+	}
+	for i := range request.Tools {
+		toolType := strings.TrimSpace(request.Tools[i].Type)
+		if toolType != "web_search" && toolType != "web_search_preview" {
+			continue
+		}
+		if len(request.Tools[i].WebSearch) > 0 {
+			continue
+		}
+		request.Tools[i].Type = "web_search"
+		request.Tools[i].WebSearch = map[string]any{"enable": true, "search_result": true}
+	}
+}
+
+func advancedCustomUsesGLMChatWebSearchSchema(info *relaycommon.RelayInfo, requestModel string) bool {
+	models := []string{requestModel}
+	if info != nil {
+		models = append(models, info.OriginModelName, info.UpstreamModelName)
+	}
+	for _, modelName := range models {
+		normalized := strings.ToLower(strings.TrimSpace(modelName))
+		if strings.HasPrefix(normalized, "glm-") {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *Adaptor) convertClaudeToOpenAICompatibleRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.ClaudeRequest) (any, error) {
@@ -572,7 +608,16 @@ func recordAdvancedCustomUpstreamToolCompatibilityEvents(info *relaycommon.Relay
 		return
 	}
 	message := cause.ErrorWithStatusCode()
+	matchedTools := make([]relayconvert.ResponsesToolPolicyDecision, 0, len(tools))
 	for _, tool := range tools {
+		if advancedCustomUpstreamErrorMentionsTool(message, tool.ToolType, tool.ToolName) {
+			matchedTools = append(matchedTools, tool)
+		}
+	}
+	if len(matchedTools) == 0 {
+		matchedTools = []relayconvert.ResponsesToolPolicyDecision{{}}
+	}
+	for _, tool := range matchedTools {
 		eventType, suggestion := classifyAdvancedCustomUpstreamToolError(cause.StatusCode, message, tool.ToolType)
 		if eventType == "" {
 			continue
@@ -595,12 +640,55 @@ func classifyAdvancedCustomUpstreamToolError(statusCode int, message string, too
 	// Only explicit unsupported-tool wording may recommend a policy change. A
 	// generic 400 remains evidence for review, never an automatic Drop proposal.
 	if strings.Contains(lower, "unsupported tool type") || strings.Contains(lower, "tool type is not supported") || strings.Contains(lower, "does not support tool") {
-		if normalizedType == "function" {
+		if normalizedType == "" || normalizedType == "function" {
 			return model.ToolCompatibilityEventTypeUpstreamUnsupported, ""
 		}
 		return model.ToolCompatibilityEventTypeUpstreamUnsupported, dto.AdvancedCustomResponsesToolPolicyDrop
 	}
 	return model.ToolCompatibilityEventTypeUnclassified, ""
+}
+
+func advancedCustomUpstreamErrorMentionsTool(message string, toolType string, toolName string) bool {
+	lower := strings.ToLower(message)
+	if name := strings.ToLower(strings.TrimSpace(toolName)); name != "" && strings.Contains(lower, name) {
+		return true
+	}
+	for _, alias := range advancedCustomToolTypeAliases(toolType) {
+		if strings.Contains(lower, alias) {
+			return true
+		}
+	}
+	return false
+}
+
+func advancedCustomToolTypeAliases(toolType string) []string {
+	switch strings.ToLower(strings.TrimSpace(toolType)) {
+	case "web_search", "web_search_preview":
+		return []string{"web_search", "web_search_preview"}
+	case "image_gen", "image_generation":
+		return []string{"image_gen", "image_generation"}
+	case "tool_search":
+		return []string{"tool_search"}
+	case "namespace":
+		return []string{"namespace"}
+	case "custom":
+		return []string{"custom"}
+	case "function":
+		return []string{"function"}
+	default:
+		if normalized := strings.ToLower(strings.TrimSpace(toolType)); normalized != "" {
+			return []string{normalized}
+		}
+		return nil
+	}
+}
+
+func isAdvancedCustomToolConversionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "tool") || strings.Contains(message, "namespace")
 }
 
 func recordAdvancedCustomToolCompatibilityEvents(

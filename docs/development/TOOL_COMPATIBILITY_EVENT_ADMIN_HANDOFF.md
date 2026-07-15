@@ -1,9 +1,9 @@
 # NewAPI Tool Compatibility Event + 管理后台交接
 
 更新时间：2026-07-15（UTC+8）
-目标：后续会话实现 Advanced Custom Responses 工具兼容事件、管理 API、管理后台配置与恢复指导。
+目标：记录 Advanced Custom 工具兼容事件、管理 API、管理后台配置与恢复指导的实现与后续验收要求。
 
-> 本文只覆盖尚未实现的数据库 Compatibility Event 与管理后台部分。核心模型级工具策略、运行时防误删代码、3011 E2E、3010 生产发布和智谱模型级策略迁移均已完成；具体实现直接查看代码与提交，不在本文重复粘贴。
+> 本文覆盖数据库 Compatibility Event、管理 API、管理后台 Tool Handling / Model Tool Capabilities 及后续验收要求。核心模型级工具策略、运行时防误删代码、3011 E2E、3010 生产发布和智谱模型级策略迁移均已完成；当前 feature 仍未发布，禁止合并到其他分支。
 
 ## 1. 强制边界
 
@@ -28,6 +28,7 @@ Git / 发布规则：
 数据库规则：
 
 - 同时兼容 SQLite、MySQL、PostgreSQL。
+- 只要新增/修改数据库表、字段、索引或约束，就必须同时落地显式迁移文件，不能只依赖 `AutoMigrate`。
 - 优先使用 GORM，不写数据库专属 UPSERT。
 - JSON marshal/unmarshal 必须使用 `common/json.go` 包装。
 
@@ -192,9 +193,9 @@ NewAPI 可以生成配置建议，但不能自动应用。管理员必须确认�
 
 ## 5. Compatibility Event 数据设计
 
-### 5.1 推荐模型
+### 5.1 已实现模型
 
-建议新增：
+已新增：
 
 ```text
 model/tool_compatibility_event.go
@@ -321,9 +322,9 @@ suggested_policy=""
 
 需要并发测试，避免两个实例重复插入。
 
-### 5.5 迁移入口
+### 5.5 迁移入口与显式迁移文件
 
-当前迁移位置：
+当前 GORM 迁移注册位置：
 
 ```text
 model/main.go:migrateDB
@@ -332,7 +333,17 @@ model/main.go:migrateDBFast
 
 必须同时检查普通迁移与 fast migration 注册列表。
 
-不要把 Compatibility Event 放进 `LOG_DB`，除非先明确其生命周期和部署方式。当前建议放主数据库：它属于管理员配置恢复工作流，不只是请求日志。
+当前 feature 已为 `tool_compatibility_events` 表落地显式迁移文件：
+
+```text
+bin/migration_tool_compatibility_events_mysql.sql
+bin/migration_tool_compatibility_events_postgres.sql
+bin/migration_tool_compatibility_events_sqlite.sql
+```
+
+这些 SQL 必须与 `model.ToolCompatibilityEvent` 的字段、索引和默认值保持同步。
+
+不要把 Compatibility Event 放进 `LOG_DB`，除非先明确其生命周期和部署方式。当前放主数据库：它属于管理员配置恢复工作流，不只是请求日志。
 
 ## 6. 事件记录接入点
 
