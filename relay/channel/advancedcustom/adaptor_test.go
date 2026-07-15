@@ -816,6 +816,73 @@ func TestAdaptorResponsesPassthroughModelOverrideDropsOnlyTargetModelImageTool(t
 	assert.Equal(t, "shell", otherTools[1]["name"])
 }
 
+func TestAdaptorResponsesPassthroughImplicitHostedToolDeduplicatesTargetModelNamespace(t *testing.T) {
+	config := &dto.AdvancedCustomConfig{
+		Routes: []dto.AdvancedCustomRoute{
+			{
+				IncomingPath: "/v1/responses",
+				UpstreamPath: "/v1/responses",
+				Converter:    dto.AdvancedCustomConverterNone,
+				ConverterOptions: &dto.AdvancedCustomConverterOptions{
+					ResponsesToolModelOverrides: []dto.AdvancedCustomResponsesToolModelOverride{
+						{
+							Models:                       []string{"gpt-5.6-sol"},
+							ResponsesImplicitHostedTools: []string{"image_generation"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	for _, test := range []struct {
+		model     string
+		toolCount int
+	}{
+		{model: "gpt-5.6-sol", toolCount: 2},
+		{model: "gpt-5.6-terra", toolCount: 3},
+	} {
+		t.Run(test.model, func(t *testing.T) {
+			adaptor := &Adaptor{}
+			info := advancedCustomRelayInfo(config)
+			info.RelayMode = relayconstant.RelayModeResponses
+			info.RequestURLPath = "/v1/responses"
+			info.OriginModelName = test.model
+			converted, err := adaptor.ConvertOpenAIResponsesRequest(
+				advancedCustomGinContext("/v1/responses"),
+				info,
+				dto.OpenAIResponsesRequest{
+					Model: test.model,
+					Input: mustAdvancedCustomRawMessage(t, "use tools"),
+					Tools: mustAdvancedCustomRawMessage(t, []map[string]any{
+						{
+							"type":  "namespace",
+							"name":  "image_gen",
+							"tools": []map[string]any{{"type": "function", "name": "imagegen"}},
+						},
+						{"type": "namespace", "name": "mcp__demo", "tools": []map[string]any{}},
+						{"type": "web_search"},
+					}),
+				},
+			)
+			require.NoError(t, err)
+			body, err := common.Marshal(converted)
+			require.NoError(t, err)
+			var request dto.OpenAIResponsesRequest
+			require.NoError(t, common.Unmarshal(body, &request))
+			var tools []map[string]any
+			require.NoError(t, common.Unmarshal(request.Tools, &tools))
+			require.Len(t, tools, test.toolCount)
+			if test.model == "gpt-5.6-sol" {
+				assert.Equal(t, "mcp__demo", tools[0]["name"])
+				assert.Equal(t, "web_search", tools[1]["type"])
+			} else {
+				assert.Equal(t, "image_gen", tools[0]["name"])
+			}
+		})
+	}
+}
+
 func TestAdaptorResponsesPassthroughRejectsAllToolsRemovedWithAdminPath(t *testing.T) {
 	adaptor := &Adaptor{}
 	info := advancedCustomRelayInfo(&dto.AdvancedCustomConfig{
