@@ -569,7 +569,7 @@ func TestApplyResponsesToolConflictPolicyDeduplicatesAlias(t *testing.T) {
 	})
 }
 
-func TestResponsesRequestToolsToChatConvertsWebSearchForChatUpstream(t *testing.T) {
+func TestResponsesRequestToolsToChatPreservesEmptyWebSearchForChatUpstream(t *testing.T) {
 	tools := mustRawMessage(t, []map[string]any{{"type": "web_search"}, {"type": "web_search_preview"}})
 	converted, err := responsesRequestToolsToChat(tools, ResponsesRequestToChatOptions{
 		ToolPolicies: ResponsesToolPolicies{WebSearch: ResponsesToolPolicyPreserve},
@@ -578,8 +578,7 @@ func TestResponsesRequestToolsToChatConvertsWebSearchForChatUpstream(t *testing.
 	require.Len(t, converted, 2)
 	for _, tool := range converted {
 		require.Equal(t, "web_search", tool.Type)
-		require.Equal(t, true, tool.WebSearch["enable"])
-		require.Equal(t, true, tool.WebSearch["search_result"])
+		require.Empty(t, tool.WebSearch)
 		require.Empty(t, tool.Custom)
 	}
 }
@@ -598,7 +597,7 @@ func TestResponsesRequestToolsToChatPreservesExplicitWebSearchOptions(t *testing
 	require.Equal(t, "search_std", converted[0].WebSearch["search_engine"])
 }
 
-func TestResponsesRequestToChatCompletionsRequestSerializesWebSearchAtTopLevel(t *testing.T) {
+func TestResponsesRequestToChatCompletionsRequestLeavesWebSearchOptionsUnset(t *testing.T) {
 	request, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
 		Model: "glm-5.2",
 		Input: mustRawMessage(t, "search for a fact"),
@@ -607,12 +606,11 @@ func TestResponsesRequestToChatCompletionsRequestSerializesWebSearchAtTopLevel(t
 	require.NoError(t, err)
 	encoded, err := common.Marshal(request)
 	require.NoError(t, err)
-	require.True(t, gjson.GetBytes(encoded, "tools.0.web_search.enable").Bool())
-	require.True(t, gjson.GetBytes(encoded, "tools.0.web_search.search_result").Bool())
+	require.False(t, gjson.GetBytes(encoded, "tools.0.web_search").Exists())
 	require.False(t, gjson.GetBytes(encoded, "tools.0.custom").Exists())
 }
 
-func TestResponsesRequestToChatCompletionsRequestPopulatesWebSearchAtIndex297(t *testing.T) {
+func TestResponsesRequestToChatCompletionsRequestLeavesWebSearchOptionsUnsetAtIndex297(t *testing.T) {
 	tools := make([]map[string]any, 298)
 	for i := 0; i < 297; i++ {
 		tools[i] = map[string]any{
@@ -632,6 +630,5 @@ func TestResponsesRequestToChatCompletionsRequestPopulatesWebSearchAtIndex297(t 
 	encoded, err := common.Marshal(request)
 	require.NoError(t, err)
 	require.Equal(t, "web_search", gjson.GetBytes(encoded, "tools.297.type").String())
-	require.True(t, gjson.GetBytes(encoded, "tools.297.web_search.enable").Bool())
-	require.True(t, gjson.GetBytes(encoded, "tools.297.web_search.search_result").Bool())
+	require.False(t, gjson.GetBytes(encoded, "tools.297.web_search").Exists())
 }

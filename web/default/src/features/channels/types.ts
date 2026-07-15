@@ -129,6 +129,8 @@ export interface AdvancedCustomConverterOptions {
   responses_tools?: AdvancedCustomResponsesToolsOptions
   responses_drop_fields?: string[]
   responses_tool_conflict_policy?: AdvancedCustomResponsesToolConflictPolicy
+  responses_implicit_hosted_tools?: string[]
+  responses_tool_parameters?: AdvancedCustomResponsesToolParameters
   responses_tool_model_overrides?: AdvancedCustomResponsesToolModelOverride[]
   [key: string]: unknown
 }
@@ -137,8 +139,32 @@ export interface AdvancedCustomResponsesToolModelOverride {
   models?: string[]
   responses_tools?: AdvancedCustomResponsesToolsOptions
   responses_tool_names?: AdvancedCustomResponsesToolNamePolicy[]
+  responses_implicit_hosted_tools?: string[]
+  responses_tool_parameters?: AdvancedCustomResponsesToolParameters
   [key: string]: unknown
 }
+
+export interface AdvancedCustomResponsesToolParameters {
+  web_search?: AdvancedCustomWebSearchParameterCompatibility
+  [key: string]: unknown
+}
+
+export interface AdvancedCustomWebSearchParameterCompatibility {
+  when_nested_options_missing?: AdvancedCustomResponsesToolMissingOptionsPolicy
+  defaults?: AdvancedCustomWebSearchParameterDefaults
+  [key: string]: unknown
+}
+
+export interface AdvancedCustomWebSearchParameterDefaults {
+  enable?: boolean
+  search_result?: boolean
+  search_engine?: string
+  [key: string]: unknown
+}
+
+export type AdvancedCustomResponsesToolMissingOptionsPolicy =
+  | 'preserve'
+  | 'populate_defaults'
 
 export interface AdvancedCustomResponsesToolNamePolicy {
   tool_type?: string
