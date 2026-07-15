@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"strings"
@@ -500,7 +501,7 @@ func isJSONRequest(c *gin.Context) bool {
 }
 
 func (a *Adaptor) convertOpenAICompatibleRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.GeneralOpenAIRequest) (any, error) {
-	advancedCustomPopulateChatWebSearchOptions(info, request)
+	advancedCustomPopulateChatWebSearchOptions(a.route.ConverterOptions, info, request)
 
 	old := info.ChannelType
 	info.ChannelType = constant.ChannelTypeOpenAI
@@ -509,8 +510,26 @@ func (a *Adaptor) convertOpenAICompatibleRequest(c *gin.Context, info *relaycomm
 	return converted, err
 }
 
-func advancedCustomPopulateChatWebSearchOptions(info *relaycommon.RelayInfo, request *dto.GeneralOpenAIRequest) {
-	if request == nil || !advancedCustomUsesGLMChatWebSearchSchema(info, request.Model) {
+func advancedCustomPopulateChatWebSearchOptions(options *dto.AdvancedCustomConverterOptions, info *relaycommon.RelayInfo, request *dto.GeneralOpenAIRequest) {
+	if request == nil {
+		return
+	}
+	requestedModel, upstreamModel := advancedCustomResponsesModelNames(info, request.Model)
+	compatibility := dto.ResolveAdvancedCustomResponsesWebSearchParameters(options, requestedModel, upstreamModel)
+	if compatibility == nil || strings.TrimSpace(compatibility.WhenNestedOptionsMissing) != dto.AdvancedCustomResponsesToolMissingOptionsPopulateDefaults {
+		return
+	}
+	defaults := make(map[string]any, 3)
+	if compatibility.Defaults.Enable != nil {
+		defaults["enable"] = *compatibility.Defaults.Enable
+	}
+	if compatibility.Defaults.SearchResult != nil {
+		defaults["search_result"] = *compatibility.Defaults.SearchResult
+	}
+	if searchEngine := strings.TrimSpace(compatibility.Defaults.SearchEngine); searchEngine != "" {
+		defaults["search_engine"] = searchEngine
+	}
+	if len(defaults) == 0 {
 		return
 	}
 	for i := range request.Tools {
@@ -522,22 +541,8 @@ func advancedCustomPopulateChatWebSearchOptions(info *relaycommon.RelayInfo, req
 			continue
 		}
 		request.Tools[i].Type = "web_search"
-		request.Tools[i].WebSearch = map[string]any{"enable": true, "search_result": true}
+		request.Tools[i].WebSearch = maps.Clone(defaults)
 	}
-}
-
-func advancedCustomUsesGLMChatWebSearchSchema(info *relaycommon.RelayInfo, requestModel string) bool {
-	models := []string{requestModel}
-	if info != nil {
-		models = append(models, info.OriginModelName, info.UpstreamModelName)
-	}
-	for _, modelName := range models {
-		normalized := strings.ToLower(strings.TrimSpace(modelName))
-		if strings.HasPrefix(normalized, "glm-") {
-			return true
-		}
-	}
-	return false
 }
 
 func (a *Adaptor) convertClaudeToOpenAICompatibleRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.ClaudeRequest) (any, error) {

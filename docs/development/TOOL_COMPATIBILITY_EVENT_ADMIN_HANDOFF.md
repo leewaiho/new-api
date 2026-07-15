@@ -1,5 +1,7 @@
 # NewAPI Tool Compatibility Event + 管理后台交接
 
+> 历史说明：本文保留 Compatibility Event / Admin 的早期设计与实施记录。当前状态、数据库迁移所有权和后续任务以 [NEWAPI_RESPONSES_TOOL_COMPATIBILITY_HANDOFF_20260715.md](./NEWAPI_RESPONSES_TOOL_COMPATIBILITY_HANDOFF_20260715.md) 为准。
+
 更新时间：2026-07-15（UTC+8）
 目标：记录 Advanced Custom 工具兼容事件、管理 API、管理后台配置与恢复指导的实现与后续验收要求。
 
@@ -28,7 +30,7 @@ Git / 发布规则：
 数据库规则：
 
 - 同时兼容 SQLite、MySQL、PostgreSQL。
-- 只要新增/修改数据库表、字段、索引或约束，就必须同时落地显式迁移文件，不能只依赖 `AutoMigrate`。
+- NewAPI 自带 schema 使用项目原生 GORM `DB.AutoMigrate(...)`，不要为 `ToolCompatibilityEvent` 再引入 `golang-migrate` 或第二套迁移所有权。
 - 优先使用 GORM，不写数据库专属 UPSERT。
 - JSON marshal/unmarshal 必须使用 `common/json.go` 包装。
 

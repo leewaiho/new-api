@@ -537,15 +537,10 @@ func responsesNamespaceToolToChat(tool map[string]any, mappings map[string]dto.R
 }
 
 func responsesRawToolToChat(toolType string, tool map[string]any) (dto.ToolCallRequest, error) {
-	// GLM Chat Completions accepts web search only when the top-level
-	// `web_search` configuration is present. Responses clients commonly send
-	// just {"type":"web_search"}, so preserve an explicit configuration if
-	// supplied and otherwise use GLM's enabled/search_result defaults.
+	// Preserve explicit Chat-compatible web_search options. Vendor-specific
+	// defaults are applied later by the Advanced Custom route configuration.
 	if toolType == "web_search" || toolType == "web_search_preview" {
 		webSearch, _ := tool["web_search"].(map[string]any)
-		if len(webSearch) == 0 {
-			webSearch = map[string]any{"enable": true, "search_result": true}
-		}
 		return dto.ToolCallRequest{Type: "web_search", WebSearch: webSearch}, nil
 	}
 	rawTool, err := common.Marshal(tool)

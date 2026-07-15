@@ -368,8 +368,7 @@ func TestAdaptorResponsesToolsDefaultPreservesAllToolTypes(t *testing.T) {
 	require.Len(t, chatReq.Tools, 2)
 	assert.Equal(t, "namespace", chatReq.Tools[0].Type)
 	assert.Equal(t, "web_search", chatReq.Tools[1].Type)
-	assert.Equal(t, true, chatReq.Tools[1].WebSearch["enable"])
-	assert.Equal(t, true, chatReq.Tools[1].WebSearch["search_result"])
+	assert.Empty(t, chatReq.Tools[1].WebSearch)
 	assert.Empty(t, chatReq.Tools[1].Custom)
 	assert.Empty(t, info.ResponsesToolNameMappings)
 }
@@ -420,8 +419,7 @@ func TestAdaptorResponsesToolsNamespaceOnlyPolicyFlattensNamespaceAndPreservesWe
 	assert.Equal(t, "function", chatReq.Tools[0].Type)
 	assert.Equal(t, "mcp__demo__lookup_order", chatReq.Tools[0].Function.Name)
 	assert.Equal(t, "web_search", chatReq.Tools[1].Type)
-	assert.Equal(t, true, chatReq.Tools[1].WebSearch["enable"])
-	assert.Equal(t, true, chatReq.Tools[1].WebSearch["search_result"])
+	assert.Empty(t, chatReq.Tools[1].WebSearch)
 	assert.Empty(t, chatReq.Tools[1].Custom)
 }
 
@@ -638,21 +636,21 @@ func TestAdaptorResponsesPassthroughKeepsImageGenFunctionWithoutHostedConflict(t
 	assert.Equal(t, "image_gen.imagegen", tools[0]["name"])
 }
 
-func TestAdaptorChatPassthroughPopulatesEmptyWebSearchForGLMAtIndex419(t *testing.T) {
-	adaptor := &Adaptor{}
-	info := advancedCustomRelayInfo(&dto.AdvancedCustomConfig{
-		Routes: []dto.AdvancedCustomRoute{
-			{
-				IncomingPath: "/v1/chat/completions",
-				UpstreamPath: "/v1/chat/completions",
-				Converter:    dto.AdvancedCustomConverterNone,
+func TestAdvancedCustomPopulateChatWebSearchOptionsUsesRouteConfigAtIndex419(t *testing.T) {
+	enabled := true
+	searchResult := true
+	options := &dto.AdvancedCustomConverterOptions{
+		ResponsesToolParameters: &dto.AdvancedCustomResponsesToolParameters{
+			WebSearch: &dto.AdvancedCustomWebSearchParameterCompatibility{
+				WhenNestedOptionsMissing: dto.AdvancedCustomResponsesToolMissingOptionsPopulateDefaults,
+				Defaults: dto.AdvancedCustomWebSearchParameterDefaults{
+					Enable:       &enabled,
+					SearchResult: &searchResult,
+					SearchEngine: "search_std",
+				},
 			},
 		},
-	})
-	info.OriginModelName = "glm-5.2"
-	info.UpstreamModelName = "glm-5.2"
-	c := advancedCustomGinContext("/v1/chat/completions")
-
+	}
 	tools := make([]dto.ToolCallRequest, 420)
 	for i := 0; i < len(tools)-1; i++ {
 		tools[i] = dto.ToolCallRequest{
@@ -663,48 +661,75 @@ func TestAdaptorChatPassthroughPopulatesEmptyWebSearchForGLMAtIndex419(t *testin
 			},
 		}
 	}
-	tools[419] = dto.ToolCallRequest{Type: "web_search"}
+	tools[419] = dto.ToolCallRequest{Type: "web_search_preview"}
+	request := &dto.GeneralOpenAIRequest{Model: "provider-model", Tools: tools}
 
-	converted, err := adaptor.ConvertOpenAIRequest(c, info, &dto.GeneralOpenAIRequest{
-		Model:    "glm-5.2",
-		Messages: []dto.Message{{Role: "user", Content: "hello"}},
-		Tools:    tools,
-	})
-	require.NoError(t, err)
-	chatReq, ok := converted.(*dto.GeneralOpenAIRequest)
-	require.True(t, ok)
-	require.Len(t, chatReq.Tools, 420)
-	assert.Equal(t, "web_search", chatReq.Tools[419].Type)
-	assert.Equal(t, true, chatReq.Tools[419].WebSearch["enable"])
-	assert.Equal(t, true, chatReq.Tools[419].WebSearch["search_result"])
+	advancedCustomPopulateChatWebSearchOptions(options, &relaycommon.RelayInfo{}, request)
+
+	require.Len(t, request.Tools, 420)
+	assert.Equal(t, "web_search", request.Tools[419].Type)
+	assert.Equal(t, true, request.Tools[419].WebSearch["enable"])
+	assert.Equal(t, true, request.Tools[419].WebSearch["search_result"])
+	assert.Equal(t, "search_std", request.Tools[419].WebSearch["search_engine"])
 }
 
-func TestAdaptorChatPassthroughKeepsEmptyWebSearchForNonGLM(t *testing.T) {
-	adaptor := &Adaptor{}
-	info := advancedCustomRelayInfo(&dto.AdvancedCustomConfig{
-		Routes: []dto.AdvancedCustomRoute{
-			{
-				IncomingPath: "/v1/chat/completions",
-				UpstreamPath: "/v1/chat/completions",
-				Converter:    dto.AdvancedCustomConverterNone,
+func TestAdvancedCustomPopulateChatWebSearchOptionsUsesModelOverrideAndPreservesExplicitValues(t *testing.T) {
+	routeEnabled := false
+	modelEnabled := true
+	modelSearchResult := true
+	options := &dto.AdvancedCustomConverterOptions{
+		ResponsesToolParameters: &dto.AdvancedCustomResponsesToolParameters{
+			WebSearch: &dto.AdvancedCustomWebSearchParameterCompatibility{
+				WhenNestedOptionsMissing: dto.AdvancedCustomResponsesToolMissingOptionsPopulateDefaults,
+				Defaults:                 dto.AdvancedCustomWebSearchParameterDefaults{Enable: &routeEnabled},
 			},
 		},
-	})
-	info.OriginModelName = "gpt-5.4-mini"
-	info.UpstreamModelName = "gpt-5.4-mini"
-	c := advancedCustomGinContext("/v1/chat/completions")
+		ResponsesToolModelOverrides: []dto.AdvancedCustomResponsesToolModelOverride{
+			{
+				Models: []string{"glm-5.2"},
+				ResponsesToolParameters: &dto.AdvancedCustomResponsesToolParameters{
+					WebSearch: &dto.AdvancedCustomWebSearchParameterCompatibility{
+						WhenNestedOptionsMissing: dto.AdvancedCustomResponsesToolMissingOptionsPopulateDefaults,
+						Defaults: dto.AdvancedCustomWebSearchParameterDefaults{
+							Enable:       &modelEnabled,
+							SearchResult: &modelSearchResult,
+						},
+					},
+				},
+			},
+		},
+	}
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "glm-5.2",
+		ChannelMeta:     &relaycommon.ChannelMeta{UpstreamModelName: "provider-glm"},
+	}
+	request := &dto.GeneralOpenAIRequest{
+		Model: "provider-glm",
+		Tools: []dto.ToolCallRequest{
+			{Type: "web_search"},
+			{Type: "web_search", WebSearch: map[string]any{"enable": false, "search_result": false}},
+		},
+	}
 
-	converted, err := adaptor.ConvertOpenAIRequest(c, info, &dto.GeneralOpenAIRequest{
-		Model:    "gpt-5.4-mini",
-		Messages: []dto.Message{{Role: "user", Content: "hello"}},
-		Tools:    []dto.ToolCallRequest{{Type: "web_search"}},
-	})
-	require.NoError(t, err)
-	chatReq, ok := converted.(*dto.GeneralOpenAIRequest)
-	require.True(t, ok)
-	require.Len(t, chatReq.Tools, 1)
-	assert.Equal(t, "web_search", chatReq.Tools[0].Type)
-	assert.Empty(t, chatReq.Tools[0].WebSearch)
+	advancedCustomPopulateChatWebSearchOptions(options, info, request)
+
+	assert.Equal(t, true, request.Tools[0].WebSearch["enable"])
+	assert.Equal(t, true, request.Tools[0].WebSearch["search_result"])
+	assert.Equal(t, false, request.Tools[1].WebSearch["enable"])
+	assert.Equal(t, false, request.Tools[1].WebSearch["search_result"])
+}
+
+func TestAdvancedCustomPopulateChatWebSearchOptionsDoesNothingWithoutConfig(t *testing.T) {
+	request := &dto.GeneralOpenAIRequest{
+		Model: "glm-5.2",
+		Tools: []dto.ToolCallRequest{{Type: "web_search"}},
+	}
+
+	advancedCustomPopulateChatWebSearchOptions(nil, &relaycommon.RelayInfo{}, request)
+
+	require.Len(t, request.Tools, 1)
+	assert.Equal(t, "web_search", request.Tools[0].Type)
+	assert.Empty(t, request.Tools[0].WebSearch)
 }
 
 func advancedCustomRelayInfo(config *dto.AdvancedCustomConfig) *relaycommon.RelayInfo {
