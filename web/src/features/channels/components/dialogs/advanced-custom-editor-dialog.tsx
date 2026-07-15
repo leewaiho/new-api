@@ -87,13 +87,17 @@ import {
   getAdvancedCustomRegexModelPattern,
   ADVANCED_CUSTOM_RESPONSES_DROP_FIELDS,
   type AdvancedCustomResponsesDropField,
+  type AdvancedCustomResponsesToolType,
   getAdvancedCustomTemplateConfig,
   getAdvancedCustomUpstreamPathPlaceholder,
   getDefaultAdvancedCustomIncomingPath,
   isAdvancedCustomIncomingPathAllowed,
+  mergeAdvancedCustomRouteCompatibilityConfig,
   normalizeAdvancedCustomConfig,
   parseAdvancedCustomRouteModels,
   parseAdvancedCustomConfig,
+  resolveAdvancedCustomResponsesToolPolicy,
+  responsesToolsFromMode,
   stringifyAdvancedCustomConfig,
   validateAdvancedCustomConfig,
 } from '../../lib/advanced-custom'
@@ -106,7 +110,6 @@ import type {
   AdvancedCustomResponsesToolNamePolicy,
   AdvancedCustomResponsesToolPolicy,
   AdvancedCustomResponsesToolsMode,
-  AdvancedCustomResponsesToolsOptions,
   AdvancedCustomRoute,
 } from '../../types'
 import { ToolCompatibilityEvents } from '../tool-compatibility-events'
@@ -127,6 +130,8 @@ const longSelectItemClass =
   'items-start py-2 [&_[data-slot=select-item-text]]:min-w-0 [&_[data-slot=select-item-text]]:shrink [&_[data-slot=select-item-text]]:whitespace-normal'
 const routeEditorGridClassName =
   'lg:grid-cols-[6rem_minmax(0,1fr)_minmax(0,1.25fr)_minmax(0,1fr)_minmax(0,0.85fr)_7rem]'
+const responseToolPolicyGridClassName =
+  'lg:grid-cols-[7rem_repeat(6,minmax(0,1fr))]'
 const upstreamPathDescriptionKey =
   'Use a path to append it to the channel Base URL, or enter a full URL to override the Base URL for this route.'
 const catchAllOrderErrorMessage =
@@ -496,6 +501,7 @@ export function AdvancedCustomEditorDialog({
       const base = normalizeAdvancedCustomConfig(baseConfig)
       const template = normalizeAdvancedCustomConfig(templateConfig)
       nextConfig = {
+        ...base,
         advanced_routes: [
           ...(base.advanced_routes || []),
           ...(template.advanced_routes || []),
@@ -737,6 +743,7 @@ export function AdvancedCustomEditorDialog({
                 onMoveRouteToEnd={moveRouteToGroupEnd}
                 onRemoveRoute={removeRoute}
                 onRouteChange={updateRoute}
+                channelModels={channelModels || []}
               />
             ))}
           </div>
@@ -773,10 +780,18 @@ export function AdvancedCustomEditorDialog({
           ) : null}
         </div>
       )}
-      <ToolCompatibilityEvents
-        channelId={channelId}
-        channelModels={channelModels}
-      />
+      {editMode === 'visual' ? (
+        <ToolCompatibilityEvents
+          channelId={channelId}
+          channelModels={channelModels}
+          routes={normalizedConfig.advanced_routes || []}
+          onRouteConfigChange={(routeConfig) =>
+            setConfig((current) =>
+              mergeAdvancedCustomRouteCompatibilityConfig(current, routeConfig)
+            )
+          }
+        />
+      ) : null}
     </Dialog>
   )
 }
@@ -791,6 +806,7 @@ function RouteGroupEditor({
   onMoveRouteToEnd,
   onRemoveRoute,
   onRouteChange,
+  channelModels,
 }: {
   group: AdvancedCustomRouteGroup
   usedIncomingPaths: ReadonlySet<string>
@@ -801,6 +817,7 @@ function RouteGroupEditor({
   onMoveRouteToEnd: (index: number) => void
   onRemoveRoute: (index: number) => void
   onRouteChange: (index: number, patch: Partial<AdvancedCustomRoute>) => void
+  channelModels: string[]
 }) {
   const { t } = useTranslation()
   const incomingPath = group.incomingPath || '/v1/chat/completions'
@@ -965,6 +982,7 @@ function RouteGroupEditor({
               onMoveUp={() => onMoveRoute(routeRow.index, -1)}
               onMoveCatchAllToEnd={() => onMoveRouteToEnd(routeRow.index)}
               onRemove={() => onRemoveRoute(routeRow.index)}
+              channelModels={channelModels}
             />
           )
         })}
@@ -974,7 +992,7 @@ function RouteGroupEditor({
 }
 
 const responseToolPolicyFields: Array<{
-  key: keyof AdvancedCustomResponsesToolsOptions
+  key: Exclude<AdvancedCustomResponsesToolType, 'function'>
   label: string
   allowFlatten: boolean
 }> = [
@@ -985,27 +1003,6 @@ const responseToolPolicyFields: Array<{
   { key: 'image_generation', label: 'Image generation', allowFlatten: false },
   { key: 'unknown', label: 'Unknown / other', allowFlatten: false },
 ]
-
-function responsesToolsFromMode(mode: AdvancedCustomResponsesToolsMode) {
-  if (mode === 'preserve') {
-    return {
-      namespace: 'preserve' as const,
-      custom: 'preserve' as const,
-      web_search: 'preserve' as const,
-      tool_search: 'preserve' as const,
-      image_generation: 'preserve' as const,
-      unknown: 'preserve' as const,
-    }
-  }
-  return {
-    namespace: 'flatten' as const,
-    custom: 'drop' as const,
-    web_search: 'drop' as const,
-    tool_search: 'drop' as const,
-    image_generation: 'drop' as const,
-    unknown: 'drop' as const,
-  }
-}
 
 function RouteEditor({
   route,
@@ -1019,6 +1016,7 @@ function RouteEditor({
   onMoveDown,
   onMoveCatchAllToEnd,
   onRemove,
+  channelModels,
 }: {
   route: AdvancedCustomRoute
   index: number
@@ -1031,6 +1029,7 @@ function RouteEditor({
   onMoveDown: () => void
   onMoveCatchAllToEnd: () => void
   onRemove: () => void
+  channelModels: string[]
 }) {
   const { t } = useTranslation()
   const converter = route.converter || 'none'
@@ -1051,34 +1050,49 @@ function RouteEditor({
       (option) => option.value === converter
     )?.triggerLabel || converterLabel
   const authLabel = getOptionLabel(ADVANCED_CUSTOM_AUTH_MODE_OPTIONS, authMode)
+  const explicitResponsesToolsMode =
+    route.converter_options?.responses_tools_mode
+  const hasCustomPerToolPolicies =
+    !explicitResponsesToolsMode &&
+    Boolean(route.converter_options?.responses_tools)
   const responsesToolsMode: AdvancedCustomResponsesToolsMode =
-    route.converter_options?.responses_tools_mode ||
+    explicitResponsesToolsMode ||
     (converter === 'none' ? 'preserve' : 'compat_flatten')
-  const responsesToolsModeLabel = getOptionLabel(
-    ADVANCED_CUSTOM_RESPONSES_TOOLS_MODE_OPTIONS,
-    responsesToolsMode
+  const responsesToolsModeLabel = hasCustomPerToolPolicies
+    ? 'Custom per-tool policies'
+    : getOptionLabel(
+        ADVANCED_CUSTOM_RESPONSES_TOOLS_MODE_OPTIONS,
+        responsesToolsMode
+      )
+  const responseToolPolicies = useMemo(
+    () => ({
+      namespace: resolveAdvancedCustomResponsesToolPolicy(
+        route,
+        '',
+        'namespace'
+      ).policy,
+      custom: resolveAdvancedCustomResponsesToolPolicy(route, '', 'custom')
+        .policy,
+      web_search: resolveAdvancedCustomResponsesToolPolicy(
+        route,
+        '',
+        'web_search'
+      ).policy,
+      tool_search: resolveAdvancedCustomResponsesToolPolicy(
+        route,
+        '',
+        'tool_search'
+      ).policy,
+      image_generation: resolveAdvancedCustomResponsesToolPolicy(
+        route,
+        '',
+        'image_generation'
+      ).policy,
+      unknown: resolveAdvancedCustomResponsesToolPolicy(route, '', 'unknown')
+        .policy,
+    }),
+    [route]
   )
-  const fallbackResponseToolPolicies = responsesToolsFromMode(responsesToolsMode)
-  const responseToolPolicies: Required<AdvancedCustomResponsesToolsOptions> = {
-    namespace:
-      route.converter_options?.responses_tools?.namespace ||
-      fallbackResponseToolPolicies.namespace,
-    custom:
-      route.converter_options?.responses_tools?.custom ||
-      fallbackResponseToolPolicies.custom,
-    web_search:
-      route.converter_options?.responses_tools?.web_search ||
-      fallbackResponseToolPolicies.web_search,
-    tool_search:
-      route.converter_options?.responses_tools?.tool_search ||
-      fallbackResponseToolPolicies.tool_search,
-    image_generation:
-      route.converter_options?.responses_tools?.image_generation ||
-      fallbackResponseToolPolicies.image_generation,
-    unknown:
-      route.converter_options?.responses_tools?.unknown ||
-      fallbackResponseToolPolicies.unknown,
-  }
   const hasResponsesToolOptions =
     Boolean(route.converter_options?.responses_tools_mode) ||
     Boolean(route.converter_options?.responses_tools)
@@ -1153,14 +1167,14 @@ function RouteEditor({
   }
 
   const setResponseToolPolicy = (
-    key: keyof AdvancedCustomResponsesToolsOptions,
+    key: Exclude<AdvancedCustomResponsesToolType, 'function'>,
     policy: AdvancedCustomResponsesToolPolicy
   ) => {
     onChange({
       converter_options: {
         ...route.converter_options,
         responses_tools: {
-          ...responseToolPolicies,
+          ...route.converter_options?.responses_tools,
           [key]: policy,
         },
       },
@@ -1169,8 +1183,25 @@ function RouteEditor({
 
   const responseToolConflictPolicy: AdvancedCustomResponsesToolConflictPolicy =
     route.converter_options?.responses_tool_conflict_policy || 'deduplicate'
-  const modelToolOverrides =
-    route.converter_options?.responses_tool_model_overrides || []
+  const modelToolOverrides = useMemo(
+    () => route.converter_options?.responses_tool_model_overrides || [],
+    [route.converter_options?.responses_tool_model_overrides]
+  )
+  const configuredModels = useMemo(
+    () => new Set(channelModels.map((model) => model.trim()).filter(Boolean)),
+    [channelModels]
+  )
+  const staleOverrideModels = useMemo(
+    () => [
+      ...new Set(
+        modelToolOverrides
+          .flatMap((override) => override.models || [])
+          .map((model) => model.trim())
+          .filter((model) => model && !configuredModels.has(model))
+      ),
+    ],
+    [configuredModels, modelToolOverrides]
+  )
 
   const patchConverterOptions = (
     patch: Partial<NonNullable<AdvancedCustomRoute['converter_options']>>
@@ -1192,12 +1223,18 @@ function RouteEditor({
   }
   const setModelToolOverridePolicy = (
     index: number,
-    key: keyof AdvancedCustomResponsesToolsOptions,
-    policy: AdvancedCustomResponsesToolPolicy
+    key: Exclude<AdvancedCustomResponsesToolType, 'function'>,
+    policy: AdvancedCustomResponsesToolPolicy | 'inherit'
   ) => {
     const override = modelToolOverrides[index]
+    const nextPolicies = { ...override.responses_tools }
+    if (policy === 'inherit') {
+      delete nextPolicies[key]
+    } else {
+      nextPolicies[key] = policy
+    }
     setModelToolOverride(index, {
-      responses_tools: { ...override.responses_tools, [key]: policy },
+      responses_tools: nextPolicies,
     })
   }
   const removeModelToolOverride = (index: number) =>
@@ -1611,7 +1648,7 @@ function RouteEditor({
           <div
             className={cn(
               'grid gap-4 md:grid-cols-2 lg:items-end lg:gap-2 lg:border-t lg:pt-2',
-              routeEditorGridClassName
+              responseToolPolicyGridClassName
             )}
           >
             <span className='hidden lg:block' aria-hidden='true' />
@@ -1633,7 +1670,7 @@ function RouteEditor({
                 >
                   <SelectTrigger className='w-full max-w-full lg:h-8'>
                     <SelectValue className='min-w-0 truncate'>
-                      {t(responseToolPolicies[field.key])}
+                      {t(responseToolPolicies[field.key] || 'preserve')}
                     </SelectValue>
                   </SelectTrigger>
                   <SelectContent
@@ -1701,6 +1738,16 @@ function RouteEditor({
               </Select>
             </div>
             <div className='space-y-2'>
+              {staleOverrideModels.length > 0 ? (
+                <Alert variant='destructive'>
+                  <AlertDescription className='break-words'>
+                    {t(
+                      'Stale model overrides are not present in the channel model list: {{models}}',
+                      { models: staleOverrideModels.join(', ') }
+                    )}
+                  </AlertDescription>
+                </Alert>
+              ) : null}
               {modelToolOverrides.map((override, overrideIndex) => (
                 <div
                   key={override.models?.join(',') || JSON.stringify(override)}
@@ -1742,13 +1789,15 @@ function RouteEditor({
                       >
                         <Select
                           value={
-                            override.responses_tools?.[field.key] || 'preserve'
+                            override.responses_tools?.[field.key] || 'inherit'
                           }
                           onValueChange={(value) =>
                             setModelToolOverridePolicy(
                               overrideIndex,
                               field.key,
-                              value as AdvancedCustomResponsesToolPolicy
+                              value as
+                                | AdvancedCustomResponsesToolPolicy
+                                | 'inherit'
                             )
                           }
                         >
@@ -1756,6 +1805,22 @@ function RouteEditor({
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
+                            <SelectItem value='inherit'>
+                              {t('Inherit route policy')}:{' '}
+                              {
+                                resolveAdvancedCustomResponsesToolPolicy(
+                                  {
+                                    ...route,
+                                    converter_options: {
+                                      ...route.converter_options,
+                                      responses_tool_model_overrides: [],
+                                    },
+                                  },
+                                  '',
+                                  field.key
+                                ).policy
+                              }
+                            </SelectItem>
                             {ADVANCED_CUSTOM_RESPONSES_TOOL_POLICY_OPTIONS.filter(
                               (option) =>
                                 (!isNativeConverter && field.allowFlatten) ||

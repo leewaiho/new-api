@@ -42,6 +42,8 @@ import type {
   TagOperationParams,
   ToolCompatibilityEvent,
   ToolCompatibilityEventsResponse,
+  ToolCompatibilityMutationRequest,
+  ToolCompatibilityMutationResult,
   ToolCompatibilityResolutionStatus,
 } from './types'
 
@@ -695,7 +697,11 @@ export async function getToolCompatibilityEvents(params: {
   page_size?: number
 }): Promise<ToolCompatibilityEventsResponse> {
   const res = await api.get('/api/tool-compatibility/events', { params })
-  return res.data
+  const result = res.data as ToolCompatibilityEventsResponse
+  if (!result.success) {
+    throw new Error(result.message || 'Failed to load compatibility issues')
+  }
+  return result
 }
 
 export async function updateToolCompatibilityEventStatus(
@@ -711,27 +717,65 @@ export async function updateToolCompatibilityEventStatus(
     { status },
     channelActionConfig()
   )
-  return res.data
+  const result = res.data as {
+    success: boolean
+    message?: string
+    data?: ToolCompatibilityEvent
+  }
+  if (!result.success) {
+    throw new Error(result.message || 'Failed to update compatibility issue')
+  }
+  return result
 }
 
 export async function applyToolCompatibilityEventSuggestion(
-  id: number
-): Promise<{ success: boolean; message?: string }> {
+  id: number,
+  request: ToolCompatibilityMutationRequest = {}
+): Promise<{
+  success: boolean
+  message?: string
+  data?: ToolCompatibilityMutationResult
+}> {
   const res = await api.post(
     `/api/tool-compatibility/events/${id}/apply-suggestion`,
-    undefined,
+    request,
     channelActionConfig()
   )
-  return res.data
+  const result = res.data as {
+    success: boolean
+    message?: string
+    data?: ToolCompatibilityMutationResult
+  }
+  if (!result.success) {
+    throw new Error(
+      result.message || 'Failed to apply compatibility suggestion'
+    )
+  }
+  return result
 }
 
 export async function restoreToolCompatibilityEventModelDefault(
-  id: number
-): Promise<{ success: boolean; message?: string }> {
+  id: number,
+  request: ToolCompatibilityMutationRequest = {}
+): Promise<{
+  success: boolean
+  message?: string
+  data?: ToolCompatibilityMutationResult
+}> {
   const res = await api.post(
     `/api/tool-compatibility/events/${id}/restore-default`,
-    undefined,
+    request,
     channelActionConfig()
   )
-  return res.data
+  const result = res.data as {
+    success: boolean
+    message?: string
+    data?: ToolCompatibilityMutationResult
+  }
+  if (!result.success) {
+    throw new Error(
+      result.message || 'Failed to restore compatibility defaults'
+    )
+  }
+  return result
 }
