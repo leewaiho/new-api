@@ -119,9 +119,14 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 	if err != nil {
 		return nil, advancedCustomResponsesToolPolicyError(info, a.route, requestedModel, upstreamModel, policyDecisions, err)
 	}
-	filteredTools, conflictDecisions, err := relayconvert.ApplyResponsesToolConflictPolicy(
+	filteredTools, conflictDecisions, err := relayconvert.ApplyResponsesToolConflictPolicyWithImplicitHostedTools(
 		filteredTools,
 		dto.ResolveAdvancedCustomResponsesToolConflictPolicy(a.route.ConverterOptions),
+		dto.ResolveAdvancedCustomResponsesImplicitHostedTools(
+			a.route.ConverterOptions,
+			requestedModel,
+			upstreamModel,
+		),
 	)
 	if err != nil {
 		return nil, advancedCustomResponsesToolPolicyError(info, a.route, requestedModel, upstreamModel, conflictDecisions, err)
