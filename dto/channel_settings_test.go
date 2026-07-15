@@ -905,3 +905,71 @@ func TestResolveAdvancedCustomResponsesToolPolicyPrefersRequestedModelOverride(t
 	require.Equal(t, AdvancedCustomResponsesToolPolicySourceModelToolType, resolution.Source)
 	require.Equal(t, "alias-model", resolution.MatchedModel)
 }
+
+func TestAdvancedCustomValidateResponsesToolParameters(t *testing.T) {
+	enabled := true
+	valid := &AdvancedCustomConfig{Routes: []AdvancedCustomRoute{{
+		IncomingPath: "/v1/responses",
+		UpstreamPath: "/v1/chat/completions",
+		Converter:    AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions,
+		ConverterOptions: &AdvancedCustomConverterOptions{
+			ResponsesToolParameters: &AdvancedCustomResponsesToolParameters{
+				WebSearch: &AdvancedCustomWebSearchParameterCompatibility{
+					WhenNestedOptionsMissing: AdvancedCustomResponsesToolMissingOptionsPopulateDefaults,
+					Defaults:                 AdvancedCustomWebSearchParameterDefaults{Enable: &enabled},
+				},
+			},
+		},
+	}}}
+	require.NoError(t, valid.Validate())
+
+	native := *valid
+	nativeRoute := valid.Routes[0]
+	nativeRoute.Converter = AdvancedCustomConverterNone
+	nativeRoute.UpstreamPath = "/v1/responses"
+	native.Routes = []AdvancedCustomRoute{nativeRoute}
+	require.ErrorContains(t, native.Validate(), "requires Responses to Chat conversion")
+
+	emptyDefaults := *valid
+	emptyRoute := valid.Routes[0]
+	emptyOptions := *valid.Routes[0].ConverterOptions
+	emptyOptions.ResponsesToolParameters = &AdvancedCustomResponsesToolParameters{
+		WebSearch: &AdvancedCustomWebSearchParameterCompatibility{
+			WhenNestedOptionsMissing: AdvancedCustomResponsesToolMissingOptionsPopulateDefaults,
+		},
+	}
+	emptyRoute.ConverterOptions = &emptyOptions
+	emptyDefaults.Routes = []AdvancedCustomRoute{emptyRoute}
+	require.ErrorContains(t, emptyDefaults.Validate(), "defaults must not be empty")
+}
+
+func TestResolveAdvancedCustomResponsesWebSearchParametersPrefersModelOverride(t *testing.T) {
+	routeEnabled := false
+	modelEnabled := true
+	options := &AdvancedCustomConverterOptions{
+		ResponsesToolParameters: &AdvancedCustomResponsesToolParameters{
+			WebSearch: &AdvancedCustomWebSearchParameterCompatibility{
+				WhenNestedOptionsMissing: AdvancedCustomResponsesToolMissingOptionsPopulateDefaults,
+				Defaults:                 AdvancedCustomWebSearchParameterDefaults{Enable: &routeEnabled},
+			},
+		},
+		ResponsesToolModelOverrides: []AdvancedCustomResponsesToolModelOverride{{
+			Models: []string{"glm-5.2"},
+			ResponsesToolParameters: &AdvancedCustomResponsesToolParameters{
+				WebSearch: &AdvancedCustomWebSearchParameterCompatibility{
+					WhenNestedOptionsMissing: AdvancedCustomResponsesToolMissingOptionsPopulateDefaults,
+					Defaults:                 AdvancedCustomWebSearchParameterDefaults{Enable: &modelEnabled},
+				},
+			},
+		}},
+	}
+	resolved := ResolveAdvancedCustomResponsesWebSearchParameters(options, "glm-5.2", "provider-glm")
+	require.NotNil(t, resolved)
+	require.NotNil(t, resolved.Defaults.Enable)
+	assert.True(t, *resolved.Defaults.Enable)
+
+	resolved = ResolveAdvancedCustomResponsesWebSearchParameters(options, "other", "provider-other")
+	require.NotNil(t, resolved)
+	require.NotNil(t, resolved.Defaults.Enable)
+	assert.False(t, *resolved.Defaults.Enable)
+}

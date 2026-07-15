@@ -68,6 +68,7 @@ import { cn } from '@/lib/utils'
 import {
   ADVANCED_CUSTOM_AUTH_MODE_OPTIONS,
   ADVANCED_CUSTOM_CONVERTER_OPTIONS,
+  ADVANCED_CUSTOM_IMPLICIT_HOSTED_TOOL_OPTIONS,
   ADVANCED_CUSTOM_INCOMING_PATH_OPTIONS,
   ADVANCED_CUSTOM_MODEL_LIST_LABEL,
   ADVANCED_CUSTOM_MODEL_LIST_PATH,
@@ -106,7 +107,9 @@ import type {
   AdvancedCustomConfig,
   AdvancedCustomConverter,
   AdvancedCustomResponsesToolConflictPolicy,
+  AdvancedCustomResponsesToolMissingOptionsPolicy,
   AdvancedCustomResponsesToolModelOverride,
+  AdvancedCustomWebSearchParameterDefaults,
   AdvancedCustomResponsesToolNamePolicy,
   AdvancedCustomResponsesToolPolicy,
   AdvancedCustomResponsesToolsMode,
@@ -182,6 +185,42 @@ function buildRouteGroups(
   }
 
   return groups
+}
+
+function getImplicitHostedToolsSource(
+  routeTools: string[],
+  modelTools: string[]
+): 'system default (none)' | 'route' | 'model' | 'route + model' {
+  if (modelTools.length > 0) {
+    return routeTools.length > 0 ? 'route + model' : 'model'
+  }
+  return routeTools.length > 0 ? 'route' : 'system default (none)'
+}
+
+function updateWebSearchParameterDefaults(
+  current: AdvancedCustomWebSearchParameterDefaults | undefined,
+  key: 'enable' | 'search_result' | 'search_engine',
+  value: boolean | string | undefined
+): AdvancedCustomWebSearchParameterDefaults {
+  const defaults = { ...current }
+  switch (key) {
+    case 'enable':
+      if (typeof value === 'boolean') defaults.enable = value
+      else delete defaults.enable
+      break
+    case 'search_result':
+      if (typeof value === 'boolean') defaults.search_result = value
+      else delete defaults.search_result
+      break
+    case 'search_engine':
+      if (typeof value === 'string' && value !== '') {
+        defaults.search_engine = value
+      } else {
+        delete defaults.search_engine
+      }
+      break
+  }
+  return defaults
 }
 
 export function AdvancedCustomEditorDialog({
@@ -1174,6 +1213,13 @@ function RouteEditor({
     () => route.converter_options?.responses_tool_model_overrides || [],
     [route.converter_options?.responses_tool_model_overrides]
   )
+  const routeImplicitHostedTools = useMemo(
+    () => route.converter_options?.responses_implicit_hosted_tools || [],
+    [route.converter_options?.responses_implicit_hosted_tools]
+  )
+  const routeWebSearchParameters =
+    route.converter_options?.responses_tool_parameters?.web_search
+
   const configuredModels = useMemo(
     () => new Set(channelModels.map((model) => model.trim()).filter(Boolean)),
     [channelModels]
@@ -1197,6 +1243,49 @@ function RouteEditor({
       converter_options: { ...route.converter_options, ...patch },
     })
   }
+  const setRouteImplicitHostedTool = (capability: string, enabled: boolean) => {
+    const next = new Set(routeImplicitHostedTools)
+    if (enabled) next.add(capability)
+    else next.delete(capability)
+    patchConverterOptions({ responses_implicit_hosted_tools: [...next] })
+  }
+  const setRouteWebSearchMode = (
+    mode: AdvancedCustomResponsesToolMissingOptionsPolicy
+  ) => {
+    patchConverterOptions({
+      responses_tool_parameters: {
+        web_search:
+          mode === 'populate_defaults'
+            ? {
+                when_nested_options_missing: mode,
+                defaults: routeWebSearchParameters?.defaults || {
+                  enable: true,
+                  search_result: true,
+                },
+              }
+            : { when_nested_options_missing: mode },
+      },
+    })
+  }
+  const setRouteWebSearchDefault = (
+    key: 'enable' | 'search_result' | 'search_engine',
+    value: boolean | string | undefined
+  ) => {
+    const defaults = updateWebSearchParameterDefaults(
+      routeWebSearchParameters?.defaults,
+      key,
+      value
+    )
+    patchConverterOptions({
+      responses_tool_parameters: {
+        web_search: {
+          when_nested_options_missing: 'populate_defaults',
+          defaults,
+        },
+      },
+    })
+  }
+
   const setModelToolOverride = (
     index: number,
     patch: Partial<AdvancedCustomResponsesToolModelOverride>
@@ -1224,6 +1313,67 @@ function RouteEditor({
       responses_tools: nextPolicies,
     })
   }
+  const setModelImplicitHostedTool = (
+    index: number,
+    capability: string,
+    enabled: boolean
+  ) => {
+    const next = new Set(
+      modelToolOverrides[index].responses_implicit_hosted_tools || []
+    )
+    if (enabled) next.add(capability)
+    else next.delete(capability)
+    setModelToolOverride(index, {
+      responses_implicit_hosted_tools: [...next],
+    })
+  }
+  const setModelWebSearchMode = (
+    index: number,
+    mode: AdvancedCustomResponsesToolMissingOptionsPolicy | 'inherit'
+  ) => {
+    if (mode === 'inherit') {
+      setModelToolOverride(index, { responses_tool_parameters: undefined })
+      return
+    }
+    const current =
+      modelToolOverrides[index].responses_tool_parameters?.web_search
+    setModelToolOverride(index, {
+      responses_tool_parameters: {
+        web_search:
+          mode === 'populate_defaults'
+            ? {
+                when_nested_options_missing: mode,
+                defaults: current?.defaults || {
+                  enable: true,
+                  search_result: true,
+                },
+              }
+            : { when_nested_options_missing: mode },
+      },
+    })
+  }
+  const setModelWebSearchDefault = (
+    index: number,
+    key: 'enable' | 'search_result' | 'search_engine',
+    value: boolean | string | undefined
+  ) => {
+    const current =
+      modelToolOverrides[index].responses_tool_parameters?.web_search
+    const defaults = updateWebSearchParameterDefaults(
+      current?.defaults,
+      key,
+      value
+    )
+    setModelToolOverride(index, {
+      responses_tool_parameters: {
+        web_search: {
+          when_nested_options_missing: 'populate_defaults',
+          defaults,
+        },
+      },
+    })
+  }
+
   const removeModelToolOverride = (index: number) =>
     patchConverterOptions({
       responses_tool_model_overrides: modelToolOverrides.filter(
@@ -1234,7 +1384,12 @@ function RouteEditor({
     patchConverterOptions({
       responses_tool_model_overrides: [
         ...modelToolOverrides,
-        { models: [], responses_tools: {}, responses_tool_names: [] },
+        {
+          models: [],
+          responses_tools: {},
+          responses_tool_names: [],
+          responses_implicit_hosted_tools: [],
+        },
       ],
     })
   const setNamePolicy = (
@@ -1724,6 +1879,169 @@ function RouteEditor({
                 </SelectContent>
               </Select>
             </div>
+            <div className='grid gap-3 rounded border p-3 lg:grid-cols-2'>
+              <div className='space-y-2'>
+                <div>
+                  <p className='text-xs font-medium'>
+                    {t('Implicit hosted tools (route)')}
+                  </p>
+                  <p className='text-muted-foreground text-xs'>
+                    {t(
+                      'Declare hosted capabilities supplied by the upstream even when the client request omits them.'
+                    )}
+                  </p>
+                </div>
+                <div className='space-y-2'>
+                  {ADVANCED_CUSTOM_IMPLICIT_HOSTED_TOOL_OPTIONS.map(
+                    (option) => (
+                      <label
+                        key={option.value}
+                        className='flex items-start gap-2 text-sm'
+                      >
+                        <Checkbox
+                          checked={routeImplicitHostedTools.includes(
+                            option.value
+                          )}
+                          onCheckedChange={(value) =>
+                            setRouteImplicitHostedTool(
+                              option.value,
+                              value === true
+                            )
+                          }
+                        />
+                        <span className='min-w-0'>
+                          <span className='block'>{t(option.label)}</span>
+                          <span className='text-muted-foreground block text-xs'>
+                            {t(option.description)}
+                          </span>
+                        </span>
+                      </label>
+                    )
+                  )}
+                </div>
+                <p className='text-muted-foreground text-xs'>
+                  {t('Effective source')}:{' '}
+                  {routeImplicitHostedTools.length > 0
+                    ? t('route')
+                    : t('system default (none)')}
+                </p>
+              </div>
+              {!isNativeConverter ? (
+                <div className='space-y-2 rounded-md border p-3'>
+                  <div className='space-y-1'>
+                    <p className='text-sm font-medium'>
+                      {t(
+                        'Web search parameter compatibility (Responses to Chat)'
+                      )}
+                    </p>
+                    <p className='text-muted-foreground text-xs'>
+                      {t(
+                        'Use this when a Chat-compatible upstream rejects web_search tools whose nested options are missing or empty.'
+                      )}
+                    </p>
+                  </div>
+                  <FieldBlock
+                    label={t(
+                      'When nested web_search options are missing or empty'
+                    )}
+                    labelClassName='text-xs'
+                  >
+                    <Select
+                      value={
+                        routeWebSearchParameters?.when_nested_options_missing ||
+                        'preserve'
+                      }
+                      onValueChange={(value) =>
+                        setRouteWebSearchMode(
+                          value as AdvancedCustomResponsesToolMissingOptionsPolicy
+                        )
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value='preserve'>
+                          {t('Pass through unchanged')}
+                        </SelectItem>
+                        <SelectItem value='populate_defaults'>
+                          {t('Fill configured defaults')}
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </FieldBlock>
+                  {routeWebSearchParameters?.when_nested_options_missing ===
+                  'populate_defaults' ? (
+                    <div className='grid gap-2 sm:grid-cols-2'>
+                      {(['enable', 'search_result'] as const).map((key) => (
+                        <FieldBlock
+                          key={key}
+                          label={key}
+                          labelClassName='text-xs'
+                        >
+                          <Select
+                            value={
+                              typeof routeWebSearchParameters.defaults?.[
+                                key
+                              ] === 'boolean'
+                                ? String(
+                                    routeWebSearchParameters.defaults?.[key]
+                                  )
+                                : 'unset'
+                            }
+                            onValueChange={(value) =>
+                              setRouteWebSearchDefault(
+                                key,
+                                value === 'unset' ? undefined : value === 'true'
+                              )
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value='unset'>
+                                {t('Unset')}
+                              </SelectItem>
+                              <SelectItem value='true'>true</SelectItem>
+                              <SelectItem value='false'>false</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </FieldBlock>
+                      ))}
+                      <FieldBlock
+                        label='search_engine'
+                        labelClassName='text-xs sm:col-span-2'
+                      >
+                        <Input
+                          value={
+                            routeWebSearchParameters.defaults?.search_engine ||
+                            ''
+                          }
+                          onChange={(event) =>
+                            setRouteWebSearchDefault(
+                              'search_engine',
+                              event.target.value
+                            )
+                          }
+                          placeholder={t('Optional')}
+                        />
+                      </FieldBlock>
+                    </div>
+                  ) : null}
+                  <p className='text-muted-foreground text-xs'>
+                    {t(
+                      'Common GLM Chat defaults are enable=true and search_result=true. Select fill defaults to apply them.'
+                    )}
+                  </p>
+                  <p className='text-muted-foreground text-xs'>
+                    {t(
+                      'Only applies during Responses to Chat conversion. Explicit client values always take priority.'
+                    )}
+                  </p>
+                </div>
+              ) : null}
+            </div>
             <div className='space-y-2'>
               {staleOverrideModels.length > 0 ? (
                 <Alert variant='destructive'>
@@ -1766,6 +2084,173 @@ function RouteEditor({
                       <Trash2 className='h-4 w-4' />
                       <span className='sr-only'>{t('Delete')}</span>
                     </Button>
+                  </div>
+                  <div className='bg-muted/30 grid gap-3 rounded p-2 lg:grid-cols-2'>
+                    <div className='space-y-2'>
+                      <p className='text-xs font-medium'>
+                        {t('Implicit hosted tools (model)')}
+                      </p>
+                      {ADVANCED_CUSTOM_IMPLICIT_HOSTED_TOOL_OPTIONS.map(
+                        (option) => (
+                          <label
+                            key={option.value}
+                            className='flex items-center gap-2 text-sm'
+                          >
+                            <Checkbox
+                              checked={(
+                                override.responses_implicit_hosted_tools || []
+                              ).includes(option.value)}
+                              onCheckedChange={(value) =>
+                                setModelImplicitHostedTool(
+                                  overrideIndex,
+                                  option.value,
+                                  value === true
+                                )
+                              }
+                            />
+                            <span>{t(option.label)}</span>
+                          </label>
+                        )
+                      )}
+                      <p className='text-muted-foreground text-xs'>
+                        {t('Effective source')}:{' '}
+                        {t(
+                          getImplicitHostedToolsSource(
+                            routeImplicitHostedTools,
+                            override.responses_implicit_hosted_tools || []
+                          )
+                        )}
+                      </p>
+                    </div>
+                    {!isNativeConverter ? (
+                      <div className='space-y-2 rounded-md border p-3'>
+                        <div className='space-y-1'>
+                          <p className='text-xs font-medium'>
+                            {t('Web search parameter compatibility (model)')}
+                          </p>
+                          <p className='text-muted-foreground text-xs'>
+                            {t(
+                              'This model rule overrides the route setting only for models selected above.'
+                            )}
+                          </p>
+                        </div>
+                        <FieldBlock
+                          label={t(
+                            'When nested web_search options are missing or empty'
+                          )}
+                          labelClassName='text-xs'
+                        >
+                          <Select
+                            value={
+                              override.responses_tool_parameters?.web_search
+                                ?.when_nested_options_missing || 'inherit'
+                            }
+                            onValueChange={(value) =>
+                              setModelWebSearchMode(
+                                overrideIndex,
+                                value as
+                                  | AdvancedCustomResponsesToolMissingOptionsPolicy
+                                  | 'inherit'
+                              )
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value='inherit'>
+                                {t('Inherit route setting')}
+                              </SelectItem>
+                              <SelectItem value='preserve'>
+                                {t('Pass through unchanged')}
+                              </SelectItem>
+                              <SelectItem value='populate_defaults'>
+                                {t('Fill configured defaults')}
+                              </SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </FieldBlock>
+                        {override.responses_tool_parameters?.web_search
+                          ?.when_nested_options_missing ===
+                        'populate_defaults' ? (
+                          <div className='grid gap-2 sm:grid-cols-2'>
+                            {(['enable', 'search_result'] as const).map(
+                              (key) => (
+                                <FieldBlock
+                                  key={key}
+                                  label={key}
+                                  labelClassName='text-xs'
+                                >
+                                  <Select
+                                    value={
+                                      typeof override.responses_tool_parameters
+                                        ?.web_search?.defaults?.[key] ===
+                                      'boolean'
+                                        ? String(
+                                            override.responses_tool_parameters
+                                              ?.web_search?.defaults?.[key]
+                                          )
+                                        : 'unset'
+                                    }
+                                    onValueChange={(value) =>
+                                      setModelWebSearchDefault(
+                                        overrideIndex,
+                                        key,
+                                        value === 'unset'
+                                          ? undefined
+                                          : value === 'true'
+                                      )
+                                    }
+                                  >
+                                    <SelectTrigger>
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value='unset'>
+                                        {t('Unset')}
+                                      </SelectItem>
+                                      <SelectItem value='true'>true</SelectItem>
+                                      <SelectItem value='false'>
+                                        false
+                                      </SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                </FieldBlock>
+                              )
+                            )}
+                            <FieldBlock
+                              label='search_engine'
+                              labelClassName='text-xs sm:col-span-2'
+                            >
+                              <Input
+                                value={
+                                  override.responses_tool_parameters?.web_search
+                                    ?.defaults?.search_engine || ''
+                                }
+                                onChange={(event) =>
+                                  setModelWebSearchDefault(
+                                    overrideIndex,
+                                    'search_engine',
+                                    event.target.value
+                                  )
+                                }
+                                placeholder={t('Optional')}
+                              />
+                            </FieldBlock>
+                          </div>
+                        ) : null}
+                        <p className='text-muted-foreground text-xs'>
+                          {t(
+                            'Common GLM Chat defaults are enable=true and search_result=true. Select fill defaults to apply them.'
+                          )}
+                        </p>
+                        <p className='text-muted-foreground text-xs'>
+                          {t(
+                            'Only applies during Responses to Chat conversion. Explicit client values always take priority.'
+                          )}
+                        </p>
+                      </div>
+                    ) : null}
                   </div>
                   <div className='grid gap-2 sm:grid-cols-2 lg:grid-cols-3'>
                     {responseToolPolicyFields.map((field) => (

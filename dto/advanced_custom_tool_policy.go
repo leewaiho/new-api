@@ -11,6 +11,9 @@ const (
 	AdvancedCustomResponsesToolPolicySourceModelToolType = "model_tool_type"
 	AdvancedCustomResponsesToolPolicySourceRoute         = "route"
 	AdvancedCustomResponsesToolPolicySourceSystemDefault = "system_default"
+
+	AdvancedCustomResponsesToolMissingOptionsPreserve         = "preserve"
+	AdvancedCustomResponsesToolMissingOptionsPopulateDefaults = "populate_defaults"
 )
 
 type AdvancedCustomResponsesToolPolicyResolution struct {
@@ -69,6 +72,24 @@ func normalizeAdvancedCustomResponsesHostedCapability(capability string) string 
 	default:
 		return strings.TrimSpace(capability)
 	}
+}
+
+func ResolveAdvancedCustomResponsesWebSearchParameters(
+	options *AdvancedCustomConverterOptions,
+	requestedModel string,
+	upstreamModel string,
+) *AdvancedCustomWebSearchParameterCompatibility {
+	if options == nil {
+		return nil
+	}
+	if override, _, ok := matchAdvancedCustomResponsesToolModelOverride(options, requestedModel, upstreamModel); ok &&
+		override.ResponsesToolParameters != nil && override.ResponsesToolParameters.WebSearch != nil {
+		return override.ResponsesToolParameters.WebSearch
+	}
+	if options.ResponsesToolParameters == nil {
+		return nil
+	}
+	return options.ResponsesToolParameters.WebSearch
 }
 
 func ResolveAdvancedCustomResponsesToolPolicy(
@@ -294,6 +315,30 @@ func validateAdvancedCustomResponsesImplicitHostedConflictPolicy(index int, opti
 	return nil
 }
 
+func validateAdvancedCustomResponsesToolParameters(index int, field string, parameters *AdvancedCustomResponsesToolParameters) error {
+	if parameters == nil {
+		return nil
+	}
+	if parameters.WebSearch == nil {
+		return fmt.Errorf("advanced_custom.advanced_routes[%d].%s requires web_search", index, field)
+	}
+	webSearch := parameters.WebSearch
+	mode := strings.TrimSpace(webSearch.WhenNestedOptionsMissing)
+	switch mode {
+	case AdvancedCustomResponsesToolMissingOptionsPreserve:
+		if webSearch.Defaults.Enable != nil || webSearch.Defaults.SearchResult != nil || strings.TrimSpace(webSearch.Defaults.SearchEngine) != "" {
+			return fmt.Errorf("advanced_custom.advanced_routes[%d].%s.web_search.defaults requires populate_defaults", index, field)
+		}
+	case AdvancedCustomResponsesToolMissingOptionsPopulateDefaults:
+		if webSearch.Defaults.Enable == nil && webSearch.Defaults.SearchResult == nil && strings.TrimSpace(webSearch.Defaults.SearchEngine) == "" {
+			return fmt.Errorf("advanced_custom.advanced_routes[%d].%s.web_search.defaults must not be empty", index, field)
+		}
+	default:
+		return fmt.Errorf("advanced_custom.advanced_routes[%d].%s.web_search.when_nested_options_missing is invalid: %s", index, field, mode)
+	}
+	return nil
+}
+
 func validateAdvancedCustomResponsesToolModelOverrides(index int, allowFlatten bool, options *AdvancedCustomConverterOptions) error {
 	if options == nil || len(options.ResponsesToolModelOverrides) == 0 {
 		return nil
@@ -314,8 +359,8 @@ func validateAdvancedCustomResponsesToolModelOverrides(index int, allowFlatten b
 			seenModels[model] = struct{}{}
 		}
 
-		if override.ResponsesTools == nil && len(override.ToolNames) == 0 && len(override.ResponsesImplicitHostedTools) == 0 {
-			return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options.responses_tool_model_overrides[%d] requires a tool policy or implicit hosted tool", index, overrideIndex)
+		if override.ResponsesTools == nil && len(override.ToolNames) == 0 && len(override.ResponsesImplicitHostedTools) == 0 && override.ResponsesToolParameters == nil {
+			return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options.responses_tool_model_overrides[%d] requires a tool policy, implicit hosted tool, or tool parameter rule", index, overrideIndex)
 		}
 		if err := validateAdvancedCustomResponsesImplicitHostedTools(
 			index,
@@ -352,9 +397,17 @@ func validateAdvancedCustomResponsesToolModelOverrides(index int, allowFlatten b
 					return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options.responses_tool_model_overrides[%d].responses_tools.%s must differ from the route policy", index, overrideIndex, field.name)
 				}
 			}
-			if !configured && len(override.ToolNames) == 0 && len(override.ResponsesImplicitHostedTools) == 0 {
-				return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options.responses_tool_model_overrides[%d] requires a non-empty tool policy or implicit hosted tool", index, overrideIndex)
+			if !configured && len(override.ToolNames) == 0 && len(override.ResponsesImplicitHostedTools) == 0 && override.ResponsesToolParameters == nil {
+				return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options.responses_tool_model_overrides[%d] requires a non-empty tool policy, implicit hosted tool, or tool parameter rule", index, overrideIndex)
 			}
+		}
+
+		if err := validateAdvancedCustomResponsesToolParameters(
+			index,
+			fmt.Sprintf("converter_options.responses_tool_model_overrides[%d].responses_tool_parameters", overrideIndex),
+			override.ResponsesToolParameters,
+		); err != nil {
+			return err
 		}
 
 		seenToolNames := make(map[string]struct{})
