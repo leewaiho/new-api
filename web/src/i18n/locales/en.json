@@ -5326,13 +5326,11 @@
     "Implicit hosted tools (model)": "Implicit hosted tools (model)",
     "Declare hosted capabilities supplied by the upstream even when the client request omits them.": "Declare hosted capabilities supplied by the upstream even when the client request omits them.",
     "Image generation": "Image generation",
-    "Web search": "Web search",
     "The upstream provides hosted image generation even when it is not listed in the request.": "The upstream provides hosted image generation even when it is not listed in the request.",
     "The upstream provides hosted web search even when it is not listed in the request.": "The upstream provides hosted web search even when it is not listed in the request.",
     "Effective source": "Effective source",
     "system default (none)": "system default (none)",
     "route + model": "route + model",
-    "model": "model",
     "Web search missing options": "Web search missing options",
     "Preserve missing options": "Preserve missing options",
     "Populate configured defaults": "Populate configured defaults",
@@ -5370,6 +5368,18 @@
     "Selected models": "Selected models",
     "none": "none",
     "Recommended GLM values are enable=true and search_result=true. Use the button above to apply both.": "Recommended GLM values are enable=true and search_result=true. Use the button above to apply both.",
-    "The model override takes priority over the route setting, but explicit client values still take priority over both.": "The model override takes priority over the route setting, but explicit client values still take priority over both."
+    "The model override takes priority over the route setting, but explicit client values still take priority over both.": "The model override takes priority over the route setting, but explicit client values still take priority over both.",
+    "Web search schema compatibility (Responses to Chat)": "Web search schema compatibility (Responses to Chat)",
+    "Repairs the Chat request schema when a Responses web_search tool is converted without required nested parameters.": "Repairs the Chat request schema when a Responses web_search tool is converted without required nested parameters.",
+    "Schema compatibility does not provide or verify actual web search capability.": "Schema compatibility does not provide or verify actual web search capability.",
+    "For GLM CodingPlan, drop the hosted web_search tool and use a client-side search function such as the SearXNG MCP.": "For GLM CodingPlan, drop the hosted web_search tool and use a client-side search function such as the SearXNG MCP.",
+    "Use client-side search fallback": "Use client-side search fallback",
+    "Hosted web_search is dropped; client function tools are preserved": "Hosted web_search is dropped; client function tools are preserved",
+    "Enabled: schema-only parameter filling": "Enabled: schema-only parameter filling",
+    "Scope: this route and all matching models. Add a model override below when only specific models need schema compatibility or a client-side fallback.": "Scope: this route and all matching models. Add a model override below when only specific models need schema compatibility or a client-side fallback.",
+    "Web search schema compatibility (model override)": "Web search schema compatibility (model override)",
+    "Use this override when only the selected models require schema compatibility or must drop hosted web_search in favor of a client-side function.": "Use this override when only the selected models require schema compatibility or must drop hosted web_search in favor of a client-side function.",
+    "Use client-side search fallback for these models": "Use client-side search fallback for these models",
+    "Only enable parameter filling after verifying that the upstream performs real web search. Filling fields alone only repairs the request schema.": "Only enable parameter filling after verifying that the upstream performs real web search. Filling fields alone only repairs the request schema."
   }
 }
