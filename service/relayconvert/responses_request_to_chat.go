@@ -480,7 +480,7 @@ func responsesToolPolicyForType(policies ResponsesToolPolicies, toolType string)
 		return policies.Namespace
 	case "custom":
 		return policies.Custom
-	case "web_search":
+	case "web_search", "web_search_preview":
 		return policies.WebSearch
 	case "tool_search":
 		return policies.ToolSearch
@@ -537,6 +537,12 @@ func responsesNamespaceToolToChat(tool map[string]any, mappings map[string]dto.R
 }
 
 func responsesRawToolToChat(toolType string, tool map[string]any) (dto.ToolCallRequest, error) {
+	// Preserve explicit Chat-compatible web_search options. Vendor-specific
+	// defaults are applied later by the Advanced Custom route configuration.
+	if toolType == "web_search" || toolType == "web_search_preview" {
+		webSearch, _ := tool["web_search"].(map[string]any)
+		return dto.ToolCallRequest{Type: "web_search", WebSearch: webSearch}, nil
+	}
 	rawTool, err := common.Marshal(tool)
 	if err != nil {
 		return dto.ToolCallRequest{}, fmt.Errorf("invalid responses tool %q: %w", toolType, err)

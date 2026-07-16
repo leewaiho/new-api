@@ -2,6 +2,7 @@ package relayconvert
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -566,4 +567,68 @@ func TestApplyResponsesToolConflictPolicyDeduplicatesAlias(t *testing.T) {
 		require.Len(t, got, 2, "unrelated function tool must be preserved")
 		require.Empty(t, decisions)
 	})
+}
+
+func TestResponsesRequestToolsToChatPreservesEmptyWebSearchForChatUpstream(t *testing.T) {
+	tools := mustRawMessage(t, []map[string]any{{"type": "web_search"}, {"type": "web_search_preview"}})
+	converted, err := responsesRequestToolsToChat(tools, ResponsesRequestToChatOptions{
+		ToolPolicies: ResponsesToolPolicies{WebSearch: ResponsesToolPolicyPreserve},
+	})
+	require.NoError(t, err)
+	require.Len(t, converted, 2)
+	for _, tool := range converted {
+		require.Equal(t, "web_search", tool.Type)
+		require.Empty(t, tool.WebSearch)
+		require.Empty(t, tool.Custom)
+	}
+}
+
+func TestResponsesRequestToolsToChatPreservesExplicitWebSearchOptions(t *testing.T) {
+	tools := mustRawMessage(t, []map[string]any{{
+		"type":       "web_search",
+		"web_search": map[string]any{"enable": true, "search_result": false, "search_engine": "search_std"},
+	}})
+	converted, err := responsesRequestToolsToChat(tools, ResponsesRequestToChatOptions{
+		ToolPolicies: ResponsesToolPolicies{WebSearch: ResponsesToolPolicyPreserve},
+	})
+	require.NoError(t, err)
+	require.Len(t, converted, 1)
+	require.Equal(t, false, converted[0].WebSearch["search_result"])
+	require.Equal(t, "search_std", converted[0].WebSearch["search_engine"])
+}
+
+func TestResponsesRequestToChatCompletionsRequestLeavesWebSearchOptionsUnset(t *testing.T) {
+	request, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
+		Model: "glm-5.2",
+		Input: mustRawMessage(t, "search for a fact"),
+		Tools: mustRawMessage(t, []map[string]any{{"type": "web_search"}}),
+	}, ResponsesRequestToChatOptions{ToolPolicies: ResponsesToolPolicies{WebSearch: ResponsesToolPolicyPreserve}})
+	require.NoError(t, err)
+	encoded, err := common.Marshal(request)
+	require.NoError(t, err)
+	require.False(t, gjson.GetBytes(encoded, "tools.0.web_search").Exists())
+	require.False(t, gjson.GetBytes(encoded, "tools.0.custom").Exists())
+}
+
+func TestResponsesRequestToChatCompletionsRequestLeavesWebSearchOptionsUnsetAtIndex297(t *testing.T) {
+	tools := make([]map[string]any, 298)
+	for i := 0; i < 297; i++ {
+		tools[i] = map[string]any{
+			"type":       "function",
+			"name":       fmt.Sprintf("tool_%d", i),
+			"parameters": map[string]any{"type": "object"},
+		}
+	}
+	tools[297] = map[string]any{"type": "web_search"}
+
+	request, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
+		Model: "glm-5.2",
+		Input: mustRawMessage(t, "search for a fact"),
+		Tools: mustRawMessage(t, tools),
+	}, ResponsesRequestToChatOptions{ToolPolicies: ResponsesToolPolicies{WebSearch: ResponsesToolPolicyPreserve}})
+	require.NoError(t, err)
+	encoded, err := common.Marshal(request)
+	require.NoError(t, err)
+	require.Equal(t, "web_search", gjson.GetBytes(encoded, "tools.297.type").String())
+	require.False(t, gjson.GetBytes(encoded, "tools.297.web_search").Exists())
 }
