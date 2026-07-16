@@ -782,6 +782,18 @@ function RouteEditor({
   )
   const routeWebSearchParameters =
     route.converter_options?.responses_tool_parameters?.web_search
+  const routeWebSearchStatus = (() => {
+    if (route.converter_options?.responses_tools?.web_search === 'drop') {
+      return 'Hosted web_search is dropped; client function tools are preserved'
+    }
+    if (
+      routeWebSearchParameters?.when_nested_options_missing ===
+      'populate_defaults'
+    ) {
+      return 'Enabled: schema-only parameter filling'
+    }
+    return 'Disabled: pass through unchanged'
+  })()
 
   const configuredModels = useMemo(
     () => new Set(channelModels.map((model) => model.trim()).filter(Boolean)),
@@ -830,14 +842,13 @@ function RouteEditor({
       },
     })
   }
-  const applyRouteGlmWebSearchDefaults = () => {
+  const applyRouteClientWebSearchFallback = () => {
     patchConverterOptions({
-      responses_tool_parameters: {
-        web_search: {
-          when_nested_options_missing: 'populate_defaults',
-          defaults: { enable: true, search_result: true },
-        },
+      responses_tools: {
+        ...route.converter_options?.responses_tools,
+        web_search: 'drop',
       },
+      responses_tool_parameters: undefined,
     })
   }
   const setRouteWebSearchDefault = (
@@ -925,14 +936,14 @@ function RouteEditor({
       },
     })
   }
-  const applyModelGlmWebSearchDefaults = (index: number) => {
+  const applyModelClientWebSearchFallback = (index: number) => {
+    const override = modelToolOverrides[index]
     setModelToolOverride(index, {
-      responses_tool_parameters: {
-        web_search: {
-          when_nested_options_missing: 'populate_defaults',
-          defaults: { enable: true, search_result: true },
-        },
+      responses_tools: {
+        ...override.responses_tools,
+        web_search: 'drop',
       },
+      responses_tool_parameters: undefined,
     })
   }
   const setModelWebSearchDefault = (
@@ -1437,13 +1448,11 @@ function RouteEditor({
                 <div className='space-y-3 rounded-md border p-3'>
                   <div className='space-y-1'>
                     <p className='text-sm font-medium'>
-                      {t(
-                        'Web search empty-parameter compatibility (GLM / Responses to Chat)'
-                      )}
+                      {t('Web search schema compatibility (Responses to Chat)')}
                     </p>
                     <p className='text-muted-foreground text-xs'>
                       {t(
-                        'Fixes upstream errors when a Responses web_search tool is converted to Chat format without the required nested parameters.'
+                        'Repairs the Chat request schema when a Responses web_search tool is converted without required nested parameters.'
                       )}
                     </p>
                   </div>
@@ -1466,6 +1475,16 @@ function RouteEditor({
                           'This transformation runs only when nested options are missing or empty. Explicit client values are never overwritten.'
                         )}
                       </p>
+                      <p className='font-medium'>
+                        {t(
+                          'Schema compatibility does not provide or verify actual web search capability.'
+                        )}
+                      </p>
+                      <p>
+                        {t(
+                          'For GLM CodingPlan, drop the hosted web_search tool and use a client-side search function such as the SearXNG MCP.'
+                        )}
+                      </p>
                     </AlertDescription>
                   </Alert>
                   <div className='flex flex-wrap items-center gap-2'>
@@ -1473,16 +1492,12 @@ function RouteEditor({
                       type='button'
                       variant='outline'
                       size='sm'
-                      onClick={applyRouteGlmWebSearchDefaults}
+                      onClick={applyRouteClientWebSearchFallback}
                     >
-                      {t('Apply recommended GLM defaults')}
+                      {t('Use client-side search fallback')}
                     </Button>
                     <span className='text-muted-foreground text-xs'>
-                      {t('Current status')}:{' '}
-                      {routeWebSearchParameters?.when_nested_options_missing ===
-                      'populate_defaults'
-                        ? t('Enabled: fill missing parameters')
-                        : t('Disabled: pass through unchanged')}
+                      {t('Current status')}: {t(routeWebSearchStatus)}
                     </span>
                   </div>
                   <FieldBlock
@@ -1580,7 +1595,7 @@ function RouteEditor({
                   ) : null}
                   <p className='text-muted-foreground text-xs'>
                     {t(
-                      'Scope: this route and all matching models. Add a model override below when only specific GLM models need the compatibility behavior.'
+                      'Scope: this route and all matching models. Add a model override below when only specific models need schema compatibility or a client-side fallback.'
                     )}
                   </p>
                 </div>
@@ -1671,12 +1686,12 @@ function RouteEditor({
                         <div className='space-y-1'>
                           <p className='text-xs font-medium'>
                             {t(
-                              'Web search empty-parameter compatibility (model override)'
+                              'Web search schema compatibility (model override)'
                             )}
                           </p>
                           <p className='text-muted-foreground text-xs'>
                             {t(
-                              'Use this override when only the models selected above require GLM-style web_search parameters.'
+                              'Use this override when only the selected models require schema compatibility or must drop hosted web_search in favor of a client-side function.'
                             )}
                           </p>
                         </div>
@@ -1686,11 +1701,11 @@ function RouteEditor({
                             variant='outline'
                             size='sm'
                             onClick={() =>
-                              applyModelGlmWebSearchDefaults(overrideIndex)
+                              applyModelClientWebSearchFallback(overrideIndex)
                             }
                           >
                             {t(
-                              'Apply recommended GLM defaults to these models'
+                              'Use client-side search fallback for these models'
                             )}
                           </Button>
                           <span className='text-muted-foreground text-xs'>
@@ -1811,7 +1826,7 @@ function RouteEditor({
                         ) : null}
                         <p className='text-muted-foreground text-xs'>
                           {t(
-                            'Recommended GLM values are enable=true and search_result=true. Use the button above to apply both.'
+                            'Only enable parameter filling after verifying that the upstream performs real web search. Filling fields alone only repairs the request schema.'
                           )}
                         </p>
                         <p className='text-muted-foreground text-xs'>
