@@ -10,19 +10,23 @@
 2. [CHANNEL_PROTOCOLS.md](./CHANNEL_PROTOCOLS.md) — 二开核心：「同模型名多协议路由」机制与扩展点
 3. [FORK_MAINTENANCE.md](./FORK_MAINTENANCE.md) — 怎么从 upstream 同步、rebase 冲突处理、GHCR 发版
 4. [MIGRATE_TO_ADVANCED_CUSTOM.md](./MIGRATE_TO_ADVANCED_CUSTOM.md) — 把"同供应商 Claude 渠道 + OpenAI 渠道"合并成 1 个 Advanced Custom 渠道
+5. [NEWAPI_IMAGE_GEN_HANDOFF_20260715.md](./NEWAPI_IMAGE_GEN_HANDOFF_20260715.md) — image_gen / image_generation 语义冲突修复与归档状态快照
+6. [NEWAPI_RESPONSES_TOOL_COMPATIBILITY_HANDOFF_20260715.md](./NEWAPI_RESPONSES_TOOL_COMPATIBILITY_HANDOFF_20260715.md) — implicit hosted tools、web_search 参数配置化与剩余任务
 
 ## 何时看哪份
 
-| 你要做什么 | 先看 |
-|---|---|
-| 改 / 加一个渠道（channel） | FORK_CHANGES → CHANNEL_PROTOCOLS |
-| 改 / 加一个模型价格或计费规则 | FORK_CHANGES（确认没碰计费路径） |
-| 修请求路由 / URL 拼接 bug | CHANNEL_PROTOCOLS |
-| 跟 upstream 同步、rebase | FORK_MAINTENANCE |
-| 发版、打 tag、推 GHCR | FORK_MAINTENANCE |
-| 加新 API 协议类型 | CHANNEL_PROTOCOLS（扩展点章节） |
-| 把 N 个 Claude/OpenAI 渠道合并成 1 个 Advanced Custom | [MIGRATE_TO_ADVANCED_CUSTOM.md](./MIGRATE_TO_ADVANCED_CUSTOM.md) |
-| 看上游通用约定（代码风格、JSON、DB、i18n、PR 流程） | 仓库根 [AGENTS.md](../../AGENTS.md) |
+| 你要做什么                                            | 先看                                                                                                                 |
+| ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| 改 / 加一个渠道（channel）                            | FORK_CHANGES → CHANNEL_PROTOCOLS                                                                                     |
+| 改 / 加一个模型价格或计费规则                         | FORK_CHANGES（确认没碰计费路径）                                                                                     |
+| 修请求路由 / URL 拼接 bug                             | CHANNEL_PROTOCOLS                                                                                                    |
+| 跟 upstream 同步、rebase                              | FORK_MAINTENANCE                                                                                                     |
+| 发版、打 tag、推 GHCR                                 | FORK_MAINTENANCE                                                                                                     |
+| 加新 API 协议类型                                     | CHANNEL_PROTOCOLS（扩展点章节）                                                                                      |
+| 把 N 个 Claude/OpenAI 渠道合并成 1 个 Advanced Custom | [MIGRATE_TO_ADVANCED_CUSTOM.md](./MIGRATE_TO_ADVANCED_CUSTOM.md)                                                     |
+| 排查 image_gen hosted/function 冲突                   | [NEWAPI_IMAGE_GEN_HANDOFF_20260715.md](./NEWAPI_IMAGE_GEN_HANDOFF_20260715.md)                                       |
+| 接手 Responses Tool Compatibility 配置化              | [NEWAPI_RESPONSES_TOOL_COMPATIBILITY_HANDOFF_20260715.md](./NEWAPI_RESPONSES_TOOL_COMPATIBILITY_HANDOFF_20260715.md) |
+| 看上游通用约定（代码风格、JSON、DB、i18n、PR 流程）   | 仓库根 [AGENTS.md](../../AGENTS.md)                                                                                  |
 
 ## 关键事实速记
 

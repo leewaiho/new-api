@@ -53,6 +53,7 @@ import { cn } from '@/lib/utils'
 import {
   ADVANCED_CUSTOM_AUTH_MODE_OPTIONS,
   ADVANCED_CUSTOM_CONVERTER_OPTIONS,
+  ADVANCED_CUSTOM_IMPLICIT_HOSTED_TOOL_OPTIONS,
   ADVANCED_CUSTOM_INCOMING_PATH_OPTIONS,
   ADVANCED_CUSTOM_RESPONSES_TOOL_POLICY_OPTIONS,
   ADVANCED_CUSTOM_RESPONSES_TOOLS_MODE_OPTIONS,
@@ -67,12 +68,16 @@ import {
   getAdvancedCustomIncomingPathLabel,
   ADVANCED_CUSTOM_RESPONSES_DROP_FIELDS,
   type AdvancedCustomResponsesDropField,
+  type AdvancedCustomResponsesToolType,
   getAdvancedCustomTemplateConfig,
   getAdvancedCustomUpstreamPathPlaceholder,
   getDefaultAdvancedCustomIncomingPath,
   isAdvancedCustomIncomingPathAllowed,
+  mergeAdvancedCustomRouteCompatibilityConfig,
   normalizeAdvancedCustomConfig,
   parseAdvancedCustomConfig,
+  resolveAdvancedCustomResponsesToolPolicy,
+  responsesToolsFromMode,
   stringifyAdvancedCustomConfig,
   validateAdvancedCustomConfig,
 } from '../../lib/advanced-custom'
@@ -80,15 +85,22 @@ import type {
   AdvancedCustomAuthType,
   AdvancedCustomConfig,
   AdvancedCustomConverter,
+  AdvancedCustomResponsesToolConflictPolicy,
+  AdvancedCustomResponsesToolMissingOptionsPolicy,
+  AdvancedCustomResponsesToolModelOverride,
+  AdvancedCustomWebSearchParameterDefaults,
+  AdvancedCustomResponsesToolNamePolicy,
   AdvancedCustomResponsesToolPolicy,
   AdvancedCustomResponsesToolsMode,
-  AdvancedCustomResponsesToolsOptions,
   AdvancedCustomRoute,
 } from '../../types'
+import { ToolCompatibilityEvents } from '../tool-compatibility-events'
 
 type AdvancedCustomEditorDialogProps = {
   open: boolean
   value: string
+  channelId?: number
+  channelModels?: string[]
   onOpenChange: (open: boolean) => void
   onSave: (value: string) => void
 }
@@ -100,6 +112,8 @@ const longSelectItemClass =
   'items-start py-2 [&_[data-slot=select-item-text]]:min-w-0 [&_[data-slot=select-item-text]]:shrink [&_[data-slot=select-item-text]]:whitespace-normal'
 const routeEditorGridClassName =
   'lg:grid-cols-[7rem_minmax(0,1.45fr)_minmax(0,1.35fr)_minmax(0,1fr)_minmax(0,0.85fr)_2rem]'
+const responseToolPolicyGridClassName =
+  'lg:grid-cols-[7rem_repeat(6,minmax(0,1fr))]'
 const upstreamPathDescriptionKey =
   'Use a path to append it to the channel Base URL, or enter a full URL to override the Base URL for this route.'
 
@@ -112,6 +126,42 @@ function getOptionLabel(
 
 function modelFetchURLsToText(urls: string[] | undefined): string {
   return (urls || []).join('\n')
+}
+
+function getImplicitHostedToolsSource(
+  routeTools: string[],
+  modelTools: string[]
+): 'system default (none)' | 'route' | 'model' | 'route + model' {
+  if (modelTools.length > 0) {
+    return routeTools.length > 0 ? 'route + model' : 'model'
+  }
+  return routeTools.length > 0 ? 'route' : 'system default (none)'
+}
+
+function updateWebSearchParameterDefaults(
+  current: AdvancedCustomWebSearchParameterDefaults | undefined,
+  key: 'enable' | 'search_result' | 'search_engine',
+  value: boolean | string | undefined
+): AdvancedCustomWebSearchParameterDefaults {
+  const defaults = { ...current }
+  switch (key) {
+    case 'enable':
+      if (typeof value === 'boolean') defaults.enable = value
+      else delete defaults.enable
+      break
+    case 'search_result':
+      if (typeof value === 'boolean') defaults.search_result = value
+      else delete defaults.search_result
+      break
+    case 'search_engine':
+      if (typeof value === 'string' && value !== '') {
+        defaults.search_engine = value
+      } else {
+        delete defaults.search_engine
+      }
+      break
+  }
+  return defaults
 }
 
 function textToModelFetchURLs(value: string): string[] {
@@ -128,6 +178,8 @@ function textToModelFetchURLs(value: string): string[] {
 export function AdvancedCustomEditorDialog({
   open,
   value,
+  channelId,
+  channelModels,
   onOpenChange,
   onSave,
 }: AdvancedCustomEditorDialogProps) {
@@ -291,6 +343,7 @@ export function AdvancedCustomEditorDialog({
       const base = normalizeAdvancedCustomConfig(baseConfig)
       const template = normalizeAdvancedCustomConfig(templateConfig)
       nextConfig = {
+        ...base,
         ...(base.model_fetch_urls?.length
           ? { model_fetch_urls: base.model_fetch_urls }
           : {}),
@@ -436,7 +489,9 @@ export function AdvancedCustomEditorDialog({
             onApply={(generatedConfig) => {
               const normalized = normalizeAdvancedCustomConfig(generatedConfig)
               setConfig(normalized)
-              setRouteKeys(createRouteKeys(normalized.advanced_routes?.length || 0))
+              setRouteKeys(
+                createRouteKeys(normalized.advanced_routes?.length || 0)
+              )
               toast.success(t('Quick setup applied'))
             }}
           />
@@ -481,7 +536,9 @@ export function AdvancedCustomEditorDialog({
               className='min-h-20 font-mono text-xs'
             />
             <p className='text-muted-foreground text-xs leading-relaxed'>
-              {t('One model list endpoint per line. Leave empty to infer from OpenAI-compatible routes.')}
+              {t(
+                'One model list endpoint per line. Leave empty to infer from OpenAI-compatible routes.'
+              )}
             </p>
           </div>
 
@@ -506,6 +563,7 @@ export function AdvancedCustomEditorDialog({
                 index={index}
                 onChange={(patch) => updateRoute(index, patch)}
                 onRemove={() => removeRoute(index)}
+                channelModels={channelModels || []}
               />
             ))}
           </div>
@@ -542,12 +600,24 @@ export function AdvancedCustomEditorDialog({
           ) : null}
         </div>
       )}
+      {editMode === 'visual' ? (
+        <ToolCompatibilityEvents
+          channelId={channelId}
+          channelModels={channelModels}
+          routes={normalizedConfig.advanced_routes || []}
+          onRouteConfigChange={(routeConfig) =>
+            setConfig((current) =>
+              mergeAdvancedCustomRouteCompatibilityConfig(current, routeConfig)
+            )
+          }
+        />
+      ) : null}
     </Dialog>
   )
 }
 
 const responseToolPolicyFields: Array<{
-  key: keyof AdvancedCustomResponsesToolsOptions
+  key: Exclude<AdvancedCustomResponsesToolType, 'function'>
   label: string
   allowFlatten: boolean
 }> = [
@@ -559,37 +629,18 @@ const responseToolPolicyFields: Array<{
   { key: 'unknown', label: 'Unknown / other', allowFlatten: false },
 ]
 
-function responsesToolsFromMode(mode: AdvancedCustomResponsesToolsMode) {
-  if (mode === 'preserve') {
-    return {
-      namespace: 'preserve' as const,
-      custom: 'preserve' as const,
-      web_search: 'preserve' as const,
-      tool_search: 'preserve' as const,
-      image_generation: 'preserve' as const,
-      unknown: 'preserve' as const,
-    }
-  }
-  return {
-    namespace: 'flatten' as const,
-    custom: 'drop' as const,
-    web_search: 'drop' as const,
-    tool_search: 'drop' as const,
-    image_generation: 'drop' as const,
-    unknown: 'drop' as const,
-  }
-}
-
 function RouteEditor({
   route,
   index,
   onChange,
   onRemove,
+  channelModels,
 }: {
   route: AdvancedCustomRoute
   index: number
   onChange: (patch: Partial<AdvancedCustomRoute>) => void
   onRemove: () => void
+  channelModels: string[]
 }) {
   const { t } = useTranslation()
   const converter = route.converter || 'none'
@@ -606,27 +657,57 @@ function RouteEditor({
     converter
   )
   const authLabel = getOptionLabel(ADVANCED_CUSTOM_AUTH_MODE_OPTIONS, authMode)
+  const explicitResponsesToolsMode =
+    route.converter_options?.responses_tools_mode
+  const hasCustomPerToolPolicies =
+    !explicitResponsesToolsMode &&
+    Boolean(route.converter_options?.responses_tools)
   const responsesToolsMode: AdvancedCustomResponsesToolsMode =
-    route.converter_options?.responses_tools_mode || 'compat_flatten'
-  const responsesToolsModeLabel = getOptionLabel(
-    ADVANCED_CUSTOM_RESPONSES_TOOLS_MODE_OPTIONS,
-    responsesToolsMode
+    explicitResponsesToolsMode ||
+    (converter === 'none' ? 'preserve' : 'compat_flatten')
+  const responsesToolsModeLabel = hasCustomPerToolPolicies
+    ? 'Custom per-tool policies'
+    : getOptionLabel(
+        ADVANCED_CUSTOM_RESPONSES_TOOLS_MODE_OPTIONS,
+        responsesToolsMode
+      )
+  const responseToolPolicies = useMemo(
+    () => ({
+      namespace: resolveAdvancedCustomResponsesToolPolicy(
+        route,
+        '',
+        'namespace'
+      ).policy,
+      custom: resolveAdvancedCustomResponsesToolPolicy(route, '', 'custom')
+        .policy,
+      web_search: resolveAdvancedCustomResponsesToolPolicy(
+        route,
+        '',
+        'web_search'
+      ).policy,
+      tool_search: resolveAdvancedCustomResponsesToolPolicy(
+        route,
+        '',
+        'tool_search'
+      ).policy,
+      image_generation: resolveAdvancedCustomResponsesToolPolicy(
+        route,
+        '',
+        'image_generation'
+      ).policy,
+      unknown: resolveAdvancedCustomResponsesToolPolicy(route, '', 'unknown')
+        .policy,
+    }),
+    [route]
   )
-  const responseToolPolicies = useMemo(() => {
-    const fallback = responsesToolsFromMode(responsesToolsMode)
-    const fromRoute = route.converter_options?.responses_tools
-    if (!fromRoute) return fallback
-    return {
-      namespace: fromRoute.namespace || fallback.namespace,
-      custom: fromRoute.custom || fallback.custom,
-      web_search: fromRoute.web_search || fallback.web_search,
-      tool_search: fromRoute.tool_search || fallback.tool_search,
-      image_generation: fromRoute.image_generation || fallback.image_generation,
-      unknown: fromRoute.unknown || fallback.unknown,
-    }
-  }, [responsesToolsMode, route.converter_options?.responses_tools])
 
   const isNativeConverter = converter === 'none'
+  const isResponsesRoute =
+    incomingPath === '/v1/responses' || incomingPath === '/v1/responses/compact'
+  const supportsResponsesToolHandling =
+    isResponsesRoute &&
+    (isNativeConverter ||
+      converter === 'openai_responses_to_openai_chat_completions')
   const ConverterVisualIcon = isNativeConverter ? ArrowRight : Shuffle
 
   const setConverter = (nextConverter: AdvancedCustomConverter) => {
@@ -634,10 +715,16 @@ function RouteEditor({
     if (!isAdvancedCustomIncomingPathAllowed(incomingPath, nextConverter)) {
       patch.incoming_path = getDefaultAdvancedCustomIncomingPath(nextConverter)
     }
-    if (nextConverter !== 'openai_responses_to_openai_chat_completions') {
+    if (
+      nextConverter !== 'none' &&
+      nextConverter !== 'openai_responses_to_openai_chat_completions'
+    ) {
       patch.converter_options = undefined
     } else if (!route.converter_options?.responses_tools_mode) {
-      patch.converter_options = { responses_tools_mode: 'compat_flatten' }
+      patch.converter_options = {
+        responses_tools_mode:
+          nextConverter === 'none' ? 'preserve' : 'compat_flatten',
+      }
     }
     onChange(patch)
   }
@@ -661,7 +748,7 @@ function RouteEditor({
   const setResponsesToolsMode = (mode: AdvancedCustomResponsesToolsMode) => {
     onChange({
       converter_options: {
-        ...(route.converter_options || {}),
+        ...route.converter_options,
         responses_tools_mode: mode,
         responses_tools: responsesToolsFromMode(mode),
       },
@@ -669,17 +756,264 @@ function RouteEditor({
   }
 
   const setResponseToolPolicy = (
-    key: keyof AdvancedCustomResponsesToolsOptions,
+    key: Exclude<AdvancedCustomResponsesToolType, 'function'>,
     policy: AdvancedCustomResponsesToolPolicy
   ) => {
     onChange({
       converter_options: {
-        ...(route.converter_options || {}),
+        ...route.converter_options,
         responses_tools: {
-          ...responseToolPolicies,
+          ...route.converter_options?.responses_tools,
           [key]: policy,
         },
       },
+    })
+  }
+
+  const responseToolConflictPolicy: AdvancedCustomResponsesToolConflictPolicy =
+    route.converter_options?.responses_tool_conflict_policy || 'deduplicate'
+  const modelToolOverrides = useMemo(
+    () => route.converter_options?.responses_tool_model_overrides || [],
+    [route.converter_options?.responses_tool_model_overrides]
+  )
+  const routeImplicitHostedTools = useMemo(
+    () => route.converter_options?.responses_implicit_hosted_tools || [],
+    [route.converter_options?.responses_implicit_hosted_tools]
+  )
+  const routeWebSearchParameters =
+    route.converter_options?.responses_tool_parameters?.web_search
+  const routeWebSearchStatus = (() => {
+    if (route.converter_options?.responses_tools?.web_search === 'drop') {
+      return 'Hosted web_search is dropped; client function tools are preserved'
+    }
+    if (
+      routeWebSearchParameters?.when_nested_options_missing ===
+      'populate_defaults'
+    ) {
+      return 'Enabled: schema-only parameter filling'
+    }
+    return 'Disabled: pass through unchanged'
+  })()
+
+  const configuredModels = useMemo(
+    () => new Set(channelModels.map((model) => model.trim()).filter(Boolean)),
+    [channelModels]
+  )
+  const staleOverrideModels = useMemo(
+    () => [
+      ...new Set(
+        modelToolOverrides
+          .flatMap((override) => override.models || [])
+          .map((model) => model.trim())
+          .filter((model) => model && !configuredModels.has(model))
+      ),
+    ],
+    [configuredModels, modelToolOverrides]
+  )
+
+  const patchConverterOptions = (
+    patch: Partial<NonNullable<AdvancedCustomRoute['converter_options']>>
+  ) => {
+    onChange({
+      converter_options: { ...route.converter_options, ...patch },
+    })
+  }
+  const setRouteImplicitHostedTool = (capability: string, enabled: boolean) => {
+    const next = new Set(routeImplicitHostedTools)
+    if (enabled) next.add(capability)
+    else next.delete(capability)
+    patchConverterOptions({ responses_implicit_hosted_tools: [...next] })
+  }
+  const setRouteWebSearchMode = (
+    mode: AdvancedCustomResponsesToolMissingOptionsPolicy
+  ) => {
+    patchConverterOptions({
+      responses_tool_parameters: {
+        web_search:
+          mode === 'populate_defaults'
+            ? {
+                when_nested_options_missing: mode,
+                defaults: routeWebSearchParameters?.defaults || {
+                  enable: true,
+                  search_result: true,
+                },
+              }
+            : { when_nested_options_missing: mode },
+      },
+    })
+  }
+  const applyRouteClientWebSearchFallback = () => {
+    patchConverterOptions({
+      responses_tools: {
+        ...route.converter_options?.responses_tools,
+        web_search: 'drop',
+      },
+      responses_tool_parameters: undefined,
+    })
+  }
+  const setRouteWebSearchDefault = (
+    key: 'enable' | 'search_result' | 'search_engine',
+    value: boolean | string | undefined
+  ) => {
+    const defaults = updateWebSearchParameterDefaults(
+      routeWebSearchParameters?.defaults,
+      key,
+      value
+    )
+    patchConverterOptions({
+      responses_tool_parameters: {
+        web_search: {
+          when_nested_options_missing: 'populate_defaults',
+          defaults,
+        },
+      },
+    })
+  }
+
+  const setModelToolOverride = (
+    index: number,
+    patch: Partial<AdvancedCustomResponsesToolModelOverride>
+  ) => {
+    patchConverterOptions({
+      responses_tool_model_overrides: modelToolOverrides.map(
+        (override, currentIndex) =>
+          currentIndex === index ? { ...override, ...patch } : override
+      ),
+    })
+  }
+  const setModelToolOverridePolicy = (
+    index: number,
+    key: Exclude<AdvancedCustomResponsesToolType, 'function'>,
+    policy: AdvancedCustomResponsesToolPolicy | 'inherit'
+  ) => {
+    const override = modelToolOverrides[index]
+    const nextPolicies = { ...override.responses_tools }
+    if (policy === 'inherit') {
+      delete nextPolicies[key]
+    } else {
+      nextPolicies[key] = policy
+    }
+    setModelToolOverride(index, {
+      responses_tools: nextPolicies,
+    })
+  }
+  const setModelImplicitHostedTool = (
+    index: number,
+    capability: string,
+    enabled: boolean
+  ) => {
+    const next = new Set(
+      modelToolOverrides[index].responses_implicit_hosted_tools || []
+    )
+    if (enabled) next.add(capability)
+    else next.delete(capability)
+    setModelToolOverride(index, {
+      responses_implicit_hosted_tools: [...next],
+    })
+  }
+  const setModelWebSearchMode = (
+    index: number,
+    mode: AdvancedCustomResponsesToolMissingOptionsPolicy | 'inherit'
+  ) => {
+    if (mode === 'inherit') {
+      setModelToolOverride(index, { responses_tool_parameters: undefined })
+      return
+    }
+    const current =
+      modelToolOverrides[index].responses_tool_parameters?.web_search
+    setModelToolOverride(index, {
+      responses_tool_parameters: {
+        web_search:
+          mode === 'populate_defaults'
+            ? {
+                when_nested_options_missing: mode,
+                defaults: current?.defaults || {
+                  enable: true,
+                  search_result: true,
+                },
+              }
+            : { when_nested_options_missing: mode },
+      },
+    })
+  }
+  const applyModelClientWebSearchFallback = (index: number) => {
+    const override = modelToolOverrides[index]
+    setModelToolOverride(index, {
+      responses_tools: {
+        ...override.responses_tools,
+        web_search: 'drop',
+      },
+      responses_tool_parameters: undefined,
+    })
+  }
+  const setModelWebSearchDefault = (
+    index: number,
+    key: 'enable' | 'search_result' | 'search_engine',
+    value: boolean | string | undefined
+  ) => {
+    const current =
+      modelToolOverrides[index].responses_tool_parameters?.web_search
+    const defaults = updateWebSearchParameterDefaults(
+      current?.defaults,
+      key,
+      value
+    )
+    setModelToolOverride(index, {
+      responses_tool_parameters: {
+        web_search: {
+          when_nested_options_missing: 'populate_defaults',
+          defaults,
+        },
+      },
+    })
+  }
+
+  const removeModelToolOverride = (index: number) =>
+    patchConverterOptions({
+      responses_tool_model_overrides: modelToolOverrides.filter(
+        (_, currentIndex) => currentIndex !== index
+      ),
+    })
+  const addModelToolOverride = () =>
+    patchConverterOptions({
+      responses_tool_model_overrides: [
+        ...modelToolOverrides,
+        {
+          models: [],
+          responses_tools: {},
+          responses_tool_names: [],
+          responses_implicit_hosted_tools: [],
+        },
+      ],
+    })
+  const setNamePolicy = (
+    overrideIndex: number,
+    policyIndex: number,
+    patch: Partial<AdvancedCustomResponsesToolNamePolicy>
+  ) => {
+    const override = modelToolOverrides[overrideIndex]
+    const policies = override.responses_tool_names || []
+    setModelToolOverride(overrideIndex, {
+      responses_tool_names: policies.map((policy, currentIndex) =>
+        currentIndex === policyIndex ? { ...policy, ...patch } : policy
+      ),
+    })
+  }
+  const addNamePolicy = (overrideIndex: number) => {
+    const override = modelToolOverrides[overrideIndex]
+    setModelToolOverride(overrideIndex, {
+      responses_tool_names: [
+        ...(override.responses_tool_names || []),
+        { tool_type: 'web_search', tool_name: '', policy: 'preserve' },
+      ],
+    })
+  }
+  const removeNamePolicy = (overrideIndex: number, policyIndex: number) => {
+    const override = modelToolOverrides[overrideIndex]
+    setModelToolOverride(overrideIndex, {
+      responses_tool_names: (override.responses_tool_names || []).filter(
+        (_, currentIndex) => currentIndex !== policyIndex
+      ),
     })
   }
 
@@ -707,7 +1041,7 @@ function RouteEditor({
       : current.filter((f) => f !== field)
     onChange({
       converter_options: {
-        ...(route.converter_options || {}),
+        ...route.converter_options,
         responses_drop_fields: next,
       },
     })
@@ -913,7 +1247,7 @@ function RouteEditor({
         </Button>
       </div>
 
-      {converter === 'openai_responses_to_openai_chat_completions' ? (
+      {supportsResponsesToolHandling ? (
         <>
           <Separator className='lg:hidden' />
           <div
@@ -931,7 +1265,9 @@ function RouteEditor({
               <Select
                 value={responsesToolsMode}
                 onValueChange={(value) =>
-                  setResponsesToolsMode(value as AdvancedCustomResponsesToolsMode)
+                  setResponsesToolsMode(
+                    value as AdvancedCustomResponsesToolsMode
+                  )
                 }
               >
                 <SelectTrigger className='w-full max-w-full lg:h-8'>
@@ -972,7 +1308,7 @@ function RouteEditor({
           <div
             className={cn(
               'grid gap-4 md:grid-cols-2 lg:items-end lg:gap-2 lg:border-t lg:pt-2',
-              routeEditorGridClassName
+              responseToolPolicyGridClassName
             )}
           >
             <span className='hidden lg:block' aria-hidden='true' />
@@ -994,7 +1330,7 @@ function RouteEditor({
                 >
                   <SelectTrigger className='w-full max-w-full lg:h-8'>
                     <SelectValue className='min-w-0 truncate'>
-                      {t(responseToolPolicies[field.key])}
+                      {t(responseToolPolicies[field.key] || 'preserve')}
                     </SelectValue>
                   </SelectTrigger>
                   <SelectContent
@@ -1003,7 +1339,9 @@ function RouteEditor({
                   >
                     <SelectGroup>
                       {ADVANCED_CUSTOM_RESPONSES_TOOL_POLICY_OPTIONS.filter(
-                        (option) => field.allowFlatten || option.value !== 'flatten'
+                        (option) =>
+                          (!isNativeConverter && field.allowFlatten) ||
+                          option.value !== 'flatten'
                       ).map((option) => (
                         <SelectItem
                           key={option.value}
@@ -1024,55 +1362,676 @@ function RouteEditor({
               </FieldBlock>
             ))}
           </div>
-          <div
-            className={cn(
-              'grid gap-4 md:grid-cols-2 lg:items-end lg:gap-2 lg:border-t lg:pt-2',
-              routeEditorGridClassName
-            )}
-          >
-            <span className='hidden lg:block' aria-hidden='true' />
-            <FieldBlock
-              label={t('Drop Responses fields')}
-              description={t(
-                'Strip these Responses request fields before forwarding to the chat-only upstream.'
-              )}
-              className='lg:gap-1'
-              labelClassName='lg:text-xs'
-            >
-              <div className='grid grid-cols-1 gap-1.5 text-xs sm:grid-cols-2'>
-                {ADVANCED_CUSTOM_RESPONSES_DROP_FIELDS.map((option) => {
-                  const checked = responsesDropFields.includes(option.value)
-                  return (
-                    <label
-                      key={option.value}
-                      className='flex cursor-pointer items-start gap-2 rounded border border-border/60 px-2 py-1.5 hover:bg-muted/40'
-                      title={`${option.label} — ${option.description}`}
-                    >
-                      <input
-                        type='checkbox'
-                        className='mt-0.5 h-3.5 w-3.5 shrink-0 accent-current'
-                        checked={checked}
-                        onChange={(event) =>
-                          setResponsesDropField(
-                            option.value,
-                            event.target.checked
-                          )
-                        }
-                      />
-                      <span className='flex min-w-0 flex-col leading-snug'>
-                        <span className='truncate font-medium'>
-                          {option.label}
-                        </span>
-                        <span className='text-muted-foreground truncate text-[11px]'>
-                          {option.description}
-                        </span>
-                      </span>
-                    </label>
-                  )
-                })}
+          <div className='space-y-3 border-t pt-3'>
+            <div className='flex flex-wrap items-center justify-between gap-2'>
+              <div>
+                <p className='text-sm font-medium'>{t('Tool Handling')}</p>
+                <p className='text-muted-foreground text-xs'>
+                  {t(
+                    'Function tools are always preserved. Model overrides take precedence over route policies.'
+                  )}
+                </p>
               </div>
-            </FieldBlock>
+              <Select
+                value={responseToolConflictPolicy}
+                onValueChange={(value) =>
+                  patchConverterOptions({
+                    responses_tool_conflict_policy:
+                      value as AdvancedCustomResponsesToolConflictPolicy,
+                  })
+                }
+              >
+                <SelectTrigger className='w-40'>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value='deduplicate'>
+                    {t('Deduplicate conflicts')}
+                  </SelectItem>
+                  <SelectItem value='preserve'>
+                    {t('Preserve conflicts')}
+                  </SelectItem>
+                  <SelectItem value='reject'>
+                    {t('Reject conflicts')}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className='grid gap-3 rounded border p-3 lg:grid-cols-2'>
+              <div className='space-y-2'>
+                <div>
+                  <p className='text-xs font-medium'>
+                    {t('Implicit hosted tools (route)')}
+                  </p>
+                  <p className='text-muted-foreground text-xs'>
+                    {t(
+                      'Declare hosted capabilities supplied by the upstream even when the client request omits them.'
+                    )}
+                  </p>
+                </div>
+                <div className='space-y-2'>
+                  {ADVANCED_CUSTOM_IMPLICIT_HOSTED_TOOL_OPTIONS.map(
+                    (option) => (
+                      <label
+                        key={option.value}
+                        className='flex items-start gap-2 text-sm'
+                      >
+                        <Checkbox
+                          checked={routeImplicitHostedTools.includes(
+                            option.value
+                          )}
+                          onCheckedChange={(value) =>
+                            setRouteImplicitHostedTool(
+                              option.value,
+                              value === true
+                            )
+                          }
+                        />
+                        <span className='min-w-0'>
+                          <span className='block'>{t(option.label)}</span>
+                          <span className='text-muted-foreground block text-xs'>
+                            {t(option.description)}
+                          </span>
+                        </span>
+                      </label>
+                    )
+                  )}
+                </div>
+                <p className='text-muted-foreground text-xs'>
+                  {t('Effective source')}:{' '}
+                  {routeImplicitHostedTools.length > 0
+                    ? t('route')
+                    : t('system default (none)')}
+                </p>
+              </div>
+              {!isNativeConverter ? (
+                <div className='space-y-3 rounded-md border p-3'>
+                  <div className='space-y-1'>
+                    <p className='text-sm font-medium'>
+                      {t('Web search schema compatibility (Responses to Chat)')}
+                    </p>
+                    <p className='text-muted-foreground text-xs'>
+                      {t(
+                        'Repairs the Chat request schema when a Responses web_search tool is converted without required nested parameters.'
+                      )}
+                    </p>
+                  </div>
+                  <Alert>
+                    <AlertDescription className='space-y-2 text-xs'>
+                      <p>
+                        {t('Before compatibility')}:{' '}
+                        <code>{'{"type":"web_search"}'}</code>
+                      </p>
+                      <p>
+                        {t('After compatibility')}:{' '}
+                        <code>
+                          {
+                            '{"type":"web_search","web_search":{"enable":true,"search_result":true}}'
+                          }
+                        </code>
+                      </p>
+                      <p>
+                        {t(
+                          'This transformation runs only when nested options are missing or empty. Explicit client values are never overwritten.'
+                        )}
+                      </p>
+                      <p className='font-medium'>
+                        {t(
+                          'Schema compatibility does not provide or verify actual web search capability.'
+                        )}
+                      </p>
+                      <p>
+                        {t(
+                          'For GLM CodingPlan, drop the hosted web_search tool and use a client-side search function such as the SearXNG MCP.'
+                        )}
+                      </p>
+                    </AlertDescription>
+                  </Alert>
+                  <div className='flex flex-wrap items-center gap-2'>
+                    <Button
+                      type='button'
+                      variant='outline'
+                      size='sm'
+                      onClick={applyRouteClientWebSearchFallback}
+                    >
+                      {t('Use client-side search fallback')}
+                    </Button>
+                    <span className='text-muted-foreground text-xs'>
+                      {t('Current status')}: {t(routeWebSearchStatus)}
+                    </span>
+                  </div>
+                  <FieldBlock
+                    label={t('Compatibility action')}
+                    labelClassName='text-xs'
+                  >
+                    <Select
+                      value={
+                        routeWebSearchParameters?.when_nested_options_missing ||
+                        'preserve'
+                      }
+                      onValueChange={(value) =>
+                        setRouteWebSearchMode(
+                          value as AdvancedCustomResponsesToolMissingOptionsPolicy
+                        )
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value='preserve'>
+                          {t('Disabled: pass through unchanged')}
+                        </SelectItem>
+                        <SelectItem value='populate_defaults'>
+                          {t('Enabled: fill missing parameters')}
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </FieldBlock>
+                  {routeWebSearchParameters?.when_nested_options_missing ===
+                  'populate_defaults' ? (
+                    <div className='grid gap-2 sm:grid-cols-2'>
+                      {(['enable', 'search_result'] as const).map((key) => (
+                        <FieldBlock
+                          key={key}
+                          label={t(
+                            key === 'enable'
+                              ? 'Enable web search (enable)'
+                              : 'Return search results (search_result)'
+                          )}
+                          labelClassName='text-xs'
+                        >
+                          <Select
+                            value={
+                              typeof routeWebSearchParameters.defaults?.[
+                                key
+                              ] === 'boolean'
+                                ? String(
+                                    routeWebSearchParameters.defaults?.[key]
+                                  )
+                                : 'unset'
+                            }
+                            onValueChange={(value) =>
+                              setRouteWebSearchDefault(
+                                key,
+                                value === 'unset' ? undefined : value === 'true'
+                              )
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value='unset'>
+                                {t('Unset')}
+                              </SelectItem>
+                              <SelectItem value='true'>true</SelectItem>
+                              <SelectItem value='false'>false</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </FieldBlock>
+                      ))}
+                      <FieldBlock
+                        label={t('Search engine (optional)')}
+                        labelClassName='text-xs sm:col-span-2'
+                      >
+                        <Input
+                          value={
+                            routeWebSearchParameters.defaults?.search_engine ||
+                            ''
+                          }
+                          onChange={(event) =>
+                            setRouteWebSearchDefault(
+                              'search_engine',
+                              event.target.value
+                            )
+                          }
+                          placeholder={t(
+                            'Leave empty to use the upstream default'
+                          )}
+                        />
+                      </FieldBlock>
+                    </div>
+                  ) : null}
+                  <p className='text-muted-foreground text-xs'>
+                    {t(
+                      'Scope: this route and all matching models. Add a model override below when only specific models need schema compatibility or a client-side fallback.'
+                    )}
+                  </p>
+                </div>
+              ) : null}
+            </div>
+            <div className='space-y-2'>
+              {staleOverrideModels.length > 0 ? (
+                <Alert variant='destructive'>
+                  <AlertDescription className='break-words'>
+                    {t(
+                      'Stale model overrides are not present in the channel model list: {{models}}',
+                      { models: staleOverrideModels.join(', ') }
+                    )}
+                  </AlertDescription>
+                </Alert>
+              ) : null}
+              {modelToolOverrides.map((override, overrideIndex) => (
+                <div
+                  key={override.models?.join(',') || JSON.stringify(override)}
+                  className='space-y-2 rounded border p-2'
+                >
+                  <div className='flex gap-2'>
+                    <Input
+                      value={(override.models || []).join(', ')}
+                      onChange={(event) =>
+                        setModelToolOverride(overrideIndex, {
+                          models: [
+                            ...new Set(
+                              event.target.value
+                                .split(',')
+                                .map((model) => model.trim())
+                                .filter(Boolean)
+                            ),
+                          ],
+                        })
+                      }
+                      placeholder={t('Models, comma separated')}
+                    />
+                    <Button
+                      type='button'
+                      variant='ghost'
+                      size='icon'
+                      onClick={() => removeModelToolOverride(overrideIndex)}
+                    >
+                      <Trash2 className='h-4 w-4' />
+                      <span className='sr-only'>{t('Delete')}</span>
+                    </Button>
+                  </div>
+                  <div className='bg-muted/30 grid gap-3 rounded p-2 lg:grid-cols-2'>
+                    <div className='space-y-2'>
+                      <p className='text-xs font-medium'>
+                        {t('Implicit hosted tools (model)')}
+                      </p>
+                      {ADVANCED_CUSTOM_IMPLICIT_HOSTED_TOOL_OPTIONS.map(
+                        (option) => (
+                          <label
+                            key={option.value}
+                            className='flex items-center gap-2 text-sm'
+                          >
+                            <Checkbox
+                              checked={(
+                                override.responses_implicit_hosted_tools || []
+                              ).includes(option.value)}
+                              onCheckedChange={(value) =>
+                                setModelImplicitHostedTool(
+                                  overrideIndex,
+                                  option.value,
+                                  value === true
+                                )
+                              }
+                            />
+                            <span>{t(option.label)}</span>
+                          </label>
+                        )
+                      )}
+                      <p className='text-muted-foreground text-xs'>
+                        {t('Effective source')}:{' '}
+                        {t(
+                          getImplicitHostedToolsSource(
+                            routeImplicitHostedTools,
+                            override.responses_implicit_hosted_tools || []
+                          )
+                        )}
+                      </p>
+                    </div>
+                    {!isNativeConverter ? (
+                      <div className='space-y-2 rounded-md border p-3'>
+                        <div className='space-y-1'>
+                          <p className='text-xs font-medium'>
+                            {t(
+                              'Web search schema compatibility (model override)'
+                            )}
+                          </p>
+                          <p className='text-muted-foreground text-xs'>
+                            {t(
+                              'Use this override when only the selected models require schema compatibility or must drop hosted web_search in favor of a client-side function.'
+                            )}
+                          </p>
+                        </div>
+                        <div className='flex flex-wrap items-center gap-2'>
+                          <Button
+                            type='button'
+                            variant='outline'
+                            size='sm'
+                            onClick={() =>
+                              applyModelClientWebSearchFallback(overrideIndex)
+                            }
+                          >
+                            {t(
+                              'Use client-side search fallback for these models'
+                            )}
+                          </Button>
+                          <span className='text-muted-foreground text-xs'>
+                            {t('Selected models')}:{' '}
+                            {override.models?.length
+                              ? override.models.join(', ')
+                              : t('none')}
+                          </span>
+                        </div>
+                        <FieldBlock
+                          label={t('Compatibility action')}
+                          labelClassName='text-xs'
+                        >
+                          <Select
+                            value={
+                              override.responses_tool_parameters?.web_search
+                                ?.when_nested_options_missing || 'inherit'
+                            }
+                            onValueChange={(value) =>
+                              setModelWebSearchMode(
+                                overrideIndex,
+                                value as
+                                  | AdvancedCustomResponsesToolMissingOptionsPolicy
+                                  | 'inherit'
+                              )
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value='inherit'>
+                                {t('Inherit route setting')}
+                              </SelectItem>
+                              <SelectItem value='preserve'>
+                                {t('Disabled: pass through unchanged')}
+                              </SelectItem>
+                              <SelectItem value='populate_defaults'>
+                                {t('Enabled: fill missing parameters')}
+                              </SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </FieldBlock>
+                        {override.responses_tool_parameters?.web_search
+                          ?.when_nested_options_missing ===
+                        'populate_defaults' ? (
+                          <div className='grid gap-2 sm:grid-cols-2'>
+                            {(['enable', 'search_result'] as const).map(
+                              (key) => (
+                                <FieldBlock
+                                  key={key}
+                                  label={t(
+                                    key === 'enable'
+                                      ? 'Enable web search (enable)'
+                                      : 'Return search results (search_result)'
+                                  )}
+                                  labelClassName='text-xs'
+                                >
+                                  <Select
+                                    value={
+                                      typeof override.responses_tool_parameters
+                                        ?.web_search?.defaults?.[key] ===
+                                      'boolean'
+                                        ? String(
+                                            override.responses_tool_parameters
+                                              ?.web_search?.defaults?.[key]
+                                          )
+                                        : 'unset'
+                                    }
+                                    onValueChange={(value) =>
+                                      setModelWebSearchDefault(
+                                        overrideIndex,
+                                        key,
+                                        value === 'unset'
+                                          ? undefined
+                                          : value === 'true'
+                                      )
+                                    }
+                                  >
+                                    <SelectTrigger>
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value='unset'>
+                                        {t('Unset')}
+                                      </SelectItem>
+                                      <SelectItem value='true'>true</SelectItem>
+                                      <SelectItem value='false'>
+                                        false
+                                      </SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                </FieldBlock>
+                              )
+                            )}
+                            <FieldBlock
+                              label={t('Search engine (optional)')}
+                              labelClassName='text-xs sm:col-span-2'
+                            >
+                              <Input
+                                value={
+                                  override.responses_tool_parameters?.web_search
+                                    ?.defaults?.search_engine || ''
+                                }
+                                onChange={(event) =>
+                                  setModelWebSearchDefault(
+                                    overrideIndex,
+                                    'search_engine',
+                                    event.target.value
+                                  )
+                                }
+                                placeholder={t(
+                                  'Leave empty to use the upstream default'
+                                )}
+                              />
+                            </FieldBlock>
+                          </div>
+                        ) : null}
+                        <p className='text-muted-foreground text-xs'>
+                          {t(
+                            'Only enable parameter filling after verifying that the upstream performs real web search. Filling fields alone only repairs the request schema.'
+                          )}
+                        </p>
+                        <p className='text-muted-foreground text-xs'>
+                          {t(
+                            'The model override takes priority over the route setting, but explicit client values still take priority over both.'
+                          )}
+                        </p>
+                      </div>
+                    ) : null}
+                  </div>
+                  <div className='grid gap-2 sm:grid-cols-2 lg:grid-cols-3'>
+                    {responseToolPolicyFields.map((field) => (
+                      <FieldBlock
+                        key={field.key}
+                        label={t(field.label)}
+                        labelClassName='text-xs'
+                      >
+                        <Select
+                          value={
+                            override.responses_tools?.[field.key] || 'inherit'
+                          }
+                          onValueChange={(value) =>
+                            setModelToolOverridePolicy(
+                              overrideIndex,
+                              field.key,
+                              value as
+                                | AdvancedCustomResponsesToolPolicy
+                                | 'inherit'
+                            )
+                          }
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value='inherit'>
+                              {t('Inherit route policy')}:{' '}
+                              {
+                                resolveAdvancedCustomResponsesToolPolicy(
+                                  {
+                                    ...route,
+                                    converter_options: {
+                                      ...route.converter_options,
+                                      responses_tool_model_overrides: [],
+                                    },
+                                  },
+                                  '',
+                                  field.key
+                                ).policy
+                              }
+                            </SelectItem>
+                            {ADVANCED_CUSTOM_RESPONSES_TOOL_POLICY_OPTIONS.filter(
+                              (option) =>
+                                (!isNativeConverter && field.allowFlatten) ||
+                                option.value !== 'flatten'
+                            ).map((option) => (
+                              <SelectItem
+                                key={option.value}
+                                value={option.value}
+                              >
+                                {t(option.label)}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </FieldBlock>
+                    ))}
+                  </div>
+                  {(override.responses_tool_names || []).map(
+                    (namePolicy, policyIndex) => (
+                      <div
+                        key={`${namePolicy.tool_type || 'tool'}:${namePolicy.tool_name || namePolicy.policy || 'policy'}`}
+                        className='grid gap-2 sm:grid-cols-[9rem_1fr_9rem_2rem]'
+                      >
+                        <Input
+                          value={namePolicy.tool_type || ''}
+                          onChange={(event) =>
+                            setNamePolicy(overrideIndex, policyIndex, {
+                              tool_type: event.target.value,
+                            })
+                          }
+                          placeholder={t('Tool type')}
+                        />
+                        <Input
+                          value={namePolicy.tool_name || ''}
+                          onChange={(event) =>
+                            setNamePolicy(overrideIndex, policyIndex, {
+                              tool_name: event.target.value,
+                            })
+                          }
+                          placeholder={t('Tool name')}
+                        />
+                        <Select
+                          value={namePolicy.policy || 'preserve'}
+                          onValueChange={(value) =>
+                            setNamePolicy(overrideIndex, policyIndex, {
+                              policy:
+                                value as AdvancedCustomResponsesToolPolicy,
+                            })
+                          }
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {ADVANCED_CUSTOM_RESPONSES_TOOL_POLICY_OPTIONS.filter(
+                              (option) =>
+                                !isNativeConverter || option.value !== 'flatten'
+                            ).map((option) => (
+                              <SelectItem
+                                key={option.value}
+                                value={option.value}
+                              >
+                                {t(option.label)}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Button
+                          type='button'
+                          variant='ghost'
+                          size='icon'
+                          onClick={() =>
+                            removeNamePolicy(overrideIndex, policyIndex)
+                          }
+                        >
+                          <Trash2 className='h-4 w-4' />
+                          <span className='sr-only'>{t('Delete')}</span>
+                        </Button>
+                      </div>
+                    )
+                  )}
+                  <Button
+                    type='button'
+                    size='sm'
+                    variant='outline'
+                    onClick={() => addNamePolicy(overrideIndex)}
+                  >
+                    <Plus className='mr-1 h-3.5 w-3.5' />
+                    {t('Add tool name rule')}
+                  </Button>
+                </div>
+              ))}
+              <Button
+                type='button'
+                size='sm'
+                variant='outline'
+                onClick={addModelToolOverride}
+              >
+                <Plus className='mr-1 h-3.5 w-3.5' />
+                {t('Add model capability')}
+              </Button>
+            </div>
           </div>
+          {!isNativeConverter ? (
+            <div
+              className={cn(
+                'grid gap-4 md:grid-cols-2 lg:items-end lg:gap-2 lg:border-t lg:pt-2',
+                routeEditorGridClassName
+              )}
+            >
+              <span className='hidden lg:block' aria-hidden='true' />
+              <FieldBlock
+                label={t('Drop Responses fields')}
+                description={t(
+                  'Strip these Responses request fields before forwarding to the chat-only upstream.'
+                )}
+                className='lg:gap-1'
+                labelClassName='lg:text-xs'
+              >
+                <div className='grid grid-cols-1 gap-1.5 text-xs sm:grid-cols-2'>
+                  {ADVANCED_CUSTOM_RESPONSES_DROP_FIELDS.map((option) => {
+                    const checked = responsesDropFields.includes(option.value)
+                    return (
+                      <label
+                        key={option.value}
+                        className='border-border/60 hover:bg-muted/40 flex cursor-pointer items-start gap-2 rounded border px-2 py-1.5'
+                        title={`${option.label} — ${option.description}`}
+                      >
+                        <input
+                          type='checkbox'
+                          className='mt-0.5 h-3.5 w-3.5 shrink-0 accent-current'
+                          checked={checked}
+                          onChange={(event) =>
+                            setResponsesDropField(
+                              option.value,
+                              event.target.checked
+                            )
+                          }
+                        />
+                        <span className='flex min-w-0 flex-col leading-snug'>
+                          <span className='truncate font-medium'>
+                            {option.label}
+                          </span>
+                          <span className='text-muted-foreground truncate text-[11px]'>
+                            {option.description}
+                          </span>
+                        </span>
+                      </label>
+                    )
+                  })}
+                </div>
+              </FieldBlock>
+            </div>
+          ) : null}
         </>
       ) : null}
 
@@ -1137,10 +2096,7 @@ function FieldBlock({
 }) {
   return (
     <div className={cn('flex min-w-0 flex-col gap-2', className)}>
-      <span
-        className={cn('text-sm font-medium', labelClassName)}
-        title={label}
-      >
+      <span className={cn('text-sm font-medium', labelClassName)} title={label}>
         {label}
       </span>
       {description ? (
@@ -1177,10 +2133,7 @@ function DualEndpointQuickSetup({
       setError(t('Anthropic-compatible Base URL is required'))
       return
     }
-    if (
-      (enableOpenAIChat || enableOpenAIResponses) &&
-      !openaiBaseURL.trim()
-    ) {
+    if ((enableOpenAIChat || enableOpenAIResponses) && !openaiBaseURL.trim()) {
       setError(t('OpenAI-compatible Base URL is required'))
       return
     }
@@ -1211,17 +2164,11 @@ function DualEndpointQuickSetup({
   return (
     <Popover open={open} onOpenChange={handleOpenChange}>
       <PopoverTrigger
-        render={
-          <Button type='button' variant='outline' size='sm' />
-        }
+        render={<Button type='button' variant='outline' size='sm' />}
       >
         {t('Quick Setup')}
       </PopoverTrigger>
-      <PopoverContent
-        align='end'
-        className='w-[420px] p-4'
-        sideOffset={8}
-      >
+      <PopoverContent align='end' className='w-[420px] p-4' sideOffset={8}>
         <div className='flex flex-col gap-3'>
           <div className='flex flex-col gap-1'>
             <div className='text-sm font-medium'>
@@ -1268,16 +2215,22 @@ function DualEndpointQuickSetup({
               <label className='flex items-center gap-2 text-sm'>
                 <Checkbox
                   checked={enableAnthropic}
-                  onCheckedChange={(value) => setEnableAnthropic(value === true)}
+                  onCheckedChange={(value) =>
+                    setEnableAnthropic(value === true)
+                  }
                 />
                 <span>{t('Claude Messages (/v1/messages)')}</span>
               </label>
               <label className='flex items-center gap-2 text-sm'>
                 <Checkbox
                   checked={enableOpenAIChat}
-                  onCheckedChange={(value) => setEnableOpenAIChat(value === true)}
+                  onCheckedChange={(value) =>
+                    setEnableOpenAIChat(value === true)
+                  }
                 />
-                <span>{t('OpenAI Chat Completions (/v1/chat/completions)')}</span>
+                <span>
+                  {t('OpenAI Chat Completions (/v1/chat/completions)')}
+                </span>
               </label>
               <label className='flex items-center gap-2 text-sm'>
                 <Checkbox
@@ -1312,9 +2265,7 @@ function DualEndpointQuickSetup({
               </Select>
             </div>
             <div className='flex flex-col gap-1.5'>
-              <Label className='text-xs font-medium'>
-                {t('OpenAI auth')}
-              </Label>
+              <Label className='text-xs font-medium'>{t('OpenAI auth')}</Label>
               <Select
                 value={openaiAuth}
                 onValueChange={(value) =>
@@ -1332,9 +2283,7 @@ function DualEndpointQuickSetup({
             </div>
           </div>
 
-          {error ? (
-            <p className='text-destructive text-xs'>{error}</p>
-          ) : null}
+          {error ? <p className='text-destructive text-xs'>{error}</p> : null}
 
           <div className='flex justify-end gap-2 pt-1'>
             <Button

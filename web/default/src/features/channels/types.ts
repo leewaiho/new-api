@@ -112,6 +112,7 @@ export interface ChannelOtherSettings {
 export interface AdvancedCustomConfig {
   advanced_routes?: AdvancedCustomRoute[]
   model_fetch_urls?: string[]
+  [key: string]: unknown
 }
 
 export interface AdvancedCustomRoute {
@@ -120,13 +121,62 @@ export interface AdvancedCustomRoute {
   converter?: AdvancedCustomConverter
   auth?: AdvancedCustomRouteAuth
   converter_options?: AdvancedCustomConverterOptions
+  [key: string]: unknown
 }
 
 export interface AdvancedCustomConverterOptions {
   responses_tools_mode?: AdvancedCustomResponsesToolsMode
   responses_tools?: AdvancedCustomResponsesToolsOptions
   responses_drop_fields?: string[]
+  responses_tool_conflict_policy?: AdvancedCustomResponsesToolConflictPolicy
+  responses_implicit_hosted_tools?: string[]
+  responses_tool_parameters?: AdvancedCustomResponsesToolParameters
+  responses_tool_model_overrides?: AdvancedCustomResponsesToolModelOverride[]
+  [key: string]: unknown
 }
+
+export interface AdvancedCustomResponsesToolModelOverride {
+  models?: string[]
+  responses_tools?: AdvancedCustomResponsesToolsOptions
+  responses_tool_names?: AdvancedCustomResponsesToolNamePolicy[]
+  responses_implicit_hosted_tools?: string[]
+  responses_tool_parameters?: AdvancedCustomResponsesToolParameters
+  [key: string]: unknown
+}
+
+export interface AdvancedCustomResponsesToolParameters {
+  web_search?: AdvancedCustomWebSearchParameterCompatibility
+  [key: string]: unknown
+}
+
+export interface AdvancedCustomWebSearchParameterCompatibility {
+  when_nested_options_missing?: AdvancedCustomResponsesToolMissingOptionsPolicy
+  defaults?: AdvancedCustomWebSearchParameterDefaults
+  [key: string]: unknown
+}
+
+export interface AdvancedCustomWebSearchParameterDefaults {
+  enable?: boolean
+  search_result?: boolean
+  search_engine?: string
+  [key: string]: unknown
+}
+
+export type AdvancedCustomResponsesToolMissingOptionsPolicy =
+  | 'preserve'
+  | 'populate_defaults'
+
+export interface AdvancedCustomResponsesToolNamePolicy {
+  tool_type?: string
+  tool_name?: string
+  policy?: AdvancedCustomResponsesToolPolicy
+  [key: string]: unknown
+}
+
+export type AdvancedCustomResponsesToolConflictPolicy =
+  | 'preserve'
+  | 'deduplicate'
+  | 'reject'
 
 export interface AdvancedCustomResponsesToolsOptions {
   namespace?: AdvancedCustomResponsesToolPolicy
@@ -135,6 +185,7 @@ export interface AdvancedCustomResponsesToolsOptions {
   tool_search?: AdvancedCustomResponsesToolPolicy
   image_generation?: AdvancedCustomResponsesToolPolicy
   unknown?: AdvancedCustomResponsesToolPolicy
+  [key: string]: unknown
 }
 
 export type AdvancedCustomResponsesToolsMode = 'compat_flatten' | 'preserve'
@@ -148,6 +199,7 @@ export interface AdvancedCustomRouteAuth {
   type?: AdvancedCustomAuthType
   name?: string
   value?: string
+  [key: string]: unknown
 }
 
 export type AdvancedCustomConverter =
@@ -224,7 +276,6 @@ export interface FetchModelsResponse {
   message?: string
   data?: string[]
 }
-
 
 export type VendorCatalogImportMode = 'append' | 'replace'
 
@@ -420,4 +471,63 @@ export interface AddChannelRequest {
   multi_key_mode?: 'random' | 'polling'
   batch_add_set_key_prefix_2_name?: boolean
   channel: Partial<Channel>
+}
+
+export type ToolCompatibilityEventType =
+  | 'upstream_unsupported'
+  | 'name_conflict'
+  | 'policy_drop'
+  | 'policy_reject'
+  | 'invalid_tool_schema'
+  | 'unclassified'
+  | 'accepted_definition'
+  | 'invoked'
+
+export type ToolCompatibilityResolutionStatus = 'open' | 'ignored' | 'resolved'
+
+export interface ToolCompatibilityEvent {
+  id: number
+  event_key: string
+  channel_id: number
+  route: string
+  requested_model: string
+  upstream_model: string
+  tool_type: string
+  tool_name: string
+  event_type: ToolCompatibilityEventType
+  current_policy: string
+  suggested_policy: string
+  error_fingerprint: string
+  sanitized_error: string
+  occurrence_count: number
+  first_seen_at: number
+  last_seen_at: number
+  resolution_status: ToolCompatibilityResolutionStatus
+}
+
+export interface ToolCompatibilityEventsResponse {
+  success: boolean
+  message?: string
+  data: ToolCompatibilityEvent[]
+  total: number
+  page: number
+  page_size: number
+}
+
+export type ToolCompatibilityMutationScope = 'model' | 'route'
+
+export interface ToolCompatibilityMutationRequest {
+  target_model?: string
+  scope?: ToolCompatibilityMutationScope
+  confirm_route?: boolean
+}
+
+export interface ToolCompatibilityMutationResult {
+  event: ToolCompatibilityEvent
+  model?: string
+  route: string
+  route_config?: AdvancedCustomRoute
+  scope: ToolCompatibilityMutationScope
+  effective_policy: string
+  policy_source: string
 }
