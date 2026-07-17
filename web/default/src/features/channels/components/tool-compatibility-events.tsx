@@ -604,10 +604,10 @@ export function ToolCompatibilityEvents({
                       }
                     >
                       <SelectTrigger>
-                        <SelectValue placeholder={t('Status')} />
+                        <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value='all'>{t('All')}</SelectItem>
+                        <SelectItem value='all'>{t('All statuses')}</SelectItem>
                         <SelectItem value='open'>{t('Unresolved')}</SelectItem>
                         <SelectItem value='resolved'>
                           {t('Resolved')}
@@ -627,7 +627,7 @@ export function ToolCompatibilityEvents({
                       }
                     >
                       <SelectTrigger>
-                        <SelectValue placeholder={t('Channel')} />
+                        <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value='__all'>
@@ -658,7 +658,7 @@ export function ToolCompatibilityEvents({
                       }
                     >
                       <SelectTrigger>
-                        <SelectValue placeholder={t('Model')} />
+                        <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value='__all'>{t('All models')}</SelectItem>
@@ -683,7 +683,7 @@ export function ToolCompatibilityEvents({
                       }
                     >
                       <SelectTrigger>
-                        <SelectValue placeholder={t('Route')} />
+                        <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value='__all'>{t('All routes')}</SelectItem>
@@ -713,10 +713,10 @@ export function ToolCompatibilityEvents({
                     }
                   >
                     <SelectTrigger>
-                      <SelectValue placeholder={t('Status')} />
+                      <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value='all'>{t('All')}</SelectItem>
+                      <SelectItem value='all'>{t('All statuses')}</SelectItem>
                       <SelectItem value='open'>{t('Unresolved')}</SelectItem>
                       <SelectItem value='resolved'>{t('Resolved')}</SelectItem>
                       <SelectItem value='ignored'>{t('Ignored')}</SelectItem>
@@ -737,7 +737,7 @@ export function ToolCompatibilityEvents({
                       }
                     >
                       <SelectTrigger>
-                        <SelectValue placeholder={t('Channel')} />
+                        <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value='__all'>
@@ -768,7 +768,7 @@ export function ToolCompatibilityEvents({
                       }
                     >
                       <SelectTrigger>
-                        <SelectValue placeholder={t('Model')} />
+                        <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value='__all'>{t('All models')}</SelectItem>
@@ -793,7 +793,7 @@ export function ToolCompatibilityEvents({
                       }
                     >
                       <SelectTrigger>
-                        <SelectValue placeholder={t('Route')} />
+                        <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value='__all'>{t('All routes')}</SelectItem>
