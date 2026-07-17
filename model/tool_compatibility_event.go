@@ -57,6 +57,8 @@ type ToolCompatibilityEvent struct {
 	FirstSeenAt      int64  `json:"first_seen_at" gorm:"bigint;not null"`
 	LastSeenAt       int64  `json:"last_seen_at" gorm:"bigint;index;not null"`
 	ResolutionStatus string `json:"resolution_status" gorm:"type:varchar(32);index;not null;default:'open'"`
+	// ChannelName is populated for event-list responses only; it is not persisted.
+	ChannelName string `json:"channel_name" gorm:"-"`
 }
 
 type ToolCompatibilityEventInput struct {

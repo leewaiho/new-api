@@ -290,18 +290,20 @@ func TestRestoreModelDefaultSplitsSharedOverrideAndPreservesOtherModel(t *testin
 
 func TestListAndUpdateToolCompatibilityEventsHandlers(t *testing.T) {
 	withToolCompatibilityControllerDB(t)
+	channel := createToolCompatibilityChannel(t, nil)
 	event, err := model.RecordToolCompatibilityEvent(model.ToolCompatibilityEventInput{
-		ChannelId: 16, Route: "/v1/responses", RequestedModel: "glm-5.2", ToolType: "image_gen",
+		ChannelId: channel.Id, Route: "/v1/responses", RequestedModel: "glm-5.2", ToolType: "image_gen",
 		EventType: model.ToolCompatibilityEventTypePolicyDrop, CurrentPolicy: "drop",
 	})
 	require.NoError(t, err)
 
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
-	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/tool-compatibility/events?channel_id=16&page=1&page_size=20", nil)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/tool-compatibility/events?channel_id="+strconv.Itoa(channel.Id)+"&page=1&page_size=20", nil)
 	ListToolCompatibilityEvents(ctx)
 	require.Equal(t, http.StatusOK, recorder.Code)
 	require.Contains(t, recorder.Body.String(), "glm-5.2")
+	require.Contains(t, recorder.Body.String(), `"channel_name":"tool-compatibility-test"`)
 
 	recorder = httptest.NewRecorder()
 	ctx, _ = gin.CreateTestContext(recorder)
