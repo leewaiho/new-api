@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import {
   Activity,
+  CircleAlert,
   Box,
   CreditCard,
   FileText,
@@ -96,6 +97,12 @@ export function useSidebarData(): SidebarData {
             activeUrls: ['/usage-logs/drawing'],
             configUrls: ['/usage-logs/drawing', '/usage-logs/task'],
             icon: ListTodo,
+          },
+          {
+            title: t('Events'),
+            url: '/events',
+            icon: CircleAlert,
+            requiredRole: ROLE.ADMIN,
           },
         ],
       },
