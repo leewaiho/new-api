@@ -51,7 +51,41 @@ func ListToolCompatibilityEvents(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	if err := populateToolCompatibilityEventChannelNames(events); err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": events, "total": total, "page": max(page, 1), "page_size": min(max(pageSize, 1), 100)})
+}
+
+func populateToolCompatibilityEventChannelNames(events []model.ToolCompatibilityEvent) error {
+	if len(events) == 0 {
+		return nil
+	}
+	channelIDs := make([]int, 0, len(events))
+	seen := make(map[int]struct{}, len(events))
+	for _, event := range events {
+		if event.ChannelId <= 0 {
+			continue
+		}
+		if _, ok := seen[event.ChannelId]; ok {
+			continue
+		}
+		seen[event.ChannelId] = struct{}{}
+		channelIDs = append(channelIDs, event.ChannelId)
+	}
+	channels, err := model.GetChannelsByIds(channelIDs)
+	if err != nil {
+		return err
+	}
+	channelNames := make(map[int]string, len(channels))
+	for _, channel := range channels {
+		channelNames[channel.Id] = channel.Name
+	}
+	for i := range events {
+		events[i].ChannelName = channelNames[events[i].ChannelId]
+	}
+	return nil
 }
 
 func UpdateToolCompatibilityEventStatus(c *gin.Context) {
