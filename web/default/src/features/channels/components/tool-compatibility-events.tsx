@@ -426,7 +426,6 @@ export function ToolCompatibilityEvents({
                   {t(presentation.label)}
                 </Badge>
                 <Badge variant='outline'>{t(event.event_type)}</Badge>
-                <Badge variant='secondary'>{t(event.resolution_status)}</Badge>
                 <span className='font-medium break-all'>{event.route}</span>
                 <span className='break-all'>{eventModel || '-'}</span>
                 <span className='break-all'>
