@@ -3690,6 +3690,8 @@
     "Responses API Version": "响应 API 版本",
     "Restore defaults": "恢复默认",
     "Restrict user model request frequency (may impact high concurrency performance)": "限制用户模型请求频率（可能会影响高并发性能）",
+    "Resolved": "已解决",
+    "Unresolved": "未解决",
     "Result": "结果",
     "Retain last N days": "保留最近N天",
     "Retain last N files": "保留最近 N 个文件",

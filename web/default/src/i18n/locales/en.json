@@ -3690,6 +3690,8 @@
     "Responses API Version": "Responses API Version",
     "Restore defaults": "Restore defaults",
     "Restrict user model request frequency (may impact high concurrency performance)": "Restrict user model request frequency (may impact high concurrency performance)",
+    "Resolved": "Resolved",
+    "Unresolved": "Unresolved",
     "Result": "Result",
     "Retain last N days": "Retain last N days",
     "Retain last N files": "Retain last N files",

@@ -185,10 +185,14 @@ export function ToolCompatibilityEvents({
   const [targetModels, setTargetModels] = useState<Record<number, string>>({})
   const [routeConfirmation, setRouteConfirmation] =
     useState<RouteConfirmation | null>(null)
+  const [resolutionStatus, setResolutionStatus] = useState<
+    'all' | ToolCompatibilityResolutionStatus
+  >('all')
   const isGlobal = mode === 'global'
   const queryKey = [
     'tool-compatibility-events',
     isGlobal ? 'global' : channelId,
+    isGlobal ? resolutionStatus : 'all',
   ]
   const eventsQuery = useInfiniteQuery({
     queryKey,
@@ -196,6 +200,9 @@ export function ToolCompatibilityEvents({
     queryFn: ({ pageParam }) =>
       getToolCompatibilityEvents({
         ...(isGlobal ? {} : { channel_id: channelId }),
+        ...(isGlobal && resolutionStatus !== 'all'
+          ? { resolution_status: resolutionStatus }
+          : {}),
         page: pageParam,
         page_size: eventPageSize,
       }),
@@ -368,12 +375,34 @@ export function ToolCompatibilityEvents({
       ) : null}
       <div className='flex flex-wrap items-center justify-between gap-2'>
         <h5 className='text-sm font-medium'>{t('Recorded issues')}</h5>
-        <span className='text-muted-foreground text-xs'>
-          {t('{{loaded}} of {{total}} loaded', {
-            loaded: events.length,
-            total,
-          })}
-        </span>
+        <div className='flex items-center gap-2'>
+          {isGlobal ? (
+            <Select
+              value={resolutionStatus}
+              onValueChange={(value) =>
+                setResolutionStatus(
+                  value as 'all' | ToolCompatibilityResolutionStatus
+                )
+              }
+            >
+              <SelectTrigger className='h-8 w-32'>
+                <SelectValue placeholder={t('Status')} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value='all'>{t('All')}</SelectItem>
+                <SelectItem value='open'>{t('Unresolved')}</SelectItem>
+                <SelectItem value='resolved'>{t('Resolved')}</SelectItem>
+                <SelectItem value='ignored'>{t('Ignored')}</SelectItem>
+              </SelectContent>
+            </Select>
+          ) : null}
+          <span className='text-muted-foreground text-xs'>
+            {t('{{loaded}} of {{total}} loaded', {
+              loaded: events.length,
+              total,
+            })}
+          </span>
+        </div>
       </div>
       {eventsQuery.isLoading ? (
         <p className='text-muted-foreground text-sm'>{t('Loading...')}</p>
