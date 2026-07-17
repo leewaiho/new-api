@@ -426,6 +426,13 @@ export function ToolCompatibilityEvents({
                   {t(presentation.label)}
                 </Badge>
                 <Badge variant='outline'>{t(event.event_type)}</Badge>
+                {isGlobal ? (
+                  <Badge variant='outline'>
+                    {t('Channel {{name}}', {
+                      name: event.channel_name || `#${event.channel_id}`,
+                    })}
+                  </Badge>
+                ) : null}
                 <span className='font-medium break-all'>{event.route}</span>
                 <span className='break-all'>{eventModel || '-'}</span>
                 <span className='break-all'>

@@ -489,6 +489,7 @@ export interface ToolCompatibilityEvent {
   id: number
   event_key: string
   channel_id: number
+  channel_name: string
   route: string
   requested_model: string
   upstream_model: string
