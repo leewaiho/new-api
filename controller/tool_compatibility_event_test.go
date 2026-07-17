@@ -299,11 +299,20 @@ func TestListAndUpdateToolCompatibilityEventsHandlers(t *testing.T) {
 
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
-	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/tool-compatibility/events?channel_id="+strconv.Itoa(channel.Id)+"&page=1&page_size=20", nil)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/tool-compatibility/events?channel_id="+strconv.Itoa(channel.Id)+"&model=glm-5.2&page=1&page_size=20", nil)
 	ListToolCompatibilityEvents(ctx)
 	require.Equal(t, http.StatusOK, recorder.Code)
 	require.Contains(t, recorder.Body.String(), "glm-5.2")
 	require.Contains(t, recorder.Body.String(), `"channel_name":"tool-compatibility-test"`)
+
+	recorder = httptest.NewRecorder()
+	ctx, _ = gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/tool-compatibility/events/filter-options", nil)
+	ListToolCompatibilityEventFilterOptions(ctx)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Contains(t, recorder.Body.String(), `"name":"tool-compatibility-test"`)
+	require.Contains(t, recorder.Body.String(), `"models":["glm-5.2"]`)
+	require.Contains(t, recorder.Body.String(), `"routes":["/v1/responses"]`)
 
 	recorder = httptest.NewRecorder()
 	ctx, _ = gin.CreateTestContext(recorder)

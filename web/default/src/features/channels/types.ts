@@ -515,6 +515,18 @@ export interface ToolCompatibilityEventsResponse {
   page_size: number
 }
 
+export interface ToolCompatibilityEventFilterOptions {
+  channels: Array<{ id: number; name: string }>
+  models: string[]
+  routes: string[]
+}
+
+export interface ToolCompatibilityEventFilterOptionsResponse {
+  success: boolean
+  message?: string
+  data: ToolCompatibilityEventFilterOptions
+}
+
 export type ToolCompatibilityMutationScope = 'model' | 'route'
 
 export interface ToolCompatibilityMutationRequest {
