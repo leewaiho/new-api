@@ -35,7 +35,10 @@ export function Events() {
               {t('Tool compatibility events')}
             </TabsTrigger>
           </TabsList>
-          <TabsContent value='tool-compatibility' className='mt-4'>
+          <TabsContent
+            value='tool-compatibility'
+            className='mt-4 min-h-0 flex-1 overflow-y-auto'
+          >
             <ToolCompatibilityEvents mode='global' />
           </TabsContent>
         </Tabs>
