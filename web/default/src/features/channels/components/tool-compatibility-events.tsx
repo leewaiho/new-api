@@ -19,8 +19,10 @@ For commercial licensing, please contact support@quantumnous.com
 import {
   useInfiniteQuery,
   useMutation,
+  useQuery,
   useQueryClient,
 } from '@tanstack/react-query'
+import { type ColumnDef } from '@tanstack/react-table'
 import {
   AlertTriangle,
   Check,
@@ -39,6 +41,7 @@ import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
+import { DataTablePage, useDataTable } from '@/components/data-table'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
   AlertDialog,
@@ -188,31 +191,51 @@ export function ToolCompatibilityEvents({
   const [resolutionStatus, setResolutionStatus] = useState<
     'all' | ToolCompatibilityResolutionStatus
   >('all')
+  const [globalPagination, setGlobalPagination] = useState({
+    pageIndex: 0,
+    pageSize: eventPageSize,
+  })
   const isGlobal = mode === 'global'
-  const queryKey = [
+  const channelQueryKey = ['tool-compatibility-events', 'channel', channelId]
+  const globalQueryKey = [
     'tool-compatibility-events',
-    isGlobal ? 'global' : channelId,
-    isGlobal ? resolutionStatus : 'all',
+    'global',
+    resolutionStatus,
+    globalPagination.pageIndex,
+    globalPagination.pageSize,
   ]
   const eventsQuery = useInfiniteQuery({
-    queryKey,
+    queryKey: channelQueryKey,
     initialPageParam: 1,
     queryFn: ({ pageParam }) =>
       getToolCompatibilityEvents({
-        ...(isGlobal ? {} : { channel_id: channelId }),
-        ...(isGlobal && resolutionStatus !== 'all'
-          ? { resolution_status: resolutionStatus }
-          : {}),
+        channel_id: channelId,
         page: pageParam,
         page_size: eventPageSize,
       }),
-    enabled: isGlobal || Boolean(channelId),
+    enabled: !isGlobal && Boolean(channelId),
     getNextPageParam: (lastPage) => {
       const loaded = lastPage.page * lastPage.page_size
       return loaded < lastPage.total ? lastPage.page + 1 : undefined
     },
   })
-  const refresh = () => queryClient.invalidateQueries({ queryKey })
+  const globalEventsQuery = useQuery({
+    queryKey: globalQueryKey,
+    queryFn: () =>
+      getToolCompatibilityEvents({
+        ...(resolutionStatus === 'all'
+          ? {}
+          : { resolution_status: resolutionStatus }),
+        page: globalPagination.pageIndex + 1,
+        page_size: globalPagination.pageSize,
+      }),
+    enabled: isGlobal,
+    placeholderData: (previousData) => previousData,
+  })
+  const refresh = () =>
+    queryClient.invalidateQueries({
+      queryKey: isGlobal ? globalQueryKey : channelQueryKey,
+    })
   const events = useMemo(
     () => eventsQuery.data?.pages.flatMap((page) => page.data || []) || [],
     [eventsQuery.data]
@@ -310,6 +333,320 @@ export function ToolCompatibilityEvents({
       toast.error(error.message || t('Operation failed')),
   })
 
+  const globalEvents = globalEventsQuery.data?.data || []
+  const globalTotal = globalEventsQuery.data?.total || 0
+  const triggerGlobalEventAction = (
+    event: ToolCompatibilityEvent,
+    action: CompatibilityMutationAction
+  ) => {
+    if (
+      (action === 'apply' || action === 'restore-route') &&
+      event.event_type === 'name_conflict'
+    ) {
+      setRouteConfirmation({
+        event,
+        action: action === 'apply' ? 'apply-route' : 'restore-route',
+      })
+      return
+    }
+    mutation.mutate({ event, action })
+  }
+  const globalColumns = useMemo<ColumnDef<ToolCompatibilityEvent>[]>(
+    () => [
+      {
+        id: 'status',
+        header: t('Status'),
+        cell: ({ row }) => {
+          const presentation = getEventPresentation(row.original)
+          const StatusIcon = presentation.icon
+          return (
+            <Badge
+              variant={presentation.variant}
+              className={presentation.className}
+            >
+              <StatusIcon data-icon='inline-start' aria-hidden='true' />
+              {t(presentation.label)}
+            </Badge>
+          )
+        },
+      },
+      {
+        accessorKey: 'event_type',
+        header: t('Event type'),
+        cell: ({ row }) => (
+          <Badge variant='outline'>{t(row.original.event_type)}</Badge>
+        ),
+      },
+      {
+        id: 'channel',
+        header: t('Channel'),
+        cell: ({ row }) =>
+          row.original.channel_name || `#${row.original.channel_id}`,
+      },
+      {
+        accessorKey: 'route',
+        header: t('Route'),
+        cell: ({ row }) => (
+          <span className='font-medium break-all'>{row.original.route}</span>
+        ),
+      },
+      {
+        id: 'model',
+        header: t('Model'),
+        cell: ({ row }) => (
+          <span className='break-all'>
+            {modelForEvent(row.original) || '-'}
+          </span>
+        ),
+      },
+      {
+        id: 'tool',
+        header: t('Tool'),
+        cell: ({ row }) => (
+          <span className='break-all'>
+            {row.original.tool_type || '-'}
+            {row.original.tool_name ? ` / ${row.original.tool_name}` : ''}
+          </span>
+        ),
+      },
+      {
+        id: 'policy',
+        header: t('Policy'),
+        cell: ({ row }) => (
+          <div className='space-y-1 whitespace-nowrap'>
+            <div>
+              {t('Current policy')}: {row.original.current_policy || '-'}
+            </div>
+            <div>
+              {t('Suggested policy')}: {row.original.suggested_policy || '-'}
+            </div>
+          </div>
+        ),
+      },
+      {
+        accessorKey: 'occurrence_count',
+        header: t('Count'),
+      },
+      {
+        accessorKey: 'last_seen_at',
+        header: t('Last seen'),
+        cell: ({ row }) => formatTime(row.original.last_seen_at),
+      },
+      {
+        id: 'actions',
+        header: t('Actions'),
+        cell: ({ row }) => {
+          const event = row.original
+          const isConflict = event.event_type === 'name_conflict'
+          const hasSuggestion = Boolean(event.suggested_policy)
+          return (
+            <div className='flex min-w-max flex-wrap gap-1'>
+              {hasSuggestion ? (
+                <Button
+                  type='button'
+                  size='sm'
+                  onClick={() => triggerGlobalEventAction(event, 'apply')}
+                  disabled={mutation.isPending}
+                >
+                  <Wrench className='mr-1 h-3.5 w-3.5' />
+                  {isConflict
+                    ? t('Apply to entire route')
+                    : t('Apply to selected model')}
+                </Button>
+              ) : null}
+              <Button
+                type='button'
+                size='sm'
+                variant='outline'
+                onClick={() => triggerGlobalEventAction(event, 'ignore')}
+                disabled={mutation.isPending}
+              >
+                <X className='mr-1 h-3.5 w-3.5' />
+                {t('Ignore')}
+              </Button>
+              <Button
+                type='button'
+                size='sm'
+                variant='outline'
+                onClick={() => triggerGlobalEventAction(event, 'resolve')}
+                disabled={mutation.isPending}
+              >
+                <Check className='mr-1 h-3.5 w-3.5' />
+                {t('Mark resolved')}
+              </Button>
+              {isConflict ? (
+                <Button
+                  type='button'
+                  size='sm'
+                  variant='ghost'
+                  onClick={() =>
+                    triggerGlobalEventAction(event, 'restore-route')
+                  }
+                  disabled={mutation.isPending}
+                >
+                  <RotateCcw className='mr-1 h-3.5 w-3.5' />
+                  {t('Restore route safe defaults')}
+                </Button>
+              ) : (
+                <Button
+                  type='button'
+                  size='sm'
+                  variant='ghost'
+                  onClick={() => triggerGlobalEventAction(event, 'restore')}
+                  disabled={mutation.isPending}
+                >
+                  <RotateCcw className='mr-1 h-3.5 w-3.5' />
+                  {t('Restore selected model default')}
+                </Button>
+              )}
+            </div>
+          )
+        },
+      },
+    ],
+    [mutation.isPending, t]
+  )
+  const { table: globalTable } = useDataTable({
+    data: globalEvents,
+    columns: globalColumns,
+    pagination: globalPagination,
+    onPaginationChange: setGlobalPagination,
+    manualPagination: true,
+    manualFiltering: true,
+    totalCount: globalTotal,
+    enableRowSelection: false,
+  })
+
+  if (isGlobal) {
+    return (
+      <>
+        {!isRoot ? (
+          <Alert>
+            <ShieldAlert className='h-4 w-4' />
+            <AlertDescription>
+              {t('Compatibility configuration changes require a root account.')}
+            </AlertDescription>
+          </Alert>
+        ) : null}
+        {globalEventsQuery.isError ? (
+          <Alert variant='destructive'>
+            <AlertTriangle className='h-4 w-4' />
+            <AlertDescription>
+              {globalEventsQuery.error instanceof Error
+                ? globalEventsQuery.error.message
+                : t('Failed to load compatibility issues.')}
+            </AlertDescription>
+          </Alert>
+        ) : null}
+        <DataTablePage
+          table={globalTable}
+          columns={globalColumns}
+          isLoading={globalEventsQuery.isLoading}
+          isFetching={globalEventsQuery.isFetching}
+          emptyTitle={t('No compatibility issues recorded.')}
+          emptyDescription={t(
+            'Tool compatibility events will appear here after matching requests are processed.'
+          )}
+          skeletonKeyPrefix='tool-compatibility-event-skeleton'
+          applyHeaderSize
+          tableClassName='[&_[data-slot=table]]:text-[13px] [&_[data-slot=table]_td]:align-top [&_[data-slot=table]_td]:text-[13px] [&_[data-slot=table]_th]:text-[13px]'
+          toolbar={
+            <div className='flex flex-wrap items-center gap-2'>
+              <Select
+                value={resolutionStatus}
+                onValueChange={(value) => {
+                  setResolutionStatus(
+                    value as 'all' | ToolCompatibilityResolutionStatus
+                  )
+                  setGlobalPagination((current) => ({
+                    ...current,
+                    pageIndex: 0,
+                  }))
+                }}
+              >
+                <SelectTrigger className='w-32'>
+                  <SelectValue placeholder={t('Status')} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value='all'>{t('All')}</SelectItem>
+                  <SelectItem value='open'>{t('Unresolved')}</SelectItem>
+                  <SelectItem value='resolved'>{t('Resolved')}</SelectItem>
+                  <SelectItem value='ignored'>{t('Ignored')}</SelectItem>
+                </SelectContent>
+              </Select>
+              <div className='ms-auto flex items-center gap-2'>
+                {resolutionStatus !== 'all' ? (
+                  <Button
+                    type='button'
+                    size='sm'
+                    variant='ghost'
+                    onClick={() => {
+                      setResolutionStatus('all')
+                      setGlobalPagination((current) => ({
+                        ...current,
+                        pageIndex: 0,
+                      }))
+                    }}
+                  >
+                    {t('Reset')}
+                  </Button>
+                ) : null}
+                <span className='text-muted-foreground text-xs'>
+                  {t('{{loaded}} of {{total}} loaded', {
+                    loaded: globalEvents.length,
+                    total: globalTotal,
+                  })}
+                </span>
+                <Button
+                  type='button'
+                  size='sm'
+                  variant='outline'
+                  onClick={refresh}
+                  disabled={globalEventsQuery.isFetching}
+                >
+                  <RefreshCcw className='mr-1 h-3.5 w-3.5' />
+                  {t('Refresh')}
+                </Button>
+              </div>
+            </div>
+          }
+        />
+
+        <AlertDialog
+          open={Boolean(routeConfirmation)}
+          onOpenChange={(open) => {
+            if (!open) setRouteConfirmation(null)
+          }}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>
+                {t('Confirm route-wide change')}
+              </AlertDialogTitle>
+              <AlertDialogDescription>
+                {t(
+                  'This changes tool handling for every model using route {{route}}. Model-specific overrides remain unchanged.',
+                  { route: routeConfirmation?.event.route || '' }
+                )}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>{t('Cancel')}</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={() => {
+                  if (!routeConfirmation) return
+                  mutation.mutate(routeConfirmation)
+                }}
+              >
+                {t('Confirm route-wide change')}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </>
+    )
+  }
+
   if (!isGlobal && !channelId) {
     return (
       <Alert>
@@ -375,34 +712,12 @@ export function ToolCompatibilityEvents({
       ) : null}
       <div className='flex flex-wrap items-center justify-between gap-2'>
         <h5 className='text-sm font-medium'>{t('Recorded issues')}</h5>
-        <div className='flex items-center gap-2'>
-          {isGlobal ? (
-            <Select
-              value={resolutionStatus}
-              onValueChange={(value) =>
-                setResolutionStatus(
-                  value as 'all' | ToolCompatibilityResolutionStatus
-                )
-              }
-            >
-              <SelectTrigger className='h-8 w-32'>
-                <SelectValue placeholder={t('Status')} />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value='all'>{t('All')}</SelectItem>
-                <SelectItem value='open'>{t('Unresolved')}</SelectItem>
-                <SelectItem value='resolved'>{t('Resolved')}</SelectItem>
-                <SelectItem value='ignored'>{t('Ignored')}</SelectItem>
-              </SelectContent>
-            </Select>
-          ) : null}
-          <span className='text-muted-foreground text-xs'>
-            {t('{{loaded}} of {{total}} loaded', {
-              loaded: events.length,
-              total,
-            })}
-          </span>
-        </div>
+        <span className='text-muted-foreground text-xs'>
+          {t('{{loaded}} of {{total}} loaded', {
+            loaded: events.length,
+            total,
+          })}
+        </span>
       </div>
       {eventsQuery.isLoading ? (
         <p className='text-muted-foreground text-sm'>{t('Loading...')}</p>
