@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -244,6 +245,7 @@ func isToolCompatibilityEventRetryableError(err error) bool {
 type ToolCompatibilityEventListOptions struct {
 	ChannelId        int
 	Route            string
+	Model            string
 	RequestedModel   string
 	UpstreamModel    string
 	ToolType         string
@@ -251,6 +253,17 @@ type ToolCompatibilityEventListOptions struct {
 	ResolutionStatus string
 	Page             int
 	PageSize         int
+}
+
+type ToolCompatibilityEventFilterChannel struct {
+	Id   int    `json:"id"`
+	Name string `json:"name"`
+}
+
+type ToolCompatibilityEventFilterOptions struct {
+	Channels []ToolCompatibilityEventFilterChannel `json:"channels"`
+	Models   []string                              `json:"models"`
+	Routes   []string                              `json:"routes"`
 }
 
 func ListToolCompatibilityEvents(options ToolCompatibilityEventListOptions) ([]ToolCompatibilityEvent, int64, error) {
@@ -265,6 +278,9 @@ func ListToolCompatibilityEvents(options ToolCompatibilityEventListOptions) ([]T
 		if value = strings.TrimSpace(value); value != "" {
 			query = query.Where(column+" = ?", value)
 		}
+	}
+	if modelName := strings.TrimSpace(options.Model); modelName != "" {
+		query = query.Where("(requested_model = ? OR upstream_model = ?)", modelName, modelName)
 	}
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
@@ -285,6 +301,51 @@ func ListToolCompatibilityEvents(options ToolCompatibilityEventListOptions) ([]T
 		return nil, 0, err
 	}
 	return events, total, nil
+}
+
+func ListToolCompatibilityEventFilterOptions() (*ToolCompatibilityEventFilterOptions, error) {
+	if DB == nil {
+		return nil, errors.New("database is not initialized")
+	}
+	var channelIDs []int
+	if err := DB.Model(&ToolCompatibilityEvent{}).Distinct("channel_id").Order("channel_id").Pluck("channel_id", &channelIDs).Error; err != nil {
+		return nil, err
+	}
+	channels, err := GetChannelsByIds(channelIDs)
+	if err != nil {
+		return nil, err
+	}
+	channelNames := make(map[int]string, len(channels))
+	for _, channel := range channels {
+		channelNames[channel.Id] = channel.Name
+	}
+	filterChannels := make([]ToolCompatibilityEventFilterChannel, 0, len(channelIDs))
+	for _, channelID := range channelIDs {
+		filterChannels = append(filterChannels, ToolCompatibilityEventFilterChannel{Id: channelID, Name: channelNames[channelID]})
+	}
+
+	var routes, requestedModels, upstreamModels []string
+	if err := DB.Model(&ToolCompatibilityEvent{}).Distinct("route").Order("route").Pluck("route", &routes).Error; err != nil {
+		return nil, err
+	}
+	if err := DB.Model(&ToolCompatibilityEvent{}).Distinct("requested_model").Order("requested_model").Pluck("requested_model", &requestedModels).Error; err != nil {
+		return nil, err
+	}
+	if err := DB.Model(&ToolCompatibilityEvent{}).Distinct("upstream_model").Order("upstream_model").Pluck("upstream_model", &upstreamModels).Error; err != nil {
+		return nil, err
+	}
+	modelSet := make(map[string]struct{}, len(requestedModels)+len(upstreamModels))
+	for _, modelName := range append(requestedModels, upstreamModels...) {
+		if modelName = strings.TrimSpace(modelName); modelName != "" {
+			modelSet[modelName] = struct{}{}
+		}
+	}
+	models := make([]string, 0, len(modelSet))
+	for modelName := range modelSet {
+		models = append(models, modelName)
+	}
+	sort.Strings(models)
+	return &ToolCompatibilityEventFilterOptions{Channels: filterChannels, Models: models, Routes: routes}, nil
 }
 
 func GetToolCompatibilityEventByID(id int) (*ToolCompatibilityEvent, error) {
