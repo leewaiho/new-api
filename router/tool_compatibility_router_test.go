@@ -17,6 +17,7 @@ func TestToolCompatibilityRoutesEnforceReadAndMutationRoles(t *testing.T) {
 		handler any
 	}{
 		{http.MethodGet, "/events", toolCompatibilityRouteAccessAdmin, controller.ListToolCompatibilityEvents},
+		{http.MethodGet, "/events/filter-options", toolCompatibilityRouteAccessAdmin, controller.ListToolCompatibilityEventFilterOptions},
 		{http.MethodPatch, "/events/:id/status", toolCompatibilityRouteAccessRoot, controller.UpdateToolCompatibilityEventStatus},
 		{http.MethodPost, "/events/:id/apply-suggestion", toolCompatibilityRouteAccessRoot, controller.ApplyToolCompatibilityEventSuggestion},
 		{http.MethodPost, "/events/:id/restore-default", toolCompatibilityRouteAccessRoot, controller.RestoreToolCompatibilityEventModelDefault},

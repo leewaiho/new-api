@@ -63,11 +63,16 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
+import {
+  LogsFilterField,
+  LogsFilterToolbar,
+} from '@/features/usage-logs/components/logs-filter-toolbar'
 import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
 import {
   applyToolCompatibilityEventSuggestion,
+  getToolCompatibilityEventFilterOptions,
   getToolCompatibilityEvents,
   restoreToolCompatibilityEventModelDefault,
   updateToolCompatibilityEventStatus,
@@ -107,6 +112,20 @@ type RouteConfirmation = {
 
 const eventPageSize = 50
 const positiveEventTypes = new Set(['accepted_definition', 'invoked'])
+
+type GlobalEventFilters = {
+  channelId: string
+  model: string
+  resolutionStatus: 'all' | ToolCompatibilityResolutionStatus
+  route: string
+}
+
+const defaultGlobalEventFilters: GlobalEventFilters = {
+  channelId: '',
+  model: '',
+  resolutionStatus: 'all',
+  route: '',
+}
 
 type EventPresentation = {
   label: string
@@ -188,9 +207,11 @@ export function ToolCompatibilityEvents({
   const [targetModels, setTargetModels] = useState<Record<number, string>>({})
   const [routeConfirmation, setRouteConfirmation] =
     useState<RouteConfirmation | null>(null)
-  const [resolutionStatus, setResolutionStatus] = useState<
-    'all' | ToolCompatibilityResolutionStatus
-  >('all')
+  const [globalFilters, setGlobalFilters] = useState<GlobalEventFilters>(
+    defaultGlobalEventFilters
+  )
+  const [globalFilterDraft, setGlobalFilterDraft] =
+    useState<GlobalEventFilters>(defaultGlobalEventFilters)
   const [globalPagination, setGlobalPagination] = useState({
     pageIndex: 0,
     pageSize: eventPageSize,
@@ -200,7 +221,7 @@ export function ToolCompatibilityEvents({
   const globalQueryKey = [
     'tool-compatibility-events',
     'global',
-    resolutionStatus,
+    globalFilters,
     globalPagination.pageIndex,
     globalPagination.pageSize,
   ]
@@ -223,15 +244,27 @@ export function ToolCompatibilityEvents({
     queryKey: globalQueryKey,
     queryFn: () =>
       getToolCompatibilityEvents({
-        ...(resolutionStatus === 'all'
+        ...(globalFilters.channelId
+          ? { channel_id: Number(globalFilters.channelId) }
+          : {}),
+        ...(globalFilters.model ? { model: globalFilters.model } : {}),
+        ...(globalFilters.route ? { route: globalFilters.route } : {}),
+        ...(globalFilters.resolutionStatus === 'all'
           ? {}
-          : { resolution_status: resolutionStatus }),
+          : { resolution_status: globalFilters.resolutionStatus }),
         page: globalPagination.pageIndex + 1,
         page_size: globalPagination.pageSize,
       }),
     enabled: isGlobal,
     placeholderData: (previousData) => previousData,
   })
+  const globalEventFilterOptionsQuery = useQuery({
+    queryKey: ['tool-compatibility-event-filter-options'],
+    queryFn: getToolCompatibilityEventFilterOptions,
+    enabled: isGlobal,
+    staleTime: 60_000,
+  })
+
   const refresh = () =>
     queryClient.invalidateQueries({
       queryKey: isGlobal ? globalQueryKey : channelQueryKey,
@@ -435,12 +468,14 @@ export function ToolCompatibilityEvents({
       {
         id: 'actions',
         header: t('Actions'),
+        size: 280,
+        minSize: 240,
         cell: ({ row }) => {
           const event = row.original
           const isConflict = event.event_type === 'name_conflict'
           const hasSuggestion = Boolean(event.suggested_policy)
           return (
-            <div className='flex min-w-max flex-wrap gap-1'>
+            <div className='flex w-[280px] flex-wrap gap-1'>
               {hasSuggestion ? (
                 <Button
                   type='button'
@@ -550,53 +585,246 @@ export function ToolCompatibilityEvents({
           skeletonKeyPrefix='tool-compatibility-event-skeleton'
           applyHeaderSize
           tableClassName='[&_[data-slot=table]]:text-[13px] [&_[data-slot=table]_td]:align-top [&_[data-slot=table]_td]:text-[13px] [&_[data-slot=table]_th]:text-[13px]'
+          pinnedColumns={[{ columnId: 'actions', side: 'right' }]}
           toolbar={
-            <div className='flex flex-wrap items-center gap-2'>
-              <Select
-                value={resolutionStatus}
-                onValueChange={(value) => {
-                  setResolutionStatus(
-                    value as 'all' | ToolCompatibilityResolutionStatus
-                  )
-                  setGlobalPagination((current) => ({
-                    ...current,
-                    pageIndex: 0,
-                  }))
-                }}
-              >
-                <SelectTrigger className='w-32'>
-                  <SelectValue placeholder={t('Status')} />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value='all'>{t('All')}</SelectItem>
-                  <SelectItem value='open'>{t('Unresolved')}</SelectItem>
-                  <SelectItem value='resolved'>{t('Resolved')}</SelectItem>
-                  <SelectItem value='ignored'>{t('Ignored')}</SelectItem>
-                </SelectContent>
-              </Select>
-              <div className='ms-auto flex items-center gap-2'>
-                {resolutionStatus !== 'all' ? (
-                  <Button
-                    type='button'
-                    size='sm'
-                    variant='ghost'
-                    onClick={() => {
-                      setResolutionStatus('all')
-                      setGlobalPagination((current) => ({
+            <LogsFilterToolbar
+              table={globalTable}
+              primaryFilters={
+                <>
+                  <LogsFilterField>
+                    <Select
+                      value={globalFilterDraft.resolutionStatus}
+                      onValueChange={(value) =>
+                        setGlobalFilterDraft((current) => ({
+                          ...current,
+                          resolutionStatus: (value ?? 'all') as
+                            | 'all'
+                            | ToolCompatibilityResolutionStatus,
+                        }))
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder={t('Status')} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value='all'>{t('All')}</SelectItem>
+                        <SelectItem value='open'>{t('Unresolved')}</SelectItem>
+                        <SelectItem value='resolved'>
+                          {t('Resolved')}
+                        </SelectItem>
+                        <SelectItem value='ignored'>{t('Ignored')}</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </LogsFilterField>
+                  <LogsFilterField>
+                    <Select
+                      value={globalFilterDraft.channelId || '__all'}
+                      onValueChange={(value) =>
+                        setGlobalFilterDraft((current) => ({
+                          ...current,
+                          channelId: !value || value === '__all' ? '' : value,
+                        }))
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder={t('Channel')} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value='__all'>
+                          {t('All channels')}
+                        </SelectItem>
+                        {(
+                          globalEventFilterOptionsQuery.data?.data.channels ||
+                          []
+                        ).map((channel) => (
+                          <SelectItem
+                            key={channel.id}
+                            value={String(channel.id)}
+                          >
+                            {channel.name || `#${channel.id}`}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </LogsFilterField>
+                  <LogsFilterField>
+                    <Select
+                      value={globalFilterDraft.model || '__all'}
+                      onValueChange={(value) =>
+                        setGlobalFilterDraft((current) => ({
+                          ...current,
+                          model: !value || value === '__all' ? '' : value,
+                        }))
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder={t('Model')} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value='__all'>{t('All models')}</SelectItem>
+                        {(
+                          globalEventFilterOptionsQuery.data?.data.models || []
+                        ).map((model) => (
+                          <SelectItem key={model} value={model}>
+                            {model}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </LogsFilterField>
+                  <LogsFilterField>
+                    <Select
+                      value={globalFilterDraft.route || '__all'}
+                      onValueChange={(value) =>
+                        setGlobalFilterDraft((current) => ({
+                          ...current,
+                          route: !value || value === '__all' ? '' : value,
+                        }))
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder={t('Route')} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value='__all'>{t('All routes')}</SelectItem>
+                        {(
+                          globalEventFilterOptionsQuery.data?.data.routes || []
+                        ).map((route) => (
+                          <SelectItem key={route} value={route}>
+                            {route}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </LogsFilterField>
+                </>
+              }
+              mobilePinnedFilters={
+                <LogsFilterField>
+                  <Select
+                    value={globalFilterDraft.resolutionStatus}
+                    onValueChange={(value) =>
+                      setGlobalFilterDraft((current) => ({
                         ...current,
-                        pageIndex: 0,
+                        resolutionStatus: (value ?? 'all') as
+                          | 'all'
+                          | ToolCompatibilityResolutionStatus,
                       }))
-                    }}
+                    }
                   >
-                    {t('Reset')}
-                  </Button>
-                ) : null}
+                    <SelectTrigger>
+                      <SelectValue placeholder={t('Status')} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value='all'>{t('All')}</SelectItem>
+                      <SelectItem value='open'>{t('Unresolved')}</SelectItem>
+                      <SelectItem value='resolved'>{t('Resolved')}</SelectItem>
+                      <SelectItem value='ignored'>{t('Ignored')}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </LogsFilterField>
+              }
+              mobileFilters={
+                <>
+                  <LogsFilterField>
+                    <Select
+                      value={globalFilterDraft.channelId || '__all'}
+                      onValueChange={(value) =>
+                        setGlobalFilterDraft((current) => ({
+                          ...current,
+                          channelId: !value || value === '__all' ? '' : value,
+                        }))
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder={t('Channel')} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value='__all'>
+                          {t('All channels')}
+                        </SelectItem>
+                        {(
+                          globalEventFilterOptionsQuery.data?.data.channels ||
+                          []
+                        ).map((channel) => (
+                          <SelectItem
+                            key={channel.id}
+                            value={String(channel.id)}
+                          >
+                            {channel.name || `#${channel.id}`}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </LogsFilterField>
+                  <LogsFilterField>
+                    <Select
+                      value={globalFilterDraft.model || '__all'}
+                      onValueChange={(value) =>
+                        setGlobalFilterDraft((current) => ({
+                          ...current,
+                          model: !value || value === '__all' ? '' : value,
+                        }))
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder={t('Model')} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value='__all'>{t('All models')}</SelectItem>
+                        {(
+                          globalEventFilterOptionsQuery.data?.data.models || []
+                        ).map((model) => (
+                          <SelectItem key={model} value={model}>
+                            {model}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </LogsFilterField>
+                  <LogsFilterField>
+                    <Select
+                      value={globalFilterDraft.route || '__all'}
+                      onValueChange={(value) =>
+                        setGlobalFilterDraft((current) => ({
+                          ...current,
+                          route: !value || value === '__all' ? '' : value,
+                        }))
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder={t('Route')} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value='__all'>{t('All routes')}</SelectItem>
+                        {(
+                          globalEventFilterOptionsQuery.data?.data.routes || []
+                        ).map((route) => (
+                          <SelectItem key={route} value={route}>
+                            {route}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </LogsFilterField>
+                </>
+              }
+              mobileFilterCount={
+                [
+                  globalFilterDraft.channelId,
+                  globalFilterDraft.model,
+                  globalFilterDraft.route,
+                ].filter(Boolean).length
+              }
+              stats={
                 <span className='text-muted-foreground text-xs'>
                   {t('{{loaded}} of {{total}} loaded', {
                     loaded: globalEvents.length,
                     total: globalTotal,
                   })}
                 </span>
+              }
+              actionStart={
                 <Button
                   type='button'
                   size='sm'
@@ -607,8 +835,30 @@ export function ToolCompatibilityEvents({
                   <RefreshCcw className='mr-1 h-3.5 w-3.5' />
                   {t('Refresh')}
                 </Button>
-              </div>
-            </div>
+              }
+              hasActiveFilters={
+                globalFilterDraft.channelId !== '' ||
+                globalFilterDraft.model !== '' ||
+                globalFilterDraft.route !== '' ||
+                globalFilterDraft.resolutionStatus !== 'all'
+              }
+              searchLoading={globalEventsQuery.isFetching}
+              onReset={() => {
+                setGlobalFilterDraft(defaultGlobalEventFilters)
+                setGlobalFilters(defaultGlobalEventFilters)
+                setGlobalPagination((current) => ({
+                  ...current,
+                  pageIndex: 0,
+                }))
+              }}
+              onSearch={() => {
+                setGlobalFilters(globalFilterDraft)
+                setGlobalPagination((current) => ({
+                  ...current,
+                  pageIndex: 0,
+                }))
+              }}
+            />
           }
         />
 

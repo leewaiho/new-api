@@ -29,6 +29,7 @@ type toolCompatibilityRouteSpec struct {
 
 var toolCompatibilityRouteSpecs = []toolCompatibilityRouteSpec{
 	{method: http.MethodGet, path: "/events", access: toolCompatibilityRouteAccessAdmin, handler: controller.ListToolCompatibilityEvents},
+	{method: http.MethodGet, path: "/events/filter-options", access: toolCompatibilityRouteAccessAdmin, handler: controller.ListToolCompatibilityEventFilterOptions},
 	{method: http.MethodPatch, path: "/events/:id/status", access: toolCompatibilityRouteAccessRoot, handler: controller.UpdateToolCompatibilityEventStatus},
 	{method: http.MethodPost, path: "/events/:id/apply-suggestion", access: toolCompatibilityRouteAccessRoot, handler: controller.ApplyToolCompatibilityEventSuggestion},
 	{method: http.MethodPost, path: "/events/:id/restore-default", access: toolCompatibilityRouteAccessRoot, handler: controller.RestoreToolCompatibilityEventModelDefault},

@@ -41,6 +41,7 @@ import type {
   SearchChannelsResponse,
   TagOperationParams,
   ToolCompatibilityEvent,
+  ToolCompatibilityEventFilterOptionsResponse,
   ToolCompatibilityEventsResponse,
   ToolCompatibilityMutationRequest,
   ToolCompatibilityMutationResult,
@@ -687,6 +688,7 @@ export async function getToolCompatibilityEvents(params: {
   route?: string
   requested_model?: string
   upstream_model?: string
+  model?: string
   tool_type?: string
   event_type?: string
   resolution_status?: string
@@ -697,6 +699,17 @@ export async function getToolCompatibilityEvents(params: {
   const result = res.data as ToolCompatibilityEventsResponse
   if (!result.success) {
     throw new Error(result.message || 'Failed to load compatibility issues')
+  }
+  return result
+}
+
+export async function getToolCompatibilityEventFilterOptions(): Promise<ToolCompatibilityEventFilterOptionsResponse> {
+  const res = await api.get('/api/tool-compatibility/events/filter-options')
+  const result = res.data as ToolCompatibilityEventFilterOptionsResponse
+  if (!result.success) {
+    throw new Error(
+      result.message || 'Failed to load compatibility filter options'
+    )
   }
   return result
 }

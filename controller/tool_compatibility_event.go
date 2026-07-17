@@ -46,7 +46,7 @@ func ListToolCompatibilityEvents(c *gin.Context) {
 	channelID, _ := strconv.Atoi(c.Query("channel_id"))
 	page, _ := strconv.Atoi(c.Query("page"))
 	pageSize, _ := strconv.Atoi(c.Query("page_size"))
-	events, total, err := model.ListToolCompatibilityEvents(model.ToolCompatibilityEventListOptions{ChannelId: channelID, Route: c.Query("route"), RequestedModel: c.Query("requested_model"), UpstreamModel: c.Query("upstream_model"), ToolType: c.Query("tool_type"), EventType: c.Query("event_type"), ResolutionStatus: c.Query("resolution_status"), Page: page, PageSize: pageSize})
+	events, total, err := model.ListToolCompatibilityEvents(model.ToolCompatibilityEventListOptions{ChannelId: channelID, Route: c.Query("route"), Model: c.Query("model"), RequestedModel: c.Query("requested_model"), UpstreamModel: c.Query("upstream_model"), ToolType: c.Query("tool_type"), EventType: c.Query("event_type"), ResolutionStatus: c.Query("resolution_status"), Page: page, PageSize: pageSize})
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -56,6 +56,15 @@ func ListToolCompatibilityEvents(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": events, "total": total, "page": max(page, 1), "page_size": min(max(pageSize, 1), 100)})
+}
+
+func ListToolCompatibilityEventFilterOptions(c *gin.Context) {
+	options, err := model.ListToolCompatibilityEventFilterOptions()
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": options})
 }
 
 func populateToolCompatibilityEventChannelNames(events []model.ToolCompatibilityEvent) error {
