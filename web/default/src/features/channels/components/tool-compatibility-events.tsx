@@ -593,6 +593,12 @@ export function ToolCompatibilityEvents({
                 <>
                   <LogsFilterField>
                     <Select
+                      items={[
+                        { value: 'all', label: t('All statuses') },
+                        { value: 'open', label: t('Unresolved') },
+                        { value: 'resolved', label: t('Resolved') },
+                        { value: 'ignored', label: t('Ignored') },
+                      ]}
                       value={globalFilterDraft.resolutionStatus}
                       onValueChange={(value) =>
                         setGlobalFilterDraft((current) => ({
@@ -618,6 +624,16 @@ export function ToolCompatibilityEvents({
                   </LogsFilterField>
                   <LogsFilterField>
                     <Select
+                      items={[
+                        { value: '__all', label: t('All channels') },
+                        ...(
+                          globalEventFilterOptionsQuery.data?.data.channels ||
+                          []
+                        ).map((channel) => ({
+                          value: String(channel.id),
+                          label: channel.name || `#${channel.id}`,
+                        })),
+                      ]}
                       value={globalFilterDraft.channelId || '__all'}
                       onValueChange={(value) =>
                         setGlobalFilterDraft((current) => ({
@@ -649,6 +665,12 @@ export function ToolCompatibilityEvents({
                   </LogsFilterField>
                   <LogsFilterField>
                     <Select
+                      items={[
+                        { value: '__all', label: t('All models') },
+                        ...(
+                          globalEventFilterOptionsQuery.data?.data.models || []
+                        ).map((model) => ({ value: model, label: model })),
+                      ]}
                       value={globalFilterDraft.model || '__all'}
                       onValueChange={(value) =>
                         setGlobalFilterDraft((current) => ({
@@ -674,6 +696,12 @@ export function ToolCompatibilityEvents({
                   </LogsFilterField>
                   <LogsFilterField>
                     <Select
+                      items={[
+                        { value: '__all', label: t('All routes') },
+                        ...(
+                          globalEventFilterOptionsQuery.data?.data.routes || []
+                        ).map((route) => ({ value: route, label: route })),
+                      ]}
                       value={globalFilterDraft.route || '__all'}
                       onValueChange={(value) =>
                         setGlobalFilterDraft((current) => ({
@@ -702,6 +730,12 @@ export function ToolCompatibilityEvents({
               mobilePinnedFilters={
                 <LogsFilterField>
                   <Select
+                    items={[
+                      { value: 'all', label: t('All statuses') },
+                      { value: 'open', label: t('Unresolved') },
+                      { value: 'resolved', label: t('Resolved') },
+                      { value: 'ignored', label: t('Ignored') },
+                    ]}
                     value={globalFilterDraft.resolutionStatus}
                     onValueChange={(value) =>
                       setGlobalFilterDraft((current) => ({
@@ -728,6 +762,16 @@ export function ToolCompatibilityEvents({
                 <>
                   <LogsFilterField>
                     <Select
+                      items={[
+                        { value: '__all', label: t('All channels') },
+                        ...(
+                          globalEventFilterOptionsQuery.data?.data.channels ||
+                          []
+                        ).map((channel) => ({
+                          value: String(channel.id),
+                          label: channel.name || `#${channel.id}`,
+                        })),
+                      ]}
                       value={globalFilterDraft.channelId || '__all'}
                       onValueChange={(value) =>
                         setGlobalFilterDraft((current) => ({
@@ -759,6 +803,12 @@ export function ToolCompatibilityEvents({
                   </LogsFilterField>
                   <LogsFilterField>
                     <Select
+                      items={[
+                        { value: '__all', label: t('All models') },
+                        ...(
+                          globalEventFilterOptionsQuery.data?.data.models || []
+                        ).map((model) => ({ value: model, label: model })),
+                      ]}
                       value={globalFilterDraft.model || '__all'}
                       onValueChange={(value) =>
                         setGlobalFilterDraft((current) => ({
@@ -784,6 +834,12 @@ export function ToolCompatibilityEvents({
                   </LogsFilterField>
                   <LogsFilterField>
                     <Select
+                      items={[
+                        { value: '__all', label: t('All routes') },
+                        ...(
+                          globalEventFilterOptionsQuery.data?.data.routes || []
+                        ).map((route) => ({ value: route, label: route })),
+                      ]}
                       value={globalFilterDraft.route || '__all'}
                       onValueChange={(value) =>
                         setGlobalFilterDraft((current) => ({
