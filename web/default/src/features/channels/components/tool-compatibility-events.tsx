@@ -25,12 +25,16 @@ import {
   AlertTriangle,
   Check,
   ChevronDown,
+  CircleCheck,
+  CircleMinus,
   RefreshCcw,
   RotateCcw,
   ShieldAlert,
+  ShieldCheck,
   Wrench,
   X,
 } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -100,6 +104,54 @@ type RouteConfirmation = {
 
 const eventPageSize = 50
 const positiveEventTypes = new Set(['accepted_definition', 'invoked'])
+
+type EventPresentation = {
+  label: string
+  icon: LucideIcon
+  variant: 'destructive' | 'secondary'
+  className?: string
+}
+
+function getEventPresentation(
+  event: ToolCompatibilityEvent
+): EventPresentation {
+  if (event.resolution_status === 'resolved') {
+    return {
+      label: 'Handled',
+      icon: CircleCheck,
+      variant: 'secondary',
+      className:
+        'bg-emerald-500/10 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300',
+    }
+  }
+  if (event.resolution_status === 'ignored') {
+    return {
+      label: 'Ignored',
+      icon: CircleMinus,
+      variant: 'secondary',
+      className: 'text-muted-foreground',
+    }
+  }
+  if (
+    positiveEventTypes.has(event.event_type) ||
+    (event.event_type === 'name_conflict' &&
+      event.current_policy === 'deduplicate') ||
+    (event.event_type === 'policy_drop' && event.current_policy === 'drop')
+  ) {
+    return {
+      label: 'Expected policy',
+      icon: ShieldCheck,
+      variant: 'secondary',
+      className:
+        'bg-sky-500/10 text-sky-700 dark:bg-sky-500/20 dark:text-sky-300',
+    }
+  }
+  return {
+    label: 'Needs attention',
+    icon: AlertTriangle,
+    variant: 'destructive',
+  }
+}
 
 const formatTime = (timestamp: number) =>
   timestamp > 0 ? new Date(timestamp * 1000).toLocaleString() : '-'
@@ -355,6 +407,8 @@ export function ToolCompatibilityEvents({
               ? eventModel
               : modelOptions[0] || '')
           const isConflict = event.event_type === 'name_conflict'
+          const presentation = getEventPresentation(event)
+          const EventIcon = presentation.icon
           const isFirstEventForRoute =
             events.find((candidate) => candidate.route === event.route)?.id ===
             event.id
@@ -365,15 +419,14 @@ export function ToolCompatibilityEvents({
             >
               <div className='flex flex-wrap items-center gap-1.5'>
                 <Badge
-                  variant={
-                    event.resolution_status === 'open'
-                      ? 'destructive'
-                      : 'secondary'
-                  }
+                  variant={presentation.variant}
+                  className={presentation.className}
                 >
-                  {t(event.event_type)}
+                  <EventIcon data-icon='inline-start' aria-hidden='true' />
+                  {t(presentation.label)}
                 </Badge>
-                <Badge variant='outline'>{t(event.resolution_status)}</Badge>
+                <Badge variant='outline'>{t(event.event_type)}</Badge>
+                <Badge variant='secondary'>{t(event.resolution_status)}</Badge>
                 <span className='font-medium break-all'>{event.route}</span>
                 <span className='break-all'>{eventModel || '-'}</span>
                 <span className='break-all'>
