@@ -78,6 +78,7 @@ import type {
 } from '../types'
 
 type ToolCompatibilityEventsProps = {
+  mode?: 'channel' | 'global'
   channelId?: number
   channelModels?: string[]
   routes?: AdvancedCustomRoute[]
@@ -118,6 +119,7 @@ function latestEvent(
 }
 
 export function ToolCompatibilityEvents({
+  mode = 'channel',
   channelId,
   channelModels = [],
   routes = [],
@@ -131,17 +133,21 @@ export function ToolCompatibilityEvents({
   const [targetModels, setTargetModels] = useState<Record<number, string>>({})
   const [routeConfirmation, setRouteConfirmation] =
     useState<RouteConfirmation | null>(null)
-  const queryKey = ['tool-compatibility-events', channelId]
+  const isGlobal = mode === 'global'
+  const queryKey = [
+    'tool-compatibility-events',
+    isGlobal ? 'global' : channelId,
+  ]
   const eventsQuery = useInfiniteQuery({
     queryKey,
     initialPageParam: 1,
     queryFn: ({ pageParam }) =>
       getToolCompatibilityEvents({
-        channel_id: channelId,
+        ...(isGlobal ? {} : { channel_id: channelId }),
         page: pageParam,
         page_size: eventPageSize,
       }),
-    enabled: Boolean(channelId),
+    enabled: isGlobal || Boolean(channelId),
     getNextPageParam: (lastPage) => {
       const loaded = lastPage.page * lastPage.page_size
       return loaded < lastPage.total ? lastPage.page + 1 : undefined
@@ -245,7 +251,7 @@ export function ToolCompatibilityEvents({
       toast.error(error.message || t('Operation failed')),
   })
 
-  if (!channelId) {
+  if (!isGlobal && !channelId) {
     return (
       <Alert>
         <AlertDescription>
@@ -297,14 +303,17 @@ export function ToolCompatibilityEvents({
         </Alert>
       ) : null}
 
-      <CapabilityMatrix
-        routes={responseRoutes}
-        models={matrixModels}
-        configuredModelSet={configuredModelSet}
-        events={events}
-      />
-
-      <Separator />
+      {!isGlobal ? (
+        <>
+          <CapabilityMatrix
+            routes={responseRoutes}
+            models={matrixModels}
+            configuredModelSet={configuredModelSet}
+            events={events}
+          />
+          <Separator />
+        </>
+      ) : null}
       <div className='flex flex-wrap items-center justify-between gap-2'>
         <h5 className='text-sm font-medium'>{t('Recorded issues')}</h5>
         <span className='text-muted-foreground text-xs'>
@@ -319,7 +328,11 @@ export function ToolCompatibilityEvents({
       ) : null}
       {!eventsQuery.isLoading && !eventsQuery.isError && events.length === 0 ? (
         <p className='text-muted-foreground text-sm'>
-          {t('No compatibility issues recorded for this channel.')}
+          {t(
+            isGlobal
+              ? 'No compatibility issues recorded.'
+              : 'No compatibility issues recorded for this channel.'
+          )}
         </p>
       ) : null}
       <div className='space-y-2'>
@@ -328,7 +341,12 @@ export function ToolCompatibilityEvents({
           const eventModel = modelForEvent(event)
           const modelOptions = [
             ...new Set(
-              channelModels.map((model) => model.trim()).filter(Boolean)
+              [
+                ...channelModels,
+                ...(isGlobal && eventModel ? [eventModel] : []),
+              ]
+                .map((model) => model.trim())
+                .filter(Boolean)
             ),
           ]
           const selectedModel =
