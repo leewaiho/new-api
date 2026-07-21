@@ -2,6 +2,25 @@
 
 更新时间：2026-07-15（UTC+8）
 
+## 0. 运行环境修正（2026-07-21）
+
+本文中的 `3011` 固定指 homelab `192.168.200.10` 上的测试端点，而不是本地 WSL：
+
+```text
+3010（生产）：http://192.168.200.10:3010
+3011（测试）：http://192.168.200.10:3011
+测试目录：/opt/newapi-test（ssh homelab）
+```
+
+创建、重建或重新基线化 3011 时，必须先启动其独立 test stack，然后在 `/opt/newapi-test` 使用 3010 PostgreSQL 快照恢复 3011 测试库：
+
+```bash
+./sync-db-from-prod.sh
+docker compose restart new-api-test
+```
+
+恢复会覆盖 3011 测试数据；之后的 E2E 配置和临时 Token 只能写入测试库，禁止直连、修改或复用 3010 生产数据库。完整流程见 [scripts/deploy/README.md](../../scripts/deploy/README.md)。
+
 ## 1. 当前 Git 状态
 
 开发分支：
