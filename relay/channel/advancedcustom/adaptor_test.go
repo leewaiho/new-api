@@ -677,7 +677,7 @@ func TestAdaptorResponsesToolsPerToolPolicyPreservesNamespaceAndDropsWebSearch(t
 	assert.Equal(t, "namespace", chatReq.Tools[0].Type)
 }
 
-func TestAdaptorResponsesToolsModePreserveKeepsResponsesTools(t *testing.T) {
+func TestAdaptorResponsesToolsModePreserveRejectsUnsupportedComputerUse(t *testing.T) {
 	adaptor := &Adaptor{}
 	info := advancedCustomRelayInfo(&dto.AdvancedCustomConfig{
 		Routes: []dto.AdvancedCustomRoute{
@@ -695,7 +695,7 @@ func TestAdaptorResponsesToolsModePreserveKeepsResponsesTools(t *testing.T) {
 	info.RequestURLPath = "/v1/responses"
 	c := advancedCustomGinContext("/v1/responses")
 
-	converted, err := adaptor.ConvertOpenAIResponsesRequest(c, info, dto.OpenAIResponsesRequest{
+	_, err := adaptor.ConvertOpenAIResponsesRequest(c, info, dto.OpenAIResponsesRequest{
 		Model: "gpt-test",
 		Input: mustAdvancedCustomRawMessage(t, "hello"),
 		Tools: mustAdvancedCustomRawMessage(t, []map[string]any{
@@ -713,15 +713,47 @@ func TestAdaptorResponsesToolsModePreserveKeepsResponsesTools(t *testing.T) {
 			{"type": "computer_use"},
 		}),
 	})
+	require.ErrorContains(t, err, `responses tool "computer_use" has no registered Chat function adapter`)
+}
+
+func TestAdaptorResponsesToolsModelOverrideDropsUnsupportedComputerPreviewBeforeChatUpstream(t *testing.T) {
+	adaptor := &Adaptor{}
+	info := advancedCustomRelayInfo(&dto.AdvancedCustomConfig{
+		Routes: []dto.AdvancedCustomRoute{
+			{
+				IncomingPath: "/v1/responses",
+				UpstreamPath: "/v1/chat/completions",
+				Converter:    dto.AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions,
+				ConverterOptions: &dto.AdvancedCustomConverterOptions{
+					ResponsesToolModelOverrides: []dto.AdvancedCustomResponsesToolModelOverride{{
+						Models: []string{"glm-5.2"},
+						ToolNames: []dto.AdvancedCustomResponsesToolNamePolicy{{
+							ToolType: "computer_use_preview",
+							Policy:   dto.AdvancedCustomResponsesToolPolicyDrop,
+						}},
+					}},
+				},
+			},
+		},
+	})
+	info.RelayMode = relayconstant.RelayModeResponses
+	info.RequestURLPath = "/v1/responses"
+
+	converted, err := adaptor.ConvertOpenAIResponsesRequest(advancedCustomGinContext("/v1/responses"), info, dto.OpenAIResponsesRequest{
+		Model: "glm-5.2",
+		Input: mustAdvancedCustomRawMessage(t, "use the fallback"),
+		Tools: mustAdvancedCustomRawMessage(t, []map[string]any{
+			{"type": "computer_use_preview"},
+			{"type": "function", "name": "lookup", "parameters": map[string]any{"type": "object"}},
+		}),
+	})
 	require.NoError(t, err)
 
 	chatReq, ok := converted.(*dto.GeneralOpenAIRequest)
 	require.True(t, ok)
-	require.Len(t, chatReq.Tools, 2)
-	assert.Equal(t, "namespace", chatReq.Tools[0].Type)
-	assert.Contains(t, string(chatReq.Tools[0].Custom), `"type":"namespace"`)
-	assert.Equal(t, "computer_use", chatReq.Tools[1].Type)
-	assert.Empty(t, info.ResponsesToolNameMappings)
+	require.Len(t, chatReq.Tools, 1)
+	assert.Equal(t, "function", chatReq.Tools[0].Type)
+	assert.Equal(t, "lookup", chatReq.Tools[0].Function.Name)
 }
 
 func TestAdaptorResponsesPassthroughSendsExpectedToolsToUpstream(t *testing.T) {
