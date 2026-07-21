@@ -494,6 +494,57 @@ func TestAdaptorResponsesToChatCompatibilityEventUsesConvertedToolIndex(t *testi
 	require.Equal(t, dto.AdvancedCustomResponsesToolPolicyDrop, events[0].SuggestedPolicy)
 }
 
+func TestAdaptorResponsesToChatCompatibilityEventPreservesCustomToolName(t *testing.T) {
+	previousDB := model.DB
+	db, err := gorm.Open(sqlite.Open("file:advanced_custom_converted_custom_tool_name?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.ToolCompatibilityEvent{}))
+	model.DB = db
+	t.Cleanup(func() { model.DB = previousDB })
+
+	adaptor := &Adaptor{}
+	info := advancedCustomRelayInfo(&dto.AdvancedCustomConfig{
+		Routes: []dto.AdvancedCustomRoute{{
+			IncomingPath: "/v1/responses",
+			UpstreamPath: "/v1/chat/completions",
+			Converter:    dto.AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions,
+		}},
+	})
+	info.ChannelMeta.ChannelId = 97
+	info.RelayMode = relayconstant.RelayModeResponses
+	info.RequestURLPath = "/v1/responses"
+
+	converted, err := adaptor.ConvertOpenAIResponsesRequest(advancedCustomGinContext("/v1/responses"), info, dto.OpenAIResponsesRequest{
+		Model: "glm-5.2",
+		Input: mustAdvancedCustomRawMessage(t, "hello"),
+		Tools: mustAdvancedCustomRawMessage(t, []map[string]any{
+			{"type": "custom", "name": "apply_patch", "format": map[string]any{"type": "text"}},
+		}),
+	})
+	require.NoError(t, err)
+	chatReq, ok := converted.(*dto.GeneralOpenAIRequest)
+	require.True(t, ok)
+	require.Len(t, chatReq.Tools, 1)
+	require.Equal(t, "custom", chatReq.Tools[0].Type)
+	require.Contains(t, string(chatReq.Tools[0].Custom), `"name":"apply_patch"`)
+
+	recordAdvancedCustomUpstreamToolCompatibilityEvents(
+		info,
+		dto.AdvancedCustomRoute{IncomingPath: "/v1/responses"},
+		"glm-5.2",
+		"glm-5.2",
+		adaptor.compatibilityTools,
+		types.NewErrorWithStatusCode(errors.New("tools[0].type: type is illegal"), types.ErrorCodeBadResponse, http.StatusBadRequest),
+	)
+	var events []model.ToolCompatibilityEvent
+	require.NoError(t, db.Find(&events).Error)
+	require.Len(t, events, 1)
+	require.Equal(t, "custom", events[0].ToolType)
+	require.Equal(t, "apply_patch", events[0].ToolName)
+	require.Equal(t, model.ToolCompatibilityEventTypeUpstreamUnsupported, events[0].EventType)
+	require.Equal(t, dto.AdvancedCustomResponsesToolPolicyDrop, events[0].SuggestedPolicy)
+}
+
 func TestAdaptorResponsesToolsPerToolPolicyPreservesNamespaceAndDropsWebSearch(t *testing.T) {
 	adaptor := &Adaptor{}
 	info := advancedCustomRelayInfo(&dto.AdvancedCustomConfig{
@@ -1182,7 +1233,7 @@ func TestRecordAdvancedCustomUpstreamToolCompatibilityEventsUsesToolIndexForNati
 	require.Equal(t, model.ToolCompatibilityEventTypeUpstreamUnsupported, events[0].EventType)
 }
 
-func TestRecordAdvancedCustomUpstreamToolCompatibilityEventsKeepsNoIndexErrorsUnclassified(t *testing.T) {
+func TestRecordAdvancedCustomUpstreamToolCompatibilityEventsMatchesUniqueExplicitTypeWithoutIndex(t *testing.T) {
 	previousDB := model.DB
 	db, err := gorm.Open(sqlite.Open("file:advanced_custom_upstream_no_index?mode=memory&cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
@@ -1202,6 +1253,62 @@ func TestRecordAdvancedCustomUpstreamToolCompatibilityEventsKeepsNoIndexErrorsUn
 	)
 
 	var events []model.ToolCompatibilityEvent
+	require.NoError(t, db.Find(&events).Error)
+	require.Len(t, events, 1)
+	require.Equal(t, "shell_command", events[0].ToolType)
+	require.Equal(t, model.ToolCompatibilityEventTypeUpstreamUnsupported, events[0].EventType)
+	require.Equal(t, dto.AdvancedCustomResponsesToolPolicyDrop, events[0].SuggestedPolicy)
+}
+
+func TestRecordAdvancedCustomUpstreamToolCompatibilityEventsRejectsAmbiguousOrMissingExplicitTypeWithoutIndex(t *testing.T) {
+	previousDB := model.DB
+	db, err := gorm.Open(sqlite.Open("file:advanced_custom_upstream_explicit_type_attribution?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.ToolCompatibilityEvent{}))
+	model.DB = db
+	t.Cleanup(func() { model.DB = previousDB })
+
+	info := advancedCustomRelayInfo(nil)
+	info.ChannelMeta.ChannelId = 97
+	route := dto.AdvancedCustomRoute{IncomingPath: "/v1/responses"}
+	uniqueTools := []relayconvert.ResponsesToolPolicyDecision{
+		{ToolIndex: 0, ToolType: "shell_command"},
+		{ToolIndex: 1, ToolType: "apply_patch"},
+	}
+
+	recordAdvancedCustomUpstreamToolCompatibilityEvents(
+		info, route, "glm-5.2", "glm-5.2", uniqueTools,
+		types.NewErrorWithStatusCode(errors.New("Unsupported tool type: shell_command"), types.ErrorCodeBadResponse, http.StatusBadRequest),
+	)
+	var events []model.ToolCompatibilityEvent
+	require.NoError(t, db.Find(&events).Error)
+	require.Len(t, events, 1)
+	require.Equal(t, "shell_command", events[0].ToolType)
+	require.Equal(t, model.ToolCompatibilityEventTypeUpstreamUnsupported, events[0].EventType)
+	require.Equal(t, dto.AdvancedCustomResponsesToolPolicyDrop, events[0].SuggestedPolicy)
+
+	require.NoError(t, db.Exec("DELETE FROM tool_compatibility_events").Error)
+	recordAdvancedCustomUpstreamToolCompatibilityEvents(
+		info, route, "glm-5.2", "glm-5.2", uniqueTools,
+		types.NewErrorWithStatusCode(errors.New("Unsupported tool type"), types.ErrorCodeBadResponse, http.StatusBadRequest),
+	)
+	events = nil
+	require.NoError(t, db.Find(&events).Error)
+	require.Len(t, events, 1)
+	require.Empty(t, events[0].ToolType)
+	require.Equal(t, model.ToolCompatibilityEventTypeUnclassified, events[0].EventType)
+	require.Empty(t, events[0].SuggestedPolicy)
+
+	require.NoError(t, db.Exec("DELETE FROM tool_compatibility_events").Error)
+	duplicateTools := []relayconvert.ResponsesToolPolicyDecision{
+		{ToolIndex: 0, ToolType: "shell_command"},
+		{ToolIndex: 1, ToolType: "shell_command"},
+	}
+	recordAdvancedCustomUpstreamToolCompatibilityEvents(
+		info, route, "glm-5.2", "glm-5.2", duplicateTools,
+		types.NewErrorWithStatusCode(errors.New("Unsupported tool type: shell_command"), types.ErrorCodeBadResponse, http.StatusBadRequest),
+	)
+	events = nil
 	require.NoError(t, db.Find(&events).Error)
 	require.Len(t, events, 1)
 	require.Empty(t, events[0].ToolType)

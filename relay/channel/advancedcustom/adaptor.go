@@ -34,6 +34,7 @@ const ChannelName = "advanced_custom"
 const advancedCustomModelPlaceholder = "{model}"
 
 var advancedCustomUpstreamToolIndexPattern = regexp.MustCompile(`(?i)\btools\[(\d+)\]`)
+var advancedCustomExplicitToolTypePattern = regexp.MustCompile(`(?i)\bunsupported\s+tool\s+type\s*:\s*([a-z0-9_.-]+)\b`)
 
 type Adaptor struct {
 	openaiAdaptor openai.Adaptor
@@ -624,6 +625,13 @@ func summarizeAdvancedCustomChatTools(tools []dto.ToolCallRequest) []relayconver
 		toolName := ""
 		if toolType == "function" {
 			toolName = strings.TrimSpace(tool.Function.Name)
+		} else if len(tool.Custom) > 0 {
+			var customTool struct {
+				Name string `json:"name"`
+			}
+			if err := common.Unmarshal(tool.Custom, &customTool); err == nil {
+				toolName = strings.TrimSpace(customTool.Name)
+			}
 		}
 		out = append(out, relayconvert.ResponsesToolPolicyDecision{
 			ToolIndex: toolIndex,
@@ -643,7 +651,7 @@ func recordAdvancedCustomUpstreamToolCompatibilityEvents(info *relaycommon.Relay
 		return
 	}
 	message := cause.ErrorWithStatusCode()
-	matchedTools := []relayconvert.ResponsesToolPolicyDecision{{}}
+	matchedTools := []relayconvert.ResponsesToolPolicyDecision{}
 	if toolIndex, ok := advancedCustomUpstreamToolIndex(message); ok {
 		for _, tool := range tools {
 			if tool.ToolIndex == toolIndex {
@@ -651,6 +659,18 @@ func recordAdvancedCustomUpstreamToolCompatibilityEvents(info *relaycommon.Relay
 				break
 			}
 		}
+	} else if explicitType, ok := advancedCustomExplicitToolType(message); ok {
+		for _, tool := range tools {
+			if strings.EqualFold(strings.TrimSpace(tool.ToolType), explicitType) {
+				matchedTools = append(matchedTools, tool)
+			}
+		}
+		if len(matchedTools) != 1 {
+			matchedTools = nil
+		}
+	}
+	if len(matchedTools) == 0 {
+		matchedTools = []relayconvert.ResponsesToolPolicyDecision{{}}
 	}
 	for _, tool := range matchedTools {
 		eventType, suggestion := classifyAdvancedCustomUpstreamToolError(cause.StatusCode, message, tool.ToolType)
@@ -696,6 +716,14 @@ func advancedCustomUpstreamToolIndex(message string) (int, bool) {
 		return 0, false
 	}
 	return toolIndex, true
+}
+
+func advancedCustomExplicitToolType(message string) (string, bool) {
+	match := advancedCustomExplicitToolTypePattern.FindStringSubmatch(message)
+	if len(match) != 2 {
+		return "", false
+	}
+	return strings.ToLower(strings.TrimSpace(match[1])), true
 }
 
 func isAdvancedCustomToolConversionError(err error) bool {
