@@ -153,10 +153,10 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 	recordAdvancedCustomToolCompatibilityEvents(info, a.route, requestedModel, upstreamModel, decisions, nil)
 	a.compatibilityRequestedModel = requestedModel
 	a.compatibilityUpstreamModel = upstreamModel
-	a.compatibilityTools = summarizeAdvancedCustomResponsesTools(filteredTools)
 	request.Tools = filteredTools
 	switch converter {
 	case dto.AdvancedCustomConverterNone:
+		a.compatibilityTools = summarizeAdvancedCustomResponsesTools(filteredTools)
 		return a.convertOpenAICompatibleResponsesRequest(c, info, request)
 	case dto.AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions:
 		mappings := map[string]dto.ResponsesToolNameMapping{}
@@ -175,6 +175,7 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 		if len(mappings) > 0 {
 			info.ResponsesToolNameMappings = mappings
 		}
+		a.compatibilityTools = summarizeAdvancedCustomChatTools(chatReq.Tools)
 		return a.convertOpenAICompatibleRequest(c, info, chatReq)
 	default:
 		return nil, fmt.Errorf("converter %q does not support OpenAI Responses requests", converter)
@@ -609,6 +610,26 @@ func summarizeAdvancedCustomResponsesTools(raw json.RawMessage) []relayconvert.R
 			continue
 		}
 		out = append(out, relayconvert.ResponsesToolPolicyDecision{ToolIndex: toolIndex, ToolType: toolType, ToolName: strings.TrimSpace(common.Interface2String(tool["name"]))})
+	}
+	return out
+}
+
+func summarizeAdvancedCustomChatTools(tools []dto.ToolCallRequest) []relayconvert.ResponsesToolPolicyDecision {
+	out := make([]relayconvert.ResponsesToolPolicyDecision, 0, len(tools))
+	for toolIndex, tool := range tools {
+		toolType := strings.TrimSpace(tool.Type)
+		if toolType == "" {
+			continue
+		}
+		toolName := ""
+		if toolType == "function" {
+			toolName = strings.TrimSpace(tool.Function.Name)
+		}
+		out = append(out, relayconvert.ResponsesToolPolicyDecision{
+			ToolIndex: toolIndex,
+			ToolType:  toolType,
+			ToolName:  toolName,
+		})
 	}
 	return out
 }

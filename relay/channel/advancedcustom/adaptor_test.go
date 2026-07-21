@@ -423,6 +423,77 @@ func TestAdaptorResponsesToolsNamespaceOnlyPolicyFlattensNamespaceAndPreservesWe
 	assert.Empty(t, chatReq.Tools[1].Custom)
 }
 
+func TestAdaptorResponsesToChatCompatibilityEventUsesConvertedToolIndex(t *testing.T) {
+	previousDB := model.DB
+	db, err := gorm.Open(sqlite.Open("file:advanced_custom_converted_tool_index?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.ToolCompatibilityEvent{}))
+	model.DB = db
+	t.Cleanup(func() { model.DB = previousDB })
+
+	adaptor := &Adaptor{}
+	info := advancedCustomRelayInfo(&dto.AdvancedCustomConfig{
+		Routes: []dto.AdvancedCustomRoute{
+			{
+				IncomingPath: "/v1/responses",
+				UpstreamPath: "/v1/chat/completions",
+				Converter:    dto.AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions,
+				ConverterOptions: &dto.AdvancedCustomConverterOptions{
+					ResponsesTools: &dto.AdvancedCustomResponsesToolsOptions{
+						Namespace: dto.AdvancedCustomResponsesToolPolicyFlatten,
+					},
+				},
+			},
+		},
+	})
+	info.ChannelMeta.ChannelId = 97
+	info.RelayMode = relayconstant.RelayModeResponses
+	info.RequestURLPath = "/v1/responses"
+
+	converted, err := adaptor.ConvertOpenAIResponsesRequest(advancedCustomGinContext("/v1/responses"), info, dto.OpenAIResponsesRequest{
+		Model: "glm-5.2",
+		Input: mustAdvancedCustomRawMessage(t, "hello"),
+		Tools: mustAdvancedCustomRawMessage(t, []map[string]any{
+			{
+				"type": "namespace",
+				"name": "mcp__demo__",
+				"tools": []map[string]any{{
+					"type":       "function",
+					"name":       "lookup_order",
+					"parameters": map[string]any{"type": "object"},
+				}, {
+					"type":       "function",
+					"name":       "lookup_customer",
+					"parameters": map[string]any{"type": "object"},
+				}},
+			},
+			{"type": "shell_command"},
+		}),
+	})
+	require.NoError(t, err)
+	chatReq, ok := converted.(*dto.GeneralOpenAIRequest)
+	require.True(t, ok)
+	require.Len(t, chatReq.Tools, 3)
+	require.Equal(t, "function", chatReq.Tools[0].Type)
+	require.Equal(t, "function", chatReq.Tools[1].Type)
+	require.Equal(t, "shell_command", chatReq.Tools[2].Type)
+
+	recordAdvancedCustomUpstreamToolCompatibilityEvents(
+		info,
+		dto.AdvancedCustomRoute{IncomingPath: "/v1/responses"},
+		"glm-5.2",
+		"glm-5.2",
+		adaptor.compatibilityTools,
+		types.NewErrorWithStatusCode(errors.New("tools[2].type: type is illegal"), types.ErrorCodeBadResponse, http.StatusBadRequest),
+	)
+	var events []model.ToolCompatibilityEvent
+	require.NoError(t, db.Find(&events).Error)
+	require.Len(t, events, 1)
+	require.Equal(t, "shell_command", events[0].ToolType)
+	require.Empty(t, events[0].ToolName)
+	require.Equal(t, dto.AdvancedCustomResponsesToolPolicyDrop, events[0].SuggestedPolicy)
+}
+
 func TestAdaptorResponsesToolsPerToolPolicyPreservesNamespaceAndDropsWebSearch(t *testing.T) {
 	adaptor := &Adaptor{}
 	info := advancedCustomRelayInfo(&dto.AdvancedCustomConfig{

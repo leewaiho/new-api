@@ -435,7 +435,11 @@ func validateAdvancedCustomResponsesToolModelOverrides(index int, allowFlatten b
 			if err := validateAdvancedCustomResponsesToolPolicy(index, "tool_name", policy, false); err != nil {
 				return err
 			}
-			key := normalizeAdvancedCustomResponsesToolType(toolType) + "\x00" + toolName
+			keyToolType := normalizeAdvancedCustomResponsesToolType(toolType)
+			if keyToolType == "unknown" && toolType != "unknown" {
+				keyToolType = toolType
+			}
+			key := keyToolType + "\x00" + toolName
 			if _, exists := seenToolNames[key]; exists {
 				return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options duplicate responses tool name policy: %s/%s", index, toolType, toolName)
 			}

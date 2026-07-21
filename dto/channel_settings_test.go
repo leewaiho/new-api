@@ -224,19 +224,75 @@ func TestAdvancedCustomValidateResponsesToolModelOverrides(t *testing.T) {
 			ConverterOptions: &AdvancedCustomConverterOptions{
 				ResponsesToolModelOverrides: []AdvancedCustomResponsesToolModelOverride{{
 					Models: []string{"glm-5.2"},
-					ToolNames: []AdvancedCustomResponsesToolNamePolicy{{
-						ToolType: "shell_command",
-						Policy:   AdvancedCustomResponsesToolPolicyDrop,
-					}},
+					ToolNames: []AdvancedCustomResponsesToolNamePolicy{
+						{
+							ToolType: "shell_command",
+							Policy:   AdvancedCustomResponsesToolPolicyDrop,
+						},
+						{
+							ToolType: "apply_patch",
+							Policy:   AdvancedCustomResponsesToolPolicyDrop,
+						},
+					},
 				}},
 			},
 		}},
 	}
 	require.NoError(t, unnamedNativeType.Validate())
 
-	knownTypeWithoutName := *unnamedNativeType
-	knownTypeWithoutName.Routes[0].ConverterOptions.ResponsesToolModelOverrides[0].ToolNames[0].ToolType = "web_search"
+	knownTypeWithoutName := &AdvancedCustomConfig{
+		Routes: []AdvancedCustomRoute{{
+			IncomingPath: "/v1/responses",
+			UpstreamPath: "/v1/responses",
+			Converter:    AdvancedCustomConverterNone,
+			ConverterOptions: &AdvancedCustomConverterOptions{
+				ResponsesToolModelOverrides: []AdvancedCustomResponsesToolModelOverride{{
+					Models: []string{"glm-5.2"},
+					ToolNames: []AdvancedCustomResponsesToolNamePolicy{{
+						ToolType: "web_search",
+						Policy:   AdvancedCustomResponsesToolPolicyDrop,
+					}},
+				}},
+			},
+		}},
+	}
 	require.ErrorContains(t, knownTypeWithoutName.Validate(), "requires tool_type, tool_name, and policy")
+
+	duplicateUnnamedNativeType := &AdvancedCustomConfig{
+		Routes: []AdvancedCustomRoute{{
+			IncomingPath: "/v1/responses",
+			UpstreamPath: "/v1/responses",
+			Converter:    AdvancedCustomConverterNone,
+			ConverterOptions: &AdvancedCustomConverterOptions{
+				ResponsesToolModelOverrides: []AdvancedCustomResponsesToolModelOverride{{
+					Models: []string{"glm-5.2"},
+					ToolNames: []AdvancedCustomResponsesToolNamePolicy{
+						{ToolType: "shell_command", Policy: AdvancedCustomResponsesToolPolicyDrop},
+						{ToolType: "shell_command", Policy: AdvancedCustomResponsesToolPolicyReject},
+					},
+				}},
+			},
+		}},
+	}
+	require.ErrorContains(t, duplicateUnnamedNativeType.Validate(), "duplicate responses tool name policy")
+
+	duplicateKnownAlias := &AdvancedCustomConfig{
+		Routes: []AdvancedCustomRoute{{
+			IncomingPath: "/v1/responses",
+			UpstreamPath: "/v1/responses",
+			Converter:    AdvancedCustomConverterNone,
+			ConverterOptions: &AdvancedCustomConverterOptions{
+				ResponsesToolModelOverrides: []AdvancedCustomResponsesToolModelOverride{{
+					Models: []string{"glm-5.2"},
+					ToolNames: []AdvancedCustomResponsesToolNamePolicy{
+						{ToolType: "image_gen", ToolName: "imagegen", Policy: AdvancedCustomResponsesToolPolicyDrop},
+						{ToolType: "image_generation", ToolName: "imagegen", Policy: AdvancedCustomResponsesToolPolicyReject},
+					},
+				}},
+			},
+		}},
+	}
+	require.ErrorContains(t, duplicateKnownAlias.Validate(), "duplicate responses tool name policy")
 
 	duplicateModel := valid
 	duplicateModel.Routes[0].ConverterOptions.ResponsesToolModelOverrides = append(
