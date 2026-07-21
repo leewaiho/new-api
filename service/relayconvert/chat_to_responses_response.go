@@ -592,6 +592,14 @@ func (s *ChatToResponsesStreamState) toolOutput(tool *chatToResponsesStreamTool,
 			}
 		case responsesNativeToolTypeShellCommand:
 			output.Name = mapping.Name
+		case responsesNativeToolTypeToolSearch:
+			output.Type = "tool_search_call"
+			output.Name = ""
+			output.Arguments = nil
+			output.Execution = "client"
+			if arguments, err := toolSearchArgumentsFromChat(tool.Arguments.String()); err == nil {
+				output.Arguments = arguments
+			}
 		}
 		output.Namespace = mapping.Namespace
 		if mapping.NativeToolType == "" {
@@ -624,6 +632,10 @@ func (s *ChatToResponsesStreamState) toolItemID(name string, callID string, fall
 			return responsesToolItemID("ctc", callID, fallback)
 		case responsesNativeToolTypeShellCommand:
 			return responsesToolItemID("fc", callID, fallback)
+		case responsesNativeToolTypeToolSearch:
+			if strings.TrimSpace(callID) != "" {
+				return strings.TrimSpace(callID)
+			}
 		}
 	}
 	if strings.TrimSpace(callID) != "" {
@@ -713,12 +725,31 @@ func ApplyResponsesToolNameMappings(resp *dto.OpenAIResponsesResponse, mappings 
 			output.ID = responsesToolItemID("fc", output.CallId, output.ID)
 			output.Name = mapping.Name
 			output.Namespace = ""
+		case responsesNativeToolTypeToolSearch:
+			arguments, err := toolSearchArgumentsFromChat(output.ArgumentsString())
+			if err != nil {
+				return err
+			}
+			output.Type = "tool_search_call"
+			output.ID = output.CallId
+			output.Name = ""
+			output.Namespace = ""
+			output.Execution = "client"
+			output.Arguments = arguments
 		default:
 			output.Namespace = mapping.Namespace
 			output.Name = mapping.Name
 		}
 	}
 	return nil
+}
+
+func toolSearchArgumentsFromChat(arguments string) (json.RawMessage, error) {
+	var value map[string]any
+	if err := common.Unmarshal([]byte(arguments), &value); err != nil {
+		return nil, fmt.Errorf("invalid tool_search arguments: %w", err)
+	}
+	return common.Marshal(value)
 }
 
 func customToolInputFromChatArguments(arguments json.RawMessage) (string, error) {

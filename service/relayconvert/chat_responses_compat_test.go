@@ -3,6 +3,7 @@ package relayconvert
 import (
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
@@ -114,6 +115,51 @@ func TestApplyResponsesToolNameMappingsRestoresNativeCodingTools(t *testing.T) {
 	assert.Equal(t, "call_shell", resp.Output[1].CallId)
 	assert.Equal(t, "shell_command", resp.Output[1].Name)
 	assert.JSONEq(t, `{"command":"pwd","workdir":"/repo","timeout_ms":1000,"login":true,"additional_permissions":{"network":true}}`, string(resp.Output[1].Arguments))
+}
+
+func TestApplyResponsesToolNameMappingsRestoresToolSearch(t *testing.T) {
+	resp := &dto.OpenAIResponsesResponse{
+		Output: []dto.ResponsesOutput{{
+			Type:      responsesOutputTypeFunctionCall,
+			ID:        "call_tool_search_1",
+			CallId:    "call_tool_search_1",
+			Name:      "tool_search",
+			Arguments: []byte(`"{\"query\":\"Gmail search emails\",\"limit\":10}"`),
+		}},
+	}
+
+	require.NoError(t, ApplyResponsesToolNameMappings(resp, map[string]dto.ResponsesToolNameMapping{
+		"tool_search": {Name: "tool_search", NativeToolType: "tool_search"},
+	}))
+	encoded, err := common.Marshal(resp.Output[0])
+	require.NoError(t, err)
+	assert.Equal(t, "tool_search_call", gjson.GetBytes(encoded, "type").String())
+	assert.Equal(t, "call_tool_search_1", gjson.GetBytes(encoded, "call_id").String())
+	assert.Equal(t, "client", gjson.GetBytes(encoded, "execution").String())
+	assert.Equal(t, "Gmail search emails", gjson.GetBytes(encoded, "arguments.query").String())
+	assert.Equal(t, int64(10), gjson.GetBytes(encoded, "arguments.limit").Int())
+	assert.False(t, gjson.GetBytes(encoded, "arguments").IsArray())
+	assert.False(t, gjson.GetBytes(encoded, "id").String() == "fc_call_tool_search_1")
+}
+
+func TestChatCompletionsResponseToResponsesKeepsUnmappedToolSearchAsFunctionCall(t *testing.T) {
+	resp, _, err := ChatCompletionsResponseToResponsesResponse(&dto.OpenAITextResponse{
+		Model: "gpt-test",
+		Choices: []dto.OpenAITextResponseChoice{{
+			Message:      assistantMessageWithTool("", "call_tool_search_1", "tool_search", `{"query":"ordinary function"}`),
+			FinishReason: "tool_calls",
+		}},
+	}, "resp_1")
+	require.NoError(t, err)
+	require.Len(t, resp.Output, 1)
+
+	output := resp.Output[0]
+	assert.Equal(t, responsesOutputTypeFunctionCall, output.Type)
+	assert.Equal(t, "call_tool_search_1", output.ID)
+	assert.Equal(t, "call_tool_search_1", output.CallId)
+	assert.Equal(t, "tool_search", output.Name)
+	assert.JSONEq(t, `"{\"query\":\"ordinary function\"}"`, string(output.Arguments))
+	assert.Empty(t, output.Execution)
 }
 
 func TestResponsesResponseToChatCompletionsPreservesTextAndToolCalls(t *testing.T) {
@@ -724,6 +770,62 @@ func TestChatCompletionsStreamToResponsesEventsRestoreNativeCodingTools(t *testi
 	assert.Equal(t, "fc_call_shell", final.Output[1].ID)
 	assert.Equal(t, "call_shell", final.Output[1].CallId)
 	assert.JSONEq(t, `"{\"command\":\"pwd\",\"workdir\":\"/repo\",\"additional_permissions\":{\"network\":true}}"`, string(final.Output[1].Arguments))
+}
+
+func TestChatCompletionsStreamToResponsesEventsRestoresToolSearch(t *testing.T) {
+	state := NewChatToResponsesStreamState("resp_1", "glm-5.2")
+	state.SetToolNameMappings(map[string]dto.ResponsesToolNameMapping{
+		"tool_search": {Name: "tool_search", NativeToolType: "tool_search"},
+	})
+	toolIndex := 0
+	finishReason := "tool_calls"
+
+	var events []ChatToResponsesStreamEvent
+	events = append(events, mustResponsesEventsFromChatChunk(t, state, &dto.ChatCompletionsStreamResponse{
+		Choices: []dto.ChatCompletionsStreamResponseChoice{{Index: 0, Delta: dto.ChatCompletionsStreamResponseChoiceDelta{
+			ToolCalls: []dto.ToolCallResponse{{
+				Index: &toolIndex,
+				ID:    "call_tool_search_1",
+				Type:  "function",
+				Function: dto.FunctionResponse{
+					Name: "tool_search",
+				},
+			}},
+		}}},
+	})...)
+	events = append(events, mustResponsesEventsFromChatChunk(t, state, &dto.ChatCompletionsStreamResponse{
+		Choices: []dto.ChatCompletionsStreamResponseChoice{{Index: 0, Delta: dto.ChatCompletionsStreamResponseChoiceDelta{
+			ToolCalls: []dto.ToolCallResponse{{
+				Index:    &toolIndex,
+				Function: dto.FunctionResponse{Arguments: `{"query":"Gmail search emails","limit":10}`},
+			}},
+		}}},
+	})...)
+	events = append(events, mustResponsesEventsFromChatChunk(t, state, &dto.ChatCompletionsStreamResponse{
+		Choices: []dto.ChatCompletionsStreamResponseChoice{{Index: 0, FinishReason: &finishReason}},
+	})...)
+	finalEvents, err := FinalizeChatCompletionsStreamToResponses(state)
+	require.NoError(t, err)
+	events = append(events, finalEvents...)
+
+	for _, event := range events {
+		if event.Payload.ItemID != "" {
+			assert.Equal(t, "call_tool_search_1", event.Payload.ItemID)
+		}
+		if event.Payload.Item != nil && event.Payload.Item.CallId == "call_tool_search_1" {
+			assert.Equal(t, "tool_search_call", event.Payload.Item.Type)
+			assert.Equal(t, "call_tool_search_1", event.Payload.Item.ID)
+		}
+	}
+	final := events[len(events)-1].Payload.Response
+	require.NotNil(t, final)
+	require.Len(t, final.Output, 1)
+	encoded, err := common.Marshal(final.Output[0])
+	require.NoError(t, err)
+	assert.Equal(t, "tool_search_call", gjson.GetBytes(encoded, "type").String())
+	assert.Equal(t, "client", gjson.GetBytes(encoded, "execution").String())
+	assert.Equal(t, "Gmail search emails", gjson.GetBytes(encoded, "arguments.query").String())
+	assert.Equal(t, int64(10), gjson.GetBytes(encoded, "arguments.limit").Int())
 }
 
 func TestChatCompletionsStreamToResponsesEventsKeepsNativeToolIDsStableWhenHeadersArriveLate(t *testing.T) {

@@ -234,6 +234,25 @@ func TestApplyAndRestoreToolCompatibilitySuggestionUsesUnnamedNativeType(t *test
 	require.Empty(t, loadToolCompatibilityRoute(t, channel.Id).ConverterOptions.ResponsesToolModelOverrides)
 }
 
+func TestApplyToolCompatibilitySuggestionForSystemDefaultComputerRejectUsesModelToolNameRule(t *testing.T) {
+	withToolCompatibilityControllerDB(t)
+	channel := createToolCompatibilityChannel(t, &dto.AdvancedCustomConverterOptions{})
+	event := createToolCompatibilityEvent(t, channel.Id, model.ToolCompatibilityEventTypePolicyReject, "computer", "", dto.AdvancedCustomResponsesToolPolicyDrop)
+
+	response := runToolCompatibilityMutation(t, ApplyToolCompatibilityEventSuggestion, event.Id, `{}`)
+	require.True(t, response.Success, response.Message)
+	require.Equal(t, dto.AdvancedCustomResponsesToolPolicyDrop, response.Data.EffectivePolicy)
+	require.Equal(t, dto.AdvancedCustomResponsesToolPolicySourceModelToolName, response.Data.PolicySource)
+
+	route := loadToolCompatibilityRoute(t, channel.Id)
+	require.Len(t, route.ConverterOptions.ResponsesToolModelOverrides, 1)
+	require.Equal(t, []dto.AdvancedCustomResponsesToolNamePolicy{{
+		ToolType: "computer",
+		ToolName: "",
+		Policy:   dto.AdvancedCustomResponsesToolPolicyDrop,
+	}}, route.ConverterOptions.ResponsesToolModelOverrides[0].ToolNames)
+}
+
 func TestApplyToolCompatibilitySuggestionRejectsStaleModelWithoutChangingStatus(t *testing.T) {
 	withToolCompatibilityControllerDB(t)
 	channel := createToolCompatibilityChannel(t, &dto.AdvancedCustomConverterOptions{})

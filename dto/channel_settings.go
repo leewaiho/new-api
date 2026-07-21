@@ -448,7 +448,10 @@ func validateAdvancedCustomConverterOptions(index int, incomingPath string, conv
 		if err := validateAdvancedCustomResponsesToolPolicy(index, "web_search", options.ResponsesTools.WebSearch, false); err != nil {
 			return err
 		}
-		if err := validateAdvancedCustomResponsesToolPolicy(index, "tool_search", options.ResponsesTools.ToolSearch, false); err != nil {
+		if converter == AdvancedCustomConverterNone && strings.TrimSpace(options.ResponsesTools.ToolSearch) == AdvancedCustomResponsesToolPolicyFlatten {
+			return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options tool_search flatten is not supported by converter none", index)
+		}
+		if err := validateAdvancedCustomResponsesToolPolicy(index, "tool_search", options.ResponsesTools.ToolSearch, allowFlatten); err != nil {
 			return err
 		}
 		if err := validateAdvancedCustomResponsesToolPolicy(index, "image_generation", options.ResponsesTools.ImageGeneration, false); err != nil {

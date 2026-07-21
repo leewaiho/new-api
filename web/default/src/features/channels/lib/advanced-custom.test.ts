@@ -124,6 +124,26 @@ describe('advanced custom config round trip', () => {
   })
 })
 
+describe('tool search flatten validation', () => {
+  test('allows only Responses to Chat routes', () => {
+    const route = {
+      ...validResponsesRoute,
+      converter_options: { responses_tools: { tool_search: 'flatten' as const } },
+    }
+    const flattened: AdvancedCustomConfig = {
+      advanced_routes: [route],
+    }
+    assert.equal(validateAdvancedCustomConfig(flattened), null)
+
+    route.converter = 'none'
+    route.upstream_path = '/v1/responses'
+    assert.match(
+      validateAdvancedCustomConfig(flattened)?.message || '',
+      /tool_search flatten/
+    )
+  })
+})
+
 describe('advanced custom compatibility mutation merge', () => {
   test('updates only compatibility policy fields for the matching route', () => {
     const current: AdvancedCustomConfig = {
@@ -295,6 +315,50 @@ describe('advanced custom tool policy resolution', () => {
     assert.deepEqual(
       resolveAdvancedCustomResponsesToolPolicy(route, 'other', 'web_search'),
       { policy: 'preserve', source: 'system_default' }
+    )
+  })
+
+  test('rejects computer tools by default and lets a model name rule override', () => {
+    for (const toolType of [
+      'computer',
+      'computer_use',
+      'computer_use_preview',
+    ]) {
+      assert.deepEqual(
+        resolveAdvancedCustomResponsesToolPolicy(
+          validResponsesRoute,
+          'other',
+          toolType
+        ),
+        { policy: 'reject', source: 'system_default' }
+      )
+    }
+
+    const route = {
+      ...validResponsesRoute,
+      converter_options: {
+        responses_tool_model_overrides: [
+          {
+            models: ['glm-5.2'],
+            responses_tool_names: [
+              {
+                tool_type: 'computer',
+                tool_name: '',
+                policy: 'drop' as const,
+              },
+            ],
+          },
+        ],
+      },
+    }
+
+    assert.deepEqual(
+      resolveAdvancedCustomResponsesToolPolicy(route, 'glm-5.2', 'computer'),
+      {
+        policy: 'drop',
+        source: 'model_tool_name',
+        matchedModel: 'glm-5.2',
+      }
     )
   })
 
@@ -472,5 +536,55 @@ describe('advanced custom tool policy validation', () => {
       native?.message || '',
       /requires OpenAI Responses to OpenAI Chat converter/
     )
+  })
+
+  test('accepts unnamed native tool rules but rejects unknown and web search rules', () => {
+    const valid = validateAdvancedCustomConfig({
+      advanced_routes: [
+        {
+          ...validResponsesRoute,
+          converter_options: {
+            responses_tool_model_overrides: [
+              {
+                models: ['glm-5.2'],
+                responses_tool_names: [
+                  {
+                    tool_type: 'computer',
+                    tool_name: '',
+                    policy: 'drop',
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+    })
+    assert.equal(valid, null)
+
+    for (const toolType of ['unknown', 'web_search']) {
+      const error = validateAdvancedCustomConfig({
+        advanced_routes: [
+          {
+            ...validResponsesRoute,
+            converter_options: {
+              responses_tool_model_overrides: [
+                {
+                  models: ['glm-5.2'],
+                  responses_tool_names: [
+                    {
+                      tool_type: toolType,
+                      tool_name: '',
+                      policy: 'drop',
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+        ],
+      })
+      assert.match(error?.message || '', /requires a type, name, and policy/)
+    }
   })
 })

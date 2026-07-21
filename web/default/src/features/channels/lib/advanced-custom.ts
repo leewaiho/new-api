@@ -207,6 +207,17 @@ export function normalizeAdvancedCustomResponsesToolType(
   }
 }
 
+function isAdvancedCustomUnnamedNativeResponsesToolType(
+  toolType: string
+): boolean {
+  const normalizedType = toolType.trim()
+  return (
+    normalizedType !== '' &&
+    normalizedType !== 'unknown' &&
+    normalizeAdvancedCustomResponsesToolType(normalizedType) === 'unknown'
+  )
+}
+
 function policyForToolType(
   policies: AdvancedCustomResponsesToolsOptions | undefined,
   toolType: string
@@ -260,6 +271,12 @@ export function resolveAdvancedCustomResponsesToolPolicy(
           return false
         }
         const configuredType = (candidate.tool_type || '').trim()
+        if (!toolName.trim()) {
+          return (
+            isAdvancedCustomUnnamedNativeResponsesToolType(configuredType) &&
+            configuredType === toolType.trim()
+          )
+        }
         return (
           configuredType === toolType.trim() ||
           (configuredType !== 'unknown' &&
@@ -296,6 +313,13 @@ export function resolveAdvancedCustomResponsesToolPolicy(
         ) || 'preserve',
       source: 'route',
     }
+  }
+  if (
+    ['computer', 'computer_use', 'computer_use_preview'].includes(
+      toolType.trim()
+    )
+  ) {
+    return { policy: 'reject', source: 'system_default' }
   }
   return { policy: 'preserve', source: 'system_default' }
 }
@@ -1207,8 +1231,12 @@ function validateRouteConverterOptions(
       if (typeof policy !== 'string' || !allowed.has(policy)) {
         return `Responses tool policy is invalid: ${toolType}`
       }
-      if (policy === 'flatten' && toolType !== 'namespace') {
-        return `Responses tool policy flatten only supports namespace`
+      if (
+        policy === 'flatten' &&
+        toolType !== 'namespace' &&
+        toolType !== 'tool_search'
+      ) {
+        return `Responses tool policy flatten only supports namespace or tool_search`
       }
     }
   }
@@ -1260,8 +1288,11 @@ function validateRouteConverterOptions(
   }
   const routeParameterError = validateWebSearchParameters(toolParameters)
   if (routeParameterError) return routeParameterError
-  if (route.converter === 'none' && tools?.namespace === 'flatten') {
-    return 'Native forwarding does not support namespace flatten'
+  if (
+    route.converter === 'none' &&
+    (tools?.namespace === 'flatten' || tools?.tool_search === 'flatten')
+  ) {
+    return 'Native forwarding does not support namespace or tool_search flatten'
   }
   if (route.converter === 'none' && dropFields && dropFields.length > 0) {
     return 'Native forwarding does not support Responses drop fields'
@@ -1308,13 +1339,23 @@ function validateRouteConverterOptions(
         const toolType = (namePolicy.tool_type || '').trim()
         const toolName = (namePolicy.tool_name || '').trim()
         const policy = namePolicy.policy || ''
-        if (!toolType || !toolName || !policy) {
+        if (
+          !toolType ||
+          !policy ||
+          (!toolName &&
+            !isAdvancedCustomUnnamedNativeResponsesToolType(toolType))
+        ) {
           return 'Tool name rule requires a type, name, and policy'
         }
         if (normalizeAdvancedCustomResponsesToolType(toolType) === 'function') {
           return 'Function tools are always preserved'
         }
-        if (policy === 'flatten' || !allowedPolicies.has(policy)) {
+        if (
+          !allowedPolicies.has(policy) ||
+          (policy === 'flatten' &&
+            toolType !== 'tool_search' &&
+            toolType !== 'namespace')
+        ) {
           return 'Tool name rule policy is invalid'
         }
         const key = `${toolType}:${toolName}`
