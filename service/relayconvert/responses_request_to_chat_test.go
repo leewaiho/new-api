@@ -813,6 +813,33 @@ func TestResponsesRequestToChatCompletionsRequestConvertsNativeToolCallHistoryAn
 	assert.Equal(t, "Done.", got.Messages[1].StringContent())
 }
 
+func TestResponsesRequestToChatCompletionsRequestPreservesTopLevelInputTextAfterFunctionCallOutput(t *testing.T) {
+	got, err := ResponsesRequestToChatCompletionsRequest(&dto.OpenAIResponsesRequest{
+		Model: "glm-5.2",
+		Input: mustRawMessage(t, []map[string]any{
+			{
+				"type":      "function_call",
+				"call_id":   "call_shell",
+				"name":      "shell_command",
+				"arguments": `{"command":"true"}`,
+			},
+			{
+				"type":    "function_call_output",
+				"call_id": "call_shell",
+				"output":  "Command completed successfully.",
+			},
+			{
+				"type": "input_text",
+				"text": "The command succeeded. Reply with exactly ACK.",
+			},
+		}),
+	})
+	require.NoError(t, err)
+	require.Len(t, got.Messages, 3)
+	assert.Equal(t, "user", got.Messages[2].Role)
+	assert.Equal(t, "The command succeeded. Reply with exactly ACK.", got.Messages[2].StringContent())
+}
+
 func TestResponsesRequestToChatCompletionsRequestRejectsUnregisteredNativeToolFlatten(t *testing.T) {
 	_, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
 		Model: "glm-5.2",
