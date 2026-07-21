@@ -216,6 +216,28 @@ func TestAdvancedCustomValidateResponsesToolModelOverrides(t *testing.T) {
 	}
 	require.NoError(t, valid.Validate())
 
+	unnamedNativeType := &AdvancedCustomConfig{
+		Routes: []AdvancedCustomRoute{{
+			IncomingPath: "/v1/responses",
+			UpstreamPath: "/v1/responses",
+			Converter:    AdvancedCustomConverterNone,
+			ConverterOptions: &AdvancedCustomConverterOptions{
+				ResponsesToolModelOverrides: []AdvancedCustomResponsesToolModelOverride{{
+					Models: []string{"glm-5.2"},
+					ToolNames: []AdvancedCustomResponsesToolNamePolicy{{
+						ToolType: "shell_command",
+						Policy:   AdvancedCustomResponsesToolPolicyDrop,
+					}},
+				}},
+			},
+		}},
+	}
+	require.NoError(t, unnamedNativeType.Validate())
+
+	knownTypeWithoutName := *unnamedNativeType
+	knownTypeWithoutName.Routes[0].ConverterOptions.ResponsesToolModelOverrides[0].ToolNames[0].ToolType = "web_search"
+	require.ErrorContains(t, knownTypeWithoutName.Validate(), "requires tool_type, tool_name, and policy")
+
 	duplicateModel := valid
 	duplicateModel.Routes[0].ConverterOptions.ResponsesToolModelOverrides = append(
 		duplicateModel.Routes[0].ConverterOptions.ResponsesToolModelOverrides,
@@ -237,6 +259,28 @@ func TestAdvancedCustomValidateResponsesToolModelOverrides(t *testing.T) {
 		},
 	}
 	require.ErrorContains(t, functionPolicy.Validate(), "function tools are always preserved")
+}
+
+func TestResolveAdvancedCustomResponsesToolPolicyUsesExactUnnamedNativeTypePerModel(t *testing.T) {
+	options := &AdvancedCustomConverterOptions{
+		ResponsesToolModelOverrides: []AdvancedCustomResponsesToolModelOverride{{
+			Models: []string{"glm-5.2"},
+			ToolNames: []AdvancedCustomResponsesToolNamePolicy{{
+				ToolType: "shell_command",
+				Policy:   AdvancedCustomResponsesToolPolicyDrop,
+			}},
+		}},
+	}
+
+	shellPolicy := ResolveAdvancedCustomResponsesToolPolicy(options, "glm-5.2", "glm-5.2", "shell_command", "")
+	require.Equal(t, AdvancedCustomResponsesToolPolicyDrop, shellPolicy.Policy)
+	require.Equal(t, AdvancedCustomResponsesToolPolicySourceModelToolName, shellPolicy.Source)
+
+	applyPatchPolicy := ResolveAdvancedCustomResponsesToolPolicy(options, "glm-5.2", "glm-5.2", "apply_patch", "")
+	require.Equal(t, AdvancedCustomResponsesToolPolicyPreserve, applyPatchPolicy.Policy)
+
+	otherModelPolicy := ResolveAdvancedCustomResponsesToolPolicy(options, "glm-5.3", "glm-5.3", "shell_command", "")
+	require.Equal(t, AdvancedCustomResponsesToolPolicyPreserve, otherModelPolicy.Policy)
 }
 
 func TestResolveAdvancedCustomResponsesToolPolicy(t *testing.T) {

@@ -271,3 +271,29 @@ func TestValidateResponsesToolChoiceAfterPolicyMatchesNamespaceFunction(t *testi
 	err := ValidateResponsesToolChoiceAfterPolicy(choice, decisions)
 	require.ErrorContains(t, err, "tool_choice selects a tool removed by the channel policy")
 }
+
+func TestApplyResponsesToolPoliciesMatchesUnnamedNativeTypeAndRejectsToolChoice(t *testing.T) {
+	raw := mustRawMessage(t, []map[string]any{
+		{"type": "shell_command"},
+		{"type": "apply_patch"},
+	})
+	filtered, decisions, err := ApplyResponsesToolPolicies(raw, func(toolType string, toolName string) string {
+		if toolType == "shell_command" && toolName == "" {
+			return ResponsesToolPolicyDrop
+		}
+		return ResponsesToolPolicyPreserve
+	})
+	require.NoError(t, err)
+	assert.JSONEq(t, `[{"type":"apply_patch"}]`, string(filtered))
+	require.Equal(t, []ResponsesToolPolicyDecision{{
+		ToolIndex: 0,
+		ToolType:  "shell_command",
+		Policy:    ResponsesToolPolicyDrop,
+	}}, decisions)
+
+	err = ValidateResponsesToolChoiceAfterPolicy(
+		mustRawMessage(t, map[string]any{"type": "shell_command"}),
+		decisions,
+	)
+	require.ErrorContains(t, err, "tool_choice selects a tool removed by the channel policy")
+}

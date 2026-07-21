@@ -1019,7 +1019,7 @@ func TestAdaptorRecordsPolicyDropCompatibilityEvent(t *testing.T) {
 	require.False(t, strings.Contains(events[0].SanitizedError, "generate"))
 }
 
-func TestRecordAdvancedCustomUpstreamToolCompatibilityEventsAttributesOnlyMentionedTool(t *testing.T) {
+func TestRecordAdvancedCustomUpstreamToolCompatibilityEventsRequiresIndexedToolAttribution(t *testing.T) {
 	previousDB := model.DB
 	db, err := gorm.Open(sqlite.Open("file:advanced_custom_upstream_event_attribution?mode=memory&cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
@@ -1031,8 +1031,8 @@ func TestRecordAdvancedCustomUpstreamToolCompatibilityEventsAttributesOnlyMentio
 	info.ChannelMeta.ChannelId = 97
 	route := dto.AdvancedCustomRoute{IncomingPath: "/v1/responses"}
 	tools := []relayconvert.ResponsesToolPolicyDecision{
-		{ToolType: "image_gen"},
-		{ToolType: "web_search"},
+		{ToolIndex: 0, ToolType: "image_gen"},
+		{ToolIndex: 297, ToolType: "web_search"},
 	}
 
 	recordAdvancedCustomUpstreamToolCompatibilityEvents(
@@ -1042,9 +1042,9 @@ func TestRecordAdvancedCustomUpstreamToolCompatibilityEventsAttributesOnlyMentio
 	var events []model.ToolCompatibilityEvent
 	require.NoError(t, db.Find(&events).Error)
 	require.Len(t, events, 1)
-	require.Equal(t, "image_gen", events[0].ToolType)
-	require.Equal(t, model.ToolCompatibilityEventTypeUpstreamUnsupported, events[0].EventType)
-	require.Equal(t, dto.AdvancedCustomResponsesToolPolicyDrop, events[0].SuggestedPolicy)
+	require.Empty(t, events[0].ToolType)
+	require.Equal(t, model.ToolCompatibilityEventTypeUnclassified, events[0].EventType)
+	require.Empty(t, events[0].SuggestedPolicy)
 
 	require.NoError(t, db.Exec("DELETE FROM tool_compatibility_events").Error)
 	recordAdvancedCustomUpstreamToolCompatibilityEvents(
@@ -1067,6 +1067,100 @@ func TestRecordAdvancedCustomUpstreamToolCompatibilityEventsAttributesOnlyMentio
 	require.NoError(t, db.Find(&events).Error)
 	require.Len(t, events, 1)
 	require.Empty(t, events[0].ToolType)
+	require.Equal(t, model.ToolCompatibilityEventTypeUnclassified, events[0].EventType)
+	require.Empty(t, events[0].SuggestedPolicy)
+}
+
+func TestRecordAdvancedCustomUpstreamToolCompatibilityEventsUsesToolIndexForNativeTypes(t *testing.T) {
+	previousDB := model.DB
+	db, err := gorm.Open(sqlite.Open("file:advanced_custom_upstream_native_type_attribution?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.ToolCompatibilityEvent{}))
+	model.DB = db
+	t.Cleanup(func() { model.DB = previousDB })
+
+	info := advancedCustomRelayInfo(nil)
+	info.ChannelMeta.ChannelId = 97
+	route := dto.AdvancedCustomRoute{IncomingPath: "/v1/responses"}
+	tools := []relayconvert.ResponsesToolPolicyDecision{
+		{ToolIndex: 0, ToolType: "shell_command"},
+		{ToolIndex: 1, ToolType: "apply_patch"},
+	}
+
+	recordAdvancedCustomUpstreamToolCompatibilityEvents(
+		info, route, "glm-5.2", "glm-5.2", tools,
+		types.NewErrorWithStatusCode(errors.New("tools[1].type: type is illegal"), types.ErrorCodeBadResponse, http.StatusBadRequest),
+	)
+	var events []model.ToolCompatibilityEvent
+	require.NoError(t, db.Find(&events).Error)
+	require.Len(t, events, 1)
+	require.Equal(t, "apply_patch", events[0].ToolType)
+	require.Empty(t, events[0].ToolName)
+	require.Equal(t, model.ToolCompatibilityEventTypeUpstreamUnsupported, events[0].EventType)
+	require.Equal(t, dto.AdvancedCustomResponsesToolPolicyDrop, events[0].SuggestedPolicy)
+
+	require.NoError(t, db.Exec("DELETE FROM tool_compatibility_events").Error)
+	recordAdvancedCustomUpstreamToolCompatibilityEvents(
+		info, route, "glm-5.2", "glm-5.2", tools,
+		types.NewErrorWithStatusCode(errors.New("tools[0].type: type is illegal"), types.ErrorCodeBadResponse, http.StatusBadRequest),
+	)
+	events = nil
+	require.NoError(t, db.Find(&events).Error)
+	require.Len(t, events, 1)
+	require.Equal(t, "shell_command", events[0].ToolType)
+	require.Equal(t, model.ToolCompatibilityEventTypeUpstreamUnsupported, events[0].EventType)
+}
+
+func TestRecordAdvancedCustomUpstreamToolCompatibilityEventsKeepsNoIndexErrorsUnclassified(t *testing.T) {
+	previousDB := model.DB
+	db, err := gorm.Open(sqlite.Open("file:advanced_custom_upstream_no_index?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.ToolCompatibilityEvent{}))
+	model.DB = db
+	t.Cleanup(func() { model.DB = previousDB })
+
+	info := advancedCustomRelayInfo(nil)
+	info.ChannelMeta.ChannelId = 97
+	recordAdvancedCustomUpstreamToolCompatibilityEvents(
+		info,
+		dto.AdvancedCustomRoute{IncomingPath: "/v1/responses"},
+		"glm-5.2",
+		"glm-5.2",
+		[]relayconvert.ResponsesToolPolicyDecision{{ToolIndex: 0, ToolType: "shell_command"}},
+		types.NewErrorWithStatusCode(errors.New("Unsupported tool type: shell_command"), types.ErrorCodeBadResponse, http.StatusBadRequest),
+	)
+
+	var events []model.ToolCompatibilityEvent
+	require.NoError(t, db.Find(&events).Error)
+	require.Len(t, events, 1)
+	require.Empty(t, events[0].ToolType)
+	require.Equal(t, model.ToolCompatibilityEventTypeUnclassified, events[0].EventType)
+	require.Empty(t, events[0].SuggestedPolicy)
+}
+
+func TestRecordAdvancedCustomUpstreamToolCompatibilityEventsRecordsIndexedWebSearchParameterError(t *testing.T) {
+	previousDB := model.DB
+	db, err := gorm.Open(sqlite.Open("file:advanced_custom_upstream_web_search_parameter?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.ToolCompatibilityEvent{}))
+	model.DB = db
+	t.Cleanup(func() { model.DB = previousDB })
+
+	info := advancedCustomRelayInfo(nil)
+	info.ChannelMeta.ChannelId = 97
+	recordAdvancedCustomUpstreamToolCompatibilityEvents(
+		info,
+		dto.AdvancedCustomRoute{IncomingPath: "/v1/responses"},
+		"glm-5.2",
+		"glm-5.2",
+		[]relayconvert.ResponsesToolPolicyDecision{{ToolIndex: 0, ToolType: "web_search"}},
+		types.NewErrorWithStatusCode(errors.New("tools[0].web_search cannot be empty"), types.ErrorCodeBadResponse, http.StatusBadRequest),
+	)
+
+	var events []model.ToolCompatibilityEvent
+	require.NoError(t, db.Find(&events).Error)
+	require.Len(t, events, 1)
+	require.Equal(t, "web_search", events[0].ToolType)
 	require.Equal(t, model.ToolCompatibilityEventTypeUnclassified, events[0].EventType)
 	require.Empty(t, events[0].SuggestedPolicy)
 }

@@ -8,6 +8,8 @@ import (
 	"maps"
 	"net/http"
 	"net/url"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -30,6 +32,8 @@ import (
 const ChannelName = "advanced_custom"
 
 const advancedCustomModelPlaceholder = "{model}"
+
+var advancedCustomUpstreamToolIndexPattern = regexp.MustCompile(`(?i)\btools\[(\d+)\]`)
 
 type Adaptor struct {
 	openaiAdaptor openai.Adaptor
@@ -599,12 +603,12 @@ func summarizeAdvancedCustomResponsesTools(raw json.RawMessage) []relayconvert.R
 		return nil
 	}
 	out := make([]relayconvert.ResponsesToolPolicyDecision, 0, len(tools))
-	for _, tool := range tools {
+	for toolIndex, tool := range tools {
 		toolType := strings.TrimSpace(common.Interface2String(tool["type"]))
 		if toolType == "" {
 			continue
 		}
-		out = append(out, relayconvert.ResponsesToolPolicyDecision{ToolType: toolType, ToolName: strings.TrimSpace(common.Interface2String(tool["name"]))})
+		out = append(out, relayconvert.ResponsesToolPolicyDecision{ToolIndex: toolIndex, ToolType: toolType, ToolName: strings.TrimSpace(common.Interface2String(tool["name"]))})
 	}
 	return out
 }
@@ -618,14 +622,14 @@ func recordAdvancedCustomUpstreamToolCompatibilityEvents(info *relaycommon.Relay
 		return
 	}
 	message := cause.ErrorWithStatusCode()
-	matchedTools := make([]relayconvert.ResponsesToolPolicyDecision, 0, len(tools))
-	for _, tool := range tools {
-		if advancedCustomUpstreamErrorMentionsTool(message, tool.ToolType, tool.ToolName) {
-			matchedTools = append(matchedTools, tool)
+	matchedTools := []relayconvert.ResponsesToolPolicyDecision{{}}
+	if toolIndex, ok := advancedCustomUpstreamToolIndex(message); ok {
+		for _, tool := range tools {
+			if tool.ToolIndex == toolIndex {
+				matchedTools = []relayconvert.ResponsesToolPolicyDecision{tool}
+				break
+			}
 		}
-	}
-	if len(matchedTools) == 0 {
-		matchedTools = []relayconvert.ResponsesToolPolicyDecision{{}}
 	}
 	for _, tool := range matchedTools {
 		eventType, suggestion := classifyAdvancedCustomUpstreamToolError(cause.StatusCode, message, tool.ToolType)
@@ -647,10 +651,13 @@ func classifyAdvancedCustomUpstreamToolError(statusCode int, message string, too
 	}
 	lower := strings.ToLower(message)
 	normalizedType := strings.ToLower(strings.TrimSpace(toolType))
+	if normalizedType == "" {
+		return model.ToolCompatibilityEventTypeUnclassified, ""
+	}
 	// Only explicit unsupported-tool wording may recommend a policy change. A
 	// generic 400 remains evidence for review, never an automatic Drop proposal.
-	if strings.Contains(lower, "unsupported tool type") || strings.Contains(lower, "tool type is not supported") || strings.Contains(lower, "does not support tool") {
-		if normalizedType == "" || normalizedType == "function" {
+	if strings.Contains(lower, "unsupported tool type") || strings.Contains(lower, "tool type is not supported") || strings.Contains(lower, "does not support tool") || strings.Contains(lower, "type is illegal") {
+		if normalizedType == "function" {
 			return model.ToolCompatibilityEventTypeUpstreamUnsupported, ""
 		}
 		return model.ToolCompatibilityEventTypeUpstreamUnsupported, dto.AdvancedCustomResponsesToolPolicyDrop
@@ -658,39 +665,16 @@ func classifyAdvancedCustomUpstreamToolError(statusCode int, message string, too
 	return model.ToolCompatibilityEventTypeUnclassified, ""
 }
 
-func advancedCustomUpstreamErrorMentionsTool(message string, toolType string, toolName string) bool {
-	lower := strings.ToLower(message)
-	if name := strings.ToLower(strings.TrimSpace(toolName)); name != "" && strings.Contains(lower, name) {
-		return true
+func advancedCustomUpstreamToolIndex(message string) (int, bool) {
+	match := advancedCustomUpstreamToolIndexPattern.FindStringSubmatch(message)
+	if len(match) != 2 {
+		return 0, false
 	}
-	for _, alias := range advancedCustomToolTypeAliases(toolType) {
-		if strings.Contains(lower, alias) {
-			return true
-		}
+	toolIndex, err := strconv.Atoi(match[1])
+	if err != nil || toolIndex < 0 {
+		return 0, false
 	}
-	return false
-}
-
-func advancedCustomToolTypeAliases(toolType string) []string {
-	switch strings.ToLower(strings.TrimSpace(toolType)) {
-	case "web_search", "web_search_preview":
-		return []string{"web_search", "web_search_preview"}
-	case "image_gen", "image_generation":
-		return []string{"image_gen", "image_generation"}
-	case "tool_search":
-		return []string{"tool_search"}
-	case "namespace":
-		return []string{"namespace"}
-	case "custom":
-		return []string{"custom"}
-	case "function":
-		return []string{"function"}
-	default:
-		if normalized := strings.ToLower(strings.TrimSpace(toolType)); normalized != "" {
-			return []string{normalized}
-		}
-		return nil
-	}
+	return toolIndex, true
 }
 
 func isAdvancedCustomToolConversionError(err error) bool {

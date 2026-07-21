@@ -247,7 +247,7 @@ func applyModelToolCompatibilitySuggestion(options *dto.AdvancedCustomConverterO
 		return errors.New("function tools cannot be disabled")
 	}
 	override := findOrCreateModelToolCompatibilityOverride(options, modelName)
-	if toolName := strings.TrimSpace(event.ToolName); toolName != "" {
+	if toolName := strings.TrimSpace(event.ToolName); toolName != "" || dto.IsAdvancedCustomUnnamedNativeResponsesToolType(event.ToolType) {
 		override.ToolNames = upsertToolCompatibilityNamePolicy(override.ToolNames, event.ToolType, toolName, policy)
 		return nil
 	}
@@ -343,7 +343,7 @@ func removeModelToolCompatibilityOverride(options *dto.AdvancedCustomConverterOp
 			override = findOrCreateModelToolCompatibilityOverride(options, modelName)
 			i = len(options.ResponsesToolModelOverrides) - 1
 		}
-		if name := strings.TrimSpace(toolName); name != "" {
+		if name := strings.TrimSpace(toolName); name != "" || dto.IsAdvancedCustomUnnamedNativeResponsesToolType(toolType) {
 			filtered := override.ToolNames[:0]
 			for _, policy := range override.ToolNames {
 				if strings.TrimSpace(policy.ToolType) == strings.TrimSpace(toolType) && strings.TrimSpace(policy.ToolName) == name {

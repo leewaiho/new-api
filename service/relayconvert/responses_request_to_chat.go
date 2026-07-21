@@ -60,9 +60,10 @@ type ResponsesToolPolicies struct {
 type ResponsesToolPolicyResolver func(toolType string, toolName string) string
 
 type ResponsesToolPolicyDecision struct {
-	ToolType string
-	ToolName string
-	Policy   string
+	ToolIndex int
+	ToolType  string
+	ToolName  string
+	Policy    string
 }
 
 func ResponsesRequestToChatCompletionsRequest(req *dto.OpenAIResponsesRequest) (*dto.GeneralOpenAIRequest, error) {
@@ -824,9 +825,9 @@ func ApplyResponsesToolPolicies(rawTools json.RawMessage, resolver ResponsesTool
 
 	filtered := make([]map[string]any, 0, len(tools))
 	decisions := make([]ResponsesToolPolicyDecision, 0)
-	for _, tool := range tools {
+	for toolIndex, tool := range tools {
 		toolType := strings.TrimSpace(common.Interface2String(tool["type"]))
-		toolName := responsesToolDisplayName(toolType, tool)
+		toolName := strings.TrimSpace(common.Interface2String(tool["name"]))
 		if toolType == "function" {
 			filtered = append(filtered, tool)
 			continue
@@ -838,9 +839,9 @@ func ApplyResponsesToolPolicies(rawTools json.RawMessage, resolver ResponsesTool
 		}
 		switch policy {
 		case ResponsesToolPolicyDrop:
-			decisions = append(decisions, ResponsesToolPolicyDecision{ToolType: toolType, ToolName: toolName, Policy: policy})
+			decisions = append(decisions, ResponsesToolPolicyDecision{ToolIndex: toolIndex, ToolType: toolType, ToolName: toolName, Policy: policy})
 		case ResponsesToolPolicyReject:
-			decisions = append(decisions, ResponsesToolPolicyDecision{ToolType: toolType, ToolName: toolName, Policy: policy})
+			decisions = append(decisions, ResponsesToolPolicyDecision{ToolIndex: toolIndex, ToolType: toolType, ToolName: toolName, Policy: policy})
 			return nil, decisions, fmt.Errorf("responses tool %s/%s was rejected by the Advanced Custom route policy", toolType, toolName)
 		default:
 			filtered = append(filtered, tool)
@@ -1038,6 +1039,9 @@ func responsesToolIdentityMatches(leftType string, leftName string, rightType st
 	}
 	leftPolicyType := responsesToolPolicyType(leftType)
 	rightPolicyType := responsesToolPolicyType(rightType)
+	if strings.TrimSpace(rightName) == "" && leftPolicyType == rightPolicyType {
+		return true
+	}
 	return leftPolicyType == rightPolicyType && strings.TrimSpace(leftName) == strings.TrimSpace(rightName)
 }
 
