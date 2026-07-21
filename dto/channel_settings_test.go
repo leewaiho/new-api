@@ -123,6 +123,26 @@ func TestAdvancedCustomValidateResponsesToolPolicies(t *testing.T) {
 	}
 	require.ErrorContains(t, flattenNonNamespace.Validate(), "responses_tools.web_search is invalid")
 
+	flattenNativeCodingTools := &AdvancedCustomConfig{
+		Routes: []AdvancedCustomRoute{
+			{
+				IncomingPath: "/v1/responses",
+				UpstreamPath: "/v1/chat/completions",
+				Converter:    AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions,
+				ConverterOptions: &AdvancedCustomConverterOptions{
+					ResponsesToolModelOverrides: []AdvancedCustomResponsesToolModelOverride{{
+						Models: []string{"glm-5.2"},
+						ToolNames: []AdvancedCustomResponsesToolNamePolicy{
+							{ToolType: "custom", ToolName: "apply_patch", Policy: AdvancedCustomResponsesToolPolicyFlatten},
+							{ToolType: "shell_command", Policy: AdvancedCustomResponsesToolPolicyFlatten},
+						},
+					}},
+				},
+			},
+		},
+	}
+	require.NoError(t, flattenNativeCodingTools.Validate())
+
 	flattenUnknown := &AdvancedCustomConfig{
 		Routes: []AdvancedCustomRoute{
 			{
@@ -171,6 +191,24 @@ func TestAdvancedCustomValidateResponsesToolPoliciesForPassthrough(t *testing.T)
 		},
 	}
 	require.ErrorContains(t, flatten.Validate(), "namespace flatten is not supported by converter none")
+
+	flattenModelToolName := &AdvancedCustomConfig{
+		Routes: []AdvancedCustomRoute{{
+			IncomingPath: "/v1/responses",
+			UpstreamPath: "/v1/responses",
+			Converter:    AdvancedCustomConverterNone,
+			ConverterOptions: &AdvancedCustomConverterOptions{
+				ResponsesToolModelOverrides: []AdvancedCustomResponsesToolModelOverride{{
+					Models: []string{"glm-5.2"},
+					ToolNames: []AdvancedCustomResponsesToolNamePolicy{{
+						ToolType: "shell_command",
+						Policy:   AdvancedCustomResponsesToolPolicyFlatten,
+					}},
+				}},
+			},
+		}},
+	}
+	require.ErrorContains(t, flattenModelToolName.Validate(), "responses_tools.tool_name is invalid")
 
 	dropFields := &AdvancedCustomConfig{
 		Routes: []AdvancedCustomRoute{

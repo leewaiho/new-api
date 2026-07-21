@@ -429,10 +429,7 @@ func validateAdvancedCustomResponsesToolModelOverrides(index int, allowFlatten b
 			if normalizeAdvancedCustomResponsesToolType(toolType) == "function" {
 				return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options function tools are always preserved", index)
 			}
-			if policy == AdvancedCustomResponsesToolPolicyFlatten {
-				return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options.responses_tool_names[%d].policy does not support flatten", index, nameIndex)
-			}
-			if err := validateAdvancedCustomResponsesToolPolicy(index, "tool_name", policy, false); err != nil {
+			if err := validateAdvancedCustomResponsesToolPolicy(index, "tool_name", policy, allowFlatten); err != nil {
 				return err
 			}
 			keyToolType := normalizeAdvancedCustomResponsesToolType(toolType)

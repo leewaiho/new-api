@@ -163,6 +163,7 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 		mappings := map[string]dto.ResponsesToolNameMapping{}
 		chatOptions := relayconvert.ResponsesRequestToChatOptions{
 			ToolPolicies:       advancedCustomResponsesToolPolicies(a.route.ConverterOptions, requestedModel, upstreamModel),
+			ToolPolicyResolver: policyResolver,
 			ToolNameMappings:   mappings,
 			DropResponseFields: advancedCustomResponsesDropFields(a.route.ConverterOptions),
 		}
