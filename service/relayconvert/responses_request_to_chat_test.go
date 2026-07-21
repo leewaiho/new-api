@@ -412,6 +412,151 @@ func TestResponsesRequestToChatCompletionsRequestCustomToolCallPreservesRawShape
 	assert.Equal(t, "patch body", gjson.GetBytes(toolCalls[0].Custom, "input").String())
 }
 
+func TestResponsesRequestToChatCompletionsRequestFlattensNativeCodingTools(t *testing.T) {
+	mappings := map[string]dto.ResponsesToolNameMapping{}
+	got, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
+		Model: "glm-5.2",
+		Input: mustRawMessage(t, "update the file"),
+		Tools: mustRawMessage(t, []map[string]any{
+			{
+				"type":        "custom",
+				"name":        "apply_patch",
+				"description": "Apply a patch to the workspace.",
+			},
+			{
+				"type": "shell_command",
+			},
+		}),
+		ToolChoice: mustRawMessage(t, map[string]any{
+			"type": "custom",
+			"name": "apply_patch",
+		}),
+	}, ResponsesRequestToChatOptions{
+		ToolPolicyResolver: func(toolType string, toolName string) string {
+			if (toolType == "custom" && toolName == "apply_patch") || toolType == "shell_command" {
+				return ResponsesToolPolicyFlatten
+			}
+			return ResponsesToolPolicyPreserve
+		},
+		ToolNameMappings: mappings,
+	})
+	require.NoError(t, err)
+	require.Len(t, got.Tools, 2)
+
+	assert.Equal(t, "function", got.Tools[0].Type)
+	assert.Equal(t, "apply_patch", got.Tools[0].Function.Name)
+	assert.Equal(t, "Apply a patch to the workspace.", got.Tools[0].Function.Description)
+	assert.Equal(t, map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"required":             []string{"input"},
+		"properties": map[string]any{
+			"input": map[string]any{"type": "string"},
+		},
+	}, got.Tools[0].Function.Parameters)
+
+	assert.Equal(t, "function", got.Tools[1].Type)
+	assert.Equal(t, "shell_command", got.Tools[1].Function.Name)
+	assert.Equal(t, map[string]any{
+		"type":                 "object",
+		"additionalProperties": true,
+		"required":             []string{"command"},
+		"properties": map[string]any{
+			"command":                map[string]any{"type": "string"},
+			"workdir":                map[string]any{"type": "string"},
+			"login":                  map[string]any{"type": "boolean"},
+			"timeout_ms":             map[string]any{"type": "integer", "minimum": 0},
+			"sandbox_permissions":    map[string]any{},
+			"prefix_rule":            map[string]any{},
+			"additional_permissions": map[string]any{},
+			"justification":          map[string]any{},
+		},
+	}, got.Tools[1].Function.Parameters)
+
+	choice, ok := got.ToolChoice.(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "function", choice["type"])
+	assert.Equal(t, "apply_patch", choice["function"].(map[string]any)["name"])
+	assert.Equal(t, dto.ResponsesToolNameMapping{
+		Name:           "apply_patch",
+		NativeToolType: "custom",
+		ArgumentsCodec: "custom_input",
+	}, mappings["apply_patch"])
+	assert.Equal(t, dto.ResponsesToolNameMapping{
+		Name:           "shell_command",
+		NativeToolType: "shell_command",
+	}, mappings["shell_command"])
+
+	shellChoice, err := responsesRequestToolChoiceToChat(
+		mustRawMessage(t, map[string]any{"type": "shell_command"}),
+		ResponsesRequestToChatOptions{
+			ToolPolicyResolver: func(toolType string, toolName string) string {
+				if (toolType == "custom" && toolName == "apply_patch") || toolType == "shell_command" {
+					return ResponsesToolPolicyFlatten
+				}
+				return ResponsesToolPolicyPreserve
+			},
+			ToolNameMappings: mappings,
+		},
+		got.Tools,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "function", shellChoice.(map[string]any)["type"])
+	assert.Equal(t, "shell_command", shellChoice.(map[string]any)["function"].(map[string]any)["name"])
+}
+
+func TestResponsesRequestToChatCompletionsRequestConvertsNativeToolCallHistoryAndOutput(t *testing.T) {
+	got, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
+		Model: "glm-5.2",
+		Tools: mustRawMessage(t, []map[string]any{
+			{"type": "custom", "name": "apply_patch"},
+		}),
+		Input: mustRawMessage(t, []map[string]any{
+			{
+				"type":    "custom_tool_call",
+				"call_id": "call_patch",
+				"name":    "apply_patch",
+				"input":   "*** Begin Patch\n*** End Patch",
+			},
+			{
+				"type":    "custom_tool_call_output",
+				"call_id": "call_patch",
+				"name":    "apply_patch",
+				"output":  "Done.",
+			},
+		}),
+	}, ResponsesRequestToChatOptions{
+		ToolPolicies:     ResponsesToolPolicies{Custom: ResponsesToolPolicyFlatten},
+		ToolNameMappings: map[string]dto.ResponsesToolNameMapping{},
+	})
+	require.NoError(t, err)
+	require.Len(t, got.Messages, 2)
+
+	toolCalls := got.Messages[0].ParseToolCalls()
+	require.Len(t, toolCalls, 1)
+	assert.Equal(t, "function", toolCalls[0].Type)
+	assert.Equal(t, "call_patch", toolCalls[0].ID)
+	assert.Equal(t, "apply_patch", toolCalls[0].Function.Name)
+	assert.JSONEq(t, `{"input":"*** Begin Patch\n*** End Patch"}`, toolCalls[0].Function.Arguments)
+
+	assert.Equal(t, "tool", got.Messages[1].Role)
+	assert.Equal(t, "call_patch", got.Messages[1].ToolCallId)
+	assert.Equal(t, "Done.", got.Messages[1].StringContent())
+}
+
+func TestResponsesRequestToChatCompletionsRequestRejectsUnregisteredNativeToolFlatten(t *testing.T) {
+	_, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
+		Model: "glm-5.2",
+		Input: mustRawMessage(t, "use the computer"),
+		Tools: mustRawMessage(t, []map[string]any{
+			{"type": "computer"},
+		}),
+	}, ResponsesRequestToChatOptions{
+		ToolPolicies: ResponsesToolPolicies{Unknown: ResponsesToolPolicyFlatten},
+	})
+	require.ErrorContains(t, err, `responses tool "computer" has no registered Chat function adapter`)
+}
+
 func TestResponsesRequestToChatCompletionsRequestRejectsStatefulFields(t *testing.T) {
 	tests := []struct {
 		name string
