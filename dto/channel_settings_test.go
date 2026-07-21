@@ -158,6 +158,30 @@ func TestAdvancedCustomValidateResponsesToolPolicies(t *testing.T) {
 	require.ErrorContains(t, flattenUnknown.Validate(), "responses_tools.unknown is invalid")
 }
 
+func TestAdvancedCustomValidateToolSearchFlattenOnlyForResponsesToChat(t *testing.T) {
+	valid := &AdvancedCustomConfig{Routes: []AdvancedCustomRoute{{
+		IncomingPath: "/v1/responses",
+		UpstreamPath: "/v1/chat/completions",
+		Converter:    AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions,
+		ConverterOptions: &AdvancedCustomConverterOptions{
+			ResponsesToolModelOverrides: []AdvancedCustomResponsesToolModelOverride{{
+				Models: []string{"glm-5.2"},
+				ResponsesTools: &AdvancedCustomResponsesToolsOptions{
+					ToolSearch: AdvancedCustomResponsesToolPolicyFlatten,
+				},
+			}},
+		},
+	}}}
+	require.NoError(t, valid.Validate())
+
+	invalid := *valid
+	invalidRoute := valid.Routes[0]
+	invalidRoute.Converter = AdvancedCustomConverterNone
+	invalidRoute.UpstreamPath = "/v1/responses"
+	invalid.Routes = []AdvancedCustomRoute{invalidRoute}
+	require.ErrorContains(t, invalid.Validate(), "responses_tools.tool_search")
+}
+
 func TestAdvancedCustomValidateResponsesToolPoliciesForPassthrough(t *testing.T) {
 	valid := &AdvancedCustomConfig{
 		Routes: []AdvancedCustomRoute{

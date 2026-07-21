@@ -137,6 +137,13 @@ func ResolveAdvancedCustomResponsesToolPolicy(
 			Source: AdvancedCustomResponsesToolPolicySourceRoute,
 		}
 	}
+	switch strings.TrimSpace(toolType) {
+	case "computer", "computer_use", "computer_use_preview":
+		return AdvancedCustomResponsesToolPolicyResolution{
+			Policy: AdvancedCustomResponsesToolPolicyReject,
+			Source: AdvancedCustomResponsesToolPolicySourceSystemDefault,
+		}
+	}
 	return AdvancedCustomResponsesToolPolicyResolution{
 		Policy: AdvancedCustomResponsesToolPolicyPreserve,
 		Source: AdvancedCustomResponsesToolPolicySourceSystemDefault,
@@ -387,7 +394,7 @@ func validateAdvancedCustomResponsesToolModelOverrides(index int, allowFlatten b
 				{name: "namespace", toolType: "namespace", policy: override.ResponsesTools.Namespace, allowFlatten: allowFlatten},
 				{name: "custom", toolType: "custom", policy: override.ResponsesTools.Custom},
 				{name: "web_search", toolType: "web_search", policy: override.ResponsesTools.WebSearch},
-				{name: "tool_search", toolType: "tool_search", policy: override.ResponsesTools.ToolSearch},
+				{name: "tool_search", toolType: "tool_search", policy: override.ResponsesTools.ToolSearch, allowFlatten: allowFlatten},
 				{name: "image_generation", toolType: "image_generation", policy: override.ResponsesTools.ImageGeneration},
 				{name: "unknown", toolType: "unknown", policy: override.ResponsesTools.Unknown},
 			}

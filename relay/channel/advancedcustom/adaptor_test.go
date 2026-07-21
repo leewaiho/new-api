@@ -472,6 +472,46 @@ func TestAdaptorResponsesToolsFlattensNativeCodingToolsForChatUpstream(t *testin
 	assert.Equal(t, "shell_command", info.ResponsesToolNameMappings["shell_command"].NativeToolType)
 }
 
+func TestAdaptorResponsesToolsModelOverrideFlattensToolSearchForChatUpstream(t *testing.T) {
+	adaptor := &Adaptor{}
+	info := advancedCustomRelayInfo(&dto.AdvancedCustomConfig{
+		Routes: []dto.AdvancedCustomRoute{{
+			IncomingPath: "/v1/responses",
+			UpstreamPath: "/v1/chat/completions",
+			Converter:    dto.AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions,
+			ConverterOptions: &dto.AdvancedCustomConverterOptions{
+				ResponsesToolModelOverrides: []dto.AdvancedCustomResponsesToolModelOverride{{
+					Models: []string{"glm-5.2"},
+					ResponsesTools: &dto.AdvancedCustomResponsesToolsOptions{
+						ToolSearch: dto.AdvancedCustomResponsesToolPolicyFlatten,
+					},
+				}},
+			},
+		}},
+	})
+	info.RelayMode = relayconstant.RelayModeResponses
+	info.RequestURLPath = "/v1/responses"
+
+	converted, err := adaptor.ConvertOpenAIResponsesRequest(advancedCustomGinContext("/v1/responses"), info, dto.OpenAIResponsesRequest{
+		Model: "glm-5.2",
+		Input: mustAdvancedCustomRawMessage(t, "find a tool"),
+		Tools: mustAdvancedCustomRawMessage(t, []map[string]any{
+			{"type": "tool_search"},
+		}),
+		ToolChoice: mustAdvancedCustomRawMessage(t, map[string]any{"type": "tool_search"}),
+	})
+	require.NoError(t, err)
+	chatReq, ok := converted.(*dto.GeneralOpenAIRequest)
+	require.True(t, ok)
+	require.Len(t, chatReq.Tools, 1)
+	assert.Equal(t, "function", chatReq.Tools[0].Type)
+	assert.Equal(t, "tool_search", chatReq.Tools[0].Function.Name)
+	assert.Empty(t, chatReq.Tools[0].Custom)
+	choice := chatReq.ToolChoice.(map[string]any)
+	assert.Equal(t, "tool_search", choice["function"].(map[string]any)["name"])
+	assert.Equal(t, "tool_search", info.ResponsesToolNameMappings["tool_search"].NativeToolType)
+}
+
 func TestAdaptorRejectsUnregisteredNativeToolBeforeChatUpstreamAndRecordsCompatibilityEvent(t *testing.T) {
 	previousDB := model.DB
 	db, err := gorm.Open(sqlite.Open("file:advanced_custom_unregistered_native_tool?mode=memory&cache=shared"), &gorm.Config{})
@@ -516,6 +556,41 @@ func TestAdaptorRejectsUnregisteredNativeToolBeforeChatUpstreamAndRecordsCompati
 	require.Len(t, events, 1)
 	assert.Equal(t, "computer", events[0].ToolType)
 	assert.Equal(t, model.ToolCompatibilityEventTypeInvalidToolSchema, events[0].EventType)
+}
+
+func TestAdaptorRejectsComputerByDefaultAndRecordsCompatibilityEvent(t *testing.T) {
+	previousDB := model.DB
+	db, err := gorm.Open(sqlite.Open("file:advanced_custom_default_computer_reject?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.ToolCompatibilityEvent{}))
+	model.DB = db
+	t.Cleanup(func() { model.DB = previousDB })
+
+	adaptor := &Adaptor{}
+	info := advancedCustomRelayInfo(&dto.AdvancedCustomConfig{Routes: []dto.AdvancedCustomRoute{{
+		IncomingPath: "/v1/responses",
+		UpstreamPath: "/v1/chat/completions",
+		Converter:    dto.AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions,
+	}}})
+	info.ChannelId = 98
+	info.RelayMode = relayconstant.RelayModeResponses
+	info.RequestURLPath = "/v1/responses"
+
+	_, err = adaptor.ConvertOpenAIResponsesRequest(advancedCustomGinContext("/v1/responses"), info, dto.OpenAIResponsesRequest{
+		Model: "glm-5.2",
+		Input: mustAdvancedCustomRawMessage(t, "use the computer"),
+		Tools: mustAdvancedCustomRawMessage(t, []map[string]any{
+			{"type": "computer_use_preview"},
+		}),
+	})
+	require.ErrorContains(t, err, "was rejected by the Advanced Custom route policy")
+
+	var events []model.ToolCompatibilityEvent
+	require.NoError(t, db.Find(&events).Error)
+	require.Len(t, events, 1)
+	assert.Equal(t, "computer_use_preview", events[0].ToolType)
+	assert.Equal(t, dto.AdvancedCustomResponsesToolPolicyReject, events[0].CurrentPolicy)
+	assert.Equal(t, model.ToolCompatibilityEventTypePolicyReject, events[0].EventType)
 }
 
 func TestAdaptorResponsesToChatCompatibilityEventUsesConvertedToolIndex(t *testing.T) {
@@ -587,6 +662,51 @@ func TestAdaptorResponsesToChatCompatibilityEventUsesConvertedToolIndex(t *testi
 	require.Equal(t, "shell_command", events[0].ToolType)
 	require.Empty(t, events[0].ToolName)
 	require.Equal(t, dto.AdvancedCustomResponsesToolPolicyDrop, events[0].SuggestedPolicy)
+}
+
+func TestAdaptorResponsesToChatDoResponseRecordsFlattenedToolSearchByOriginalType(t *testing.T) {
+	previousDB := model.DB
+	db, err := gorm.Open(sqlite.Open("file:advanced_custom_tool_search_do_response?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.ToolCompatibilityEvent{}))
+	model.DB = db
+	t.Cleanup(func() { model.DB = previousDB })
+
+	adaptor := &Adaptor{}
+	info := advancedCustomRelayInfo(&dto.AdvancedCustomConfig{Routes: []dto.AdvancedCustomRoute{{
+		IncomingPath: "/v1/responses",
+		UpstreamPath: "/v1/chat/completions",
+		Converter:    dto.AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions,
+		ConverterOptions: &dto.AdvancedCustomConverterOptions{ResponsesTools: &dto.AdvancedCustomResponsesToolsOptions{
+			ToolSearch: dto.AdvancedCustomResponsesToolPolicyFlatten,
+		}},
+	}}})
+	info.ChannelId = 97
+	info.RelayMode = relayconstant.RelayModeResponses
+	info.RequestURLPath = "/v1/responses"
+
+	_, err = adaptor.ConvertOpenAIResponsesRequest(advancedCustomGinContext("/v1/responses"), info, dto.OpenAIResponsesRequest{
+		Model: "glm-5.2",
+		Input: mustAdvancedCustomRawMessage(t, "find a tool"),
+		Tools: mustAdvancedCustomRawMessage(t, []map[string]any{
+			{"type": "tool_search"},
+		}),
+	})
+	require.NoError(t, err)
+
+	response := &http.Response{
+		StatusCode: http.StatusBadRequest,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"tools[0].type: type is illegal","type":"upstream_error","code":1214}}`)),
+	}
+	_, responseErr := adaptor.DoResponse(advancedCustomGinContext("/v1/responses"), response, info)
+	require.Error(t, responseErr)
+
+	var events []model.ToolCompatibilityEvent
+	require.NoError(t, db.Find(&events).Error)
+	require.Len(t, events, 1)
+	assert.Equal(t, "tool_search", events[0].ToolType)
+	assert.Equal(t, model.ToolCompatibilityEventTypeUpstreamUnsupported, events[0].EventType)
 }
 
 func TestAdaptorResponsesToChatCompatibilityEventPreservesCustomToolName(t *testing.T) {
@@ -1266,6 +1386,66 @@ func TestAdaptorRecordsPolicyDropCompatibilityEvent(t *testing.T) {
 	require.Equal(t, "image_gen", events[0].ToolType)
 	require.Equal(t, "glm-5.2", events[0].RequestedModel)
 	require.False(t, strings.Contains(events[0].SanitizedError, "generate"))
+}
+
+func TestAdaptorSuggestsDropForSystemDefaultComputerPolicyReject(t *testing.T) {
+	previousDB := model.DB
+	db, err := gorm.Open(sqlite.Open("file:advanced_custom_event_computer_policy_reject?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.ToolCompatibilityEvent{}))
+	model.DB = db
+	t.Cleanup(func() { model.DB = previousDB })
+
+	for _, tt := range []struct {
+		name           string
+		options        *dto.AdvancedCustomConverterOptions
+		wantSuggestion string
+	}{
+		{
+			name:           "system default",
+			wantSuggestion: dto.AdvancedCustomResponsesToolPolicyDrop,
+		},
+		{
+			name: "explicit model rule",
+			options: &dto.AdvancedCustomConverterOptions{
+				ResponsesToolModelOverrides: []dto.AdvancedCustomResponsesToolModelOverride{{
+					Models: []string{"glm-5.2"},
+					ToolNames: []dto.AdvancedCustomResponsesToolNamePolicy{{
+						ToolType: "computer",
+						Policy:   dto.AdvancedCustomResponsesToolPolicyReject,
+					}},
+				}},
+			},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			require.NoError(t, db.Exec("DELETE FROM tool_compatibility_events").Error)
+			adaptor := &Adaptor{}
+			info := advancedCustomRelayInfo(&dto.AdvancedCustomConfig{Routes: []dto.AdvancedCustomRoute{{
+				IncomingPath: "/v1/responses", UpstreamPath: "/v1/chat/completions",
+				Converter:        dto.AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions,
+				ConverterOptions: tt.options,
+			}}})
+			info.ChannelId = 97
+			info.RelayMode = relayconstant.RelayModeResponses
+			info.RequestURLPath = "/v1/responses"
+			info.OriginModelName = "glm-5.2"
+
+			_, err := adaptor.ConvertOpenAIResponsesRequest(advancedCustomGinContext("/v1/responses"), info, dto.OpenAIResponsesRequest{
+				Model: "glm-5.2", Input: mustAdvancedCustomRawMessage(t, "use computer"),
+				Tools: mustAdvancedCustomRawMessage(t, []map[string]any{{"type": "computer"}}),
+			})
+			require.ErrorContains(t, err, "responses tool computer/ was rejected by the Advanced Custom route policy")
+
+			var events []model.ToolCompatibilityEvent
+			require.NoError(t, db.Find(&events).Error)
+			require.Len(t, events, 1)
+			require.Equal(t, model.ToolCompatibilityEventTypePolicyReject, events[0].EventType)
+			require.Equal(t, "computer", events[0].ToolType)
+			require.Empty(t, events[0].ToolName)
+			require.Equal(t, tt.wantSuggestion, events[0].SuggestedPolicy)
+		})
+	}
 }
 
 func TestRecordAdvancedCustomUpstreamToolCompatibilityEventsRequiresIndexedToolAttribution(t *testing.T) {

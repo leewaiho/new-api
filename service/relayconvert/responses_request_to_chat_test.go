@@ -498,6 +498,17 @@ func TestResponsesRequestToChatCompletionsRequestRejectsUnsupportedComputerTools
 	}
 }
 
+func TestResponsesRequestToChatCompletionsRequestRejectsComputerByDefault(t *testing.T) {
+	_, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
+		Model: "gpt-test",
+		Input: mustRawMessage(t, "use the computer"),
+		Tools: mustRawMessage(t, []map[string]any{
+			{"type": "computer"},
+		}),
+	}, ResponsesRequestToChatOptions{})
+	require.ErrorContains(t, err, `responses tool "computer" is not supported by this converter route`)
+}
+
 func TestResponsesRequestToChatCompletionsRequestCustomToolCallPreservesRawShape(t *testing.T) {
 	got, err := ResponsesRequestToChatCompletionsRequest(&dto.OpenAIResponsesRequest{
 		Model: "gpt-test",
@@ -616,6 +627,153 @@ func TestResponsesRequestToChatCompletionsRequestFlattensNativeCodingTools(t *te
 	assert.Equal(t, "shell_command", shellChoice.(map[string]any)["function"].(map[string]any)["name"])
 }
 
+func TestResponsesRequestToChatCompletionsRequestFlattensToolSearchAndHistory(t *testing.T) {
+	mappings := map[string]dto.ResponsesToolNameMapping{}
+	got, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
+		Model: "glm-5.2",
+		Tools: mustRawMessage(t, []map[string]any{{"type": "tool_search"}}),
+		ToolChoice: mustRawMessage(t, map[string]any{
+			"type": "tool_search",
+		}),
+		Input: mustRawMessage(t, []map[string]any{
+			{
+				"type":      "tool_search_call",
+				"call_id":   "call_tool_search_1",
+				"execution": "client",
+				"arguments": map[string]any{"query": "Gmail search emails", "limit": 5},
+			},
+			{
+				"type":      "tool_search_output",
+				"call_id":   "call_tool_search_1",
+				"execution": "client",
+				"tools": []map[string]any{{
+					"type": "namespace",
+					"name": "mcp__codex_apps__gmail",
+					"tools": []map[string]any{{
+						"type":        "function",
+						"name":        "_search_emails",
+						"description": "Search Gmail.",
+						"parameters":  map[string]any{"type": "object"},
+					}},
+				}},
+			},
+		}),
+	}, ResponsesRequestToChatOptions{
+		ToolNameMappings: mappings,
+		ToolPolicyResolver: func(toolType string, _ string) string {
+			if toolType == "tool_search" || toolType == "namespace" {
+				return ResponsesToolPolicyFlatten
+			}
+			return ResponsesToolPolicyPreserve
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, got.Tools, 2)
+	assert.Equal(t, "function", got.Tools[0].Type)
+	assert.Equal(t, "tool_search", got.Tools[0].Function.Name)
+	assert.Equal(t, "string", got.Tools[0].Function.Parameters.(map[string]any)["properties"].(map[string]any)["query"].(map[string]any)["type"])
+	assert.Equal(t, []string{"query"}, got.Tools[0].Function.Parameters.(map[string]any)["required"])
+	assert.Equal(t, "function", got.Tools[1].Type)
+	assert.Equal(t, "mcp__codex_apps__gmail_search_emails", got.Tools[1].Function.Name)
+	assert.Equal(t, "tool_search", mappings["tool_search"].NativeToolType)
+
+	choice, ok := got.ToolChoice.(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "function", choice["type"])
+	assert.Equal(t, "tool_search", choice["function"].(map[string]any)["name"])
+	require.Len(t, got.Messages, 2)
+	toolCalls := got.Messages[0].ParseToolCalls()
+	require.Len(t, toolCalls, 1)
+	assert.Equal(t, "call_tool_search_1", toolCalls[0].ID)
+	assert.Equal(t, "tool_search", toolCalls[0].Function.Name)
+	assert.JSONEq(t, `{"query":"Gmail search emails","limit":5}`, toolCalls[0].Function.Arguments)
+	assert.Equal(t, "tool", got.Messages[1].Role)
+	assert.Equal(t, "call_tool_search_1", got.Messages[1].ToolCallId)
+	assert.Contains(t, got.Messages[1].StringContent(), `"tool_search_output"`)
+}
+
+func TestResponsesRequestToChatCompletionsRequestKeepsTopLevelFunctionBeforeLoadedNamespaceCollision(t *testing.T) {
+	mappings := map[string]dto.ResponsesToolNameMapping{}
+	got, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
+		Model: "glm-5.2",
+		Tools: mustRawMessage(t, []map[string]any{
+			{"type": "function", "name": "mcp__demo__lookup", "parameters": map[string]any{"type": "object"}},
+			{"type": "tool_search"},
+		}),
+		Input: mustRawMessage(t, []map[string]any{{
+			"type": "tool_search_output",
+			"tools": []map[string]any{{
+				"type": "namespace", "name": "mcp__demo__",
+				"tools": []map[string]any{{"type": "function", "name": "lookup", "parameters": map[string]any{"type": "object"}}},
+			}},
+		}}),
+	}, ResponsesRequestToChatOptions{
+		ToolNameMappings: mappings,
+		ToolPolicyResolver: func(toolType string, _ string) string {
+			if toolType == "tool_search" || toolType == "namespace" {
+				return ResponsesToolPolicyFlatten
+			}
+			return ResponsesToolPolicyPreserve
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, got.Tools, 2)
+	assert.Equal(t, "mcp__demo__lookup", got.Tools[0].Function.Name)
+	assert.Equal(t, "tool_search", got.Tools[1].Function.Name)
+	_, mapped := mappings["mcp__demo__lookup"]
+	assert.False(t, mapped, "discarded dynamic namespace tool must not overwrite the top-level function identity")
+}
+
+func TestResponsesRequestToChatCompletionsRequestKeepsFirstLoadedNamespaceMappingOnCollision(t *testing.T) {
+	mappings := map[string]dto.ResponsesToolNameMapping{}
+	got, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
+		Model: "glm-5.2",
+		Input: mustRawMessage(t, []map[string]any{{
+			"type": "tool_search_output",
+			"tools": []map[string]any{
+				{
+					"type": "namespace", "name": "one__",
+					"tools": []map[string]any{{"type": "function", "name": "lookup", "parameters": map[string]any{"type": "object"}}},
+				},
+				{
+					"type": "namespace", "name": "one_",
+					"tools": []map[string]any{{"type": "function", "name": "_lookup", "parameters": map[string]any{"type": "object"}}},
+				},
+			},
+		}}),
+	}, ResponsesRequestToChatOptions{
+		ToolNameMappings: mappings,
+		ToolPolicyResolver: func(toolType string, _ string) string {
+			if toolType == "namespace" {
+				return ResponsesToolPolicyFlatten
+			}
+			return ResponsesToolPolicyPreserve
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, got.Tools, 1)
+	assert.Equal(t, "one__lookup", got.Tools[0].Function.Name)
+	require.Contains(t, mappings, "one__lookup")
+	assert.Equal(t, "one__", mappings["one__lookup"].Namespace)
+	assert.Equal(t, "lookup", mappings["one__lookup"].Name)
+}
+
+func TestResponsesRequestToChatCompletionsRequestKeepsAutoChoiceWithNonConflictingLoadedTool(t *testing.T) {
+	got, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
+		Model:      "glm-5.2",
+		ToolChoice: mustRawMessage(t, "auto"),
+		Input: mustRawMessage(t, []map[string]any{{
+			"type":  "tool_search_output",
+			"tools": []map[string]any{{"type": "function", "name": "search_docs", "parameters": map[string]any{"type": "object"}}},
+		}}),
+	}, ResponsesRequestToChatOptions{ToolPolicies: ResponsesToolPolicies{ToolSearch: ResponsesToolPolicyFlatten}},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "auto", got.ToolChoice)
+	require.Len(t, got.Tools, 1)
+	assert.Equal(t, "search_docs", got.Tools[0].Function.Name)
+}
+
 func TestResponsesRequestToChatCompletionsRequestConvertsNativeToolCallHistoryAndOutput(t *testing.T) {
 	got, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
 		Model: "glm-5.2",
@@ -665,7 +823,7 @@ func TestResponsesRequestToChatCompletionsRequestRejectsUnregisteredNativeToolFl
 	}, ResponsesRequestToChatOptions{
 		ToolPolicies: ResponsesToolPolicies{Unknown: ResponsesToolPolicyFlatten},
 	})
-	require.ErrorContains(t, err, `responses tool "computer" has no registered Chat function adapter`)
+	require.ErrorContains(t, err, `responses tool "computer" is not supported by this converter route`)
 }
 
 func TestResponsesRequestToChatCompletionsRequestRejectsStatefulFields(t *testing.T) {

@@ -178,6 +178,12 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 			info.ResponsesToolNameMappings = mappings
 		}
 		a.compatibilityTools = summarizeAdvancedCustomChatTools(chatReq.Tools)
+		for i := range a.compatibilityTools {
+			if mapping, ok := mappings[a.compatibilityTools[i].ToolName]; ok && mapping.NativeToolType != "" {
+				a.compatibilityTools[i].ToolType = mapping.NativeToolType
+				a.compatibilityTools[i].ToolName = mapping.Name
+			}
+		}
 		return a.convertOpenAICompatibleRequest(c, info, chatReq)
 	default:
 		return nil, fmt.Errorf("converter %q does not support OpenAI Responses requests", converter)
@@ -761,6 +767,16 @@ func recordAdvancedCustomToolCompatibilityEvents(
 			eventType = model.ToolCompatibilityEventTypePolicyDrop
 		case dto.AdvancedCustomResponsesToolPolicyReject:
 			eventType = model.ToolCompatibilityEventTypePolicyReject
+			if route.Converter == dto.AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions &&
+				dto.ResolveAdvancedCustomResponsesToolPolicy(
+					route.ConverterOptions,
+					requestedModel,
+					upstreamModel,
+					decision.ToolType,
+					decision.ToolName,
+				).Source == dto.AdvancedCustomResponsesToolPolicySourceSystemDefault {
+				suggestedPolicy = dto.AdvancedCustomResponsesToolPolicyDrop
+			}
 		case dto.AdvancedCustomResponsesToolConflictPolicyDeduplicate:
 			eventType = model.ToolCompatibilityEventTypeNameConflict
 			suggestedPolicy = dto.AdvancedCustomResponsesToolConflictPolicyDeduplicate
