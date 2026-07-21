@@ -333,7 +333,11 @@ func responsesInputItemToChatMessages(item map[string]any, messages []dto.Messag
 	if role == "" {
 		role = "user"
 	}
-	content, err := responsesInputContentToChatContent(item["content"])
+	rawContent := item["content"]
+	if itemType == "input_text" {
+		rawContent = item["text"]
+	}
+	content, err := responsesInputContentToChatContent(rawContent)
 	if err != nil {
 		return nil, err
 	}
