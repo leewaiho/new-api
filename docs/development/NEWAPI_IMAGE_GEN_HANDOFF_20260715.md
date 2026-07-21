@@ -2,6 +2,25 @@
 
 更新时间：2026-07-15（UTC+8）
 
+## 0. 运行环境修正（2026-07-21）
+
+本文及关联文档中的 `3011` 均指 homelab 主机 `192.168.200.10` 上的隔离测试环境：
+
+```text
+3010（生产）：http://192.168.200.10:3010
+3011（测试）：http://192.168.200.10:3011
+测试目录：/opt/newapi-test（通过 ssh homelab 进入）
+```
+
+3011 不是本地 WSL，也不得连接 3010 的生产数据库。每次创建、重建或需要刷新 3011 基线时，先启动隔离 test stack，再在 `/opt/newapi-test` 执行：
+
+```bash
+./sync-db-from-prod.sh
+docker compose restart new-api-test
+```
+
+该脚本从 3010 PostgreSQL 快照恢复至 3011 的独立测试 PostgreSQL，会覆盖测试数据。完整受控流程见 [scripts/deploy/README.md](../../scripts/deploy/README.md)。
+
 ## 1. 当前结论
 
 - `image_gen.imagegen` 与上游 hosted `image_generation` 的冲突修复已进入测试线、生产线，并已归档到 `main-local`。

@@ -13,8 +13,9 @@ import (
 )
 
 const (
-	chatFinishReasonLength        = "length"
-	chatFinishReasonContentFilter = "content_filter"
+	chatFinishReasonLength                  = "length"
+	chatFinishReasonContentFilter           = "content_filter"
+	responsesEventReasoningSummaryPartAdded = "response.reasoning_summary_part.added"
 )
 
 func ChatCompletionsResponseToResponsesResponse(resp *dto.OpenAITextResponse, id string) (*dto.OpenAIResponsesResponse, *dto.Usage, error) {
@@ -301,7 +302,7 @@ func (s *ChatToResponsesStreamState) appendTextDelta(delta string) []ChatToRespo
 }
 
 func (s *ChatToResponsesStreamState) appendReasoningDelta(delta string) []ChatToResponsesStreamEvent {
-	events := make([]ChatToResponsesStreamEvent, 0, 2)
+	events := make([]ChatToResponsesStreamEvent, 0, 3)
 	if !s.reasoningStarted {
 		s.reasoningStarted = true
 		s.reasoningIndex = s.nextIndex("reasoning", -1)
@@ -313,6 +314,16 @@ func (s *ChatToResponsesStreamState) appendReasoningDelta(delta string) []ChatTo
 				ID:      s.reasoningID(),
 				Status:  "in_progress",
 				Content: []dto.ResponsesOutputContent{},
+			},
+		}))
+		events = append(events, responsesStreamEvent(responsesEventReasoningSummaryPartAdded, dto.ResponsesStreamResponse{
+			Type:         responsesEventReasoningSummaryPartAdded,
+			OutputIndex:  intPtr(s.reasoningIndex),
+			SummaryIndex: intPtr(0),
+			ItemID:       s.reasoningID(),
+			Part: &dto.ResponsesReasoningSummaryPart{
+				Type: "summary_text",
+				Text: "",
 			},
 		}))
 	}
@@ -416,28 +427,10 @@ func (s *ChatToResponsesStreamState) doneDeltaEvents() ([]ChatToResponsesStreamE
 		}))
 	}
 	for _, tool := range s.sortedTools() {
-		if tool.Done {
+		if tool.Done || !tool.Added {
 			continue
 		}
 		tool.Done = true
-		if !tool.Added {
-			tool.ID = s.toolItemID(tool.Name, tool.CallID, fmt.Sprintf("%s_call_%d", s.ID, tool.ChatIndex))
-			tool.Added = true
-			events = append(events, responsesStreamEvent(responsesEventOutputItemAdded, dto.ResponsesStreamResponse{
-				Type:        responsesEventOutputItemAdded,
-				OutputIndex: intPtr(tool.OutputIndex),
-				ItemID:      tool.ID,
-				Item:        s.toolOutput(tool, "in_progress"),
-			}))
-			if tool.Arguments.Len() > 0 && !s.isCustomTool(tool.Name) {
-				events = append(events, responsesStreamEvent(responsesEventFunctionArgsDelta, dto.ResponsesStreamResponse{
-					Type:        responsesEventFunctionArgsDelta,
-					OutputIndex: intPtr(tool.OutputIndex),
-					ItemID:      tool.ID,
-					Delta:       tool.Arguments.String(),
-				}))
-			}
-		}
 		if s.isCustomTool(tool.Name) {
 			if err := s.prepareCustomToolInput(tool); err != nil {
 				return nil, err
@@ -486,7 +479,7 @@ func (s *ChatToResponsesStreamState) finalResponse() *dto.OpenAIResponsesRespons
 		case "reasoning":
 			output = append(output, *s.reasoningOutput(status))
 		case "tool":
-			if tool := s.toolsByIndex[ref.ToolIndex]; tool != nil {
+			if tool := s.toolsByIndex[ref.ToolIndex]; tool != nil && tool.Added {
 				output = append(output, *s.toolOutput(tool, status))
 			}
 		}

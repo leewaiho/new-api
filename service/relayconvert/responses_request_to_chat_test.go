@@ -379,12 +379,123 @@ func TestResponsesRequestToChatCompletionsRequestDropsUnknownToolByCompatDefault
 	got, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
 		Model: "gpt-test",
 		Input: mustRawMessage(t, "hello"),
-		Tools: mustRawMessage(t, []map[string]any{{"type": "computer_use"}}),
+		Tools: mustRawMessage(t, []map[string]any{{"type": "future_client_tool"}}),
 	}, ResponsesRequestToChatOptions{
 		ToolPolicies: ResponsesToolPolicies{Namespace: ResponsesToolPolicyFlatten},
 	})
 	require.NoError(t, err)
 	assert.Empty(t, got.Tools)
+}
+
+func TestResponsesRequestToChatCompletionsRequestRejectsUnsupportedComputerTools(t *testing.T) {
+	tests := []struct {
+		name        string
+		toolType    string
+		policy      string
+		wantError   string
+		wantDropped bool
+	}{
+		{
+			name:      "computer preserve",
+			toolType:  "computer",
+			policy:    ResponsesToolPolicyPreserve,
+			wantError: `responses tool "computer" has no registered Chat function adapter`,
+		},
+		{
+			name:      "computer flatten",
+			toolType:  "computer",
+			policy:    ResponsesToolPolicyFlatten,
+			wantError: `responses tool "computer" has no registered Chat function adapter`,
+		},
+		{
+			name:      "computer reject",
+			toolType:  "computer",
+			policy:    ResponsesToolPolicyReject,
+			wantError: `responses tool "computer" is not supported by this converter route`,
+		},
+		{
+			name:        "computer drop preserves function fallback",
+			toolType:    "computer",
+			policy:      ResponsesToolPolicyDrop,
+			wantDropped: true,
+		},
+		{
+			name:      "computer use preserve",
+			toolType:  "computer_use",
+			policy:    ResponsesToolPolicyPreserve,
+			wantError: `responses tool "computer_use" has no registered Chat function adapter`,
+		},
+		{
+			name:      "computer use flatten",
+			toolType:  "computer_use",
+			policy:    ResponsesToolPolicyFlatten,
+			wantError: `responses tool "computer_use" has no registered Chat function adapter`,
+		},
+		{
+			name:      "computer use reject",
+			toolType:  "computer_use",
+			policy:    ResponsesToolPolicyReject,
+			wantError: `responses tool "computer_use" is not supported by this converter route`,
+		},
+		{
+			name:        "computer use drop preserves function fallback",
+			toolType:    "computer_use",
+			policy:      ResponsesToolPolicyDrop,
+			wantDropped: true,
+		},
+		{
+			name:      "computer use preview preserve",
+			toolType:  "computer_use_preview",
+			policy:    ResponsesToolPolicyPreserve,
+			wantError: `responses tool "computer_use_preview" has no registered Chat function adapter`,
+		},
+		{
+			name:      "computer use preview flatten",
+			toolType:  "computer_use_preview",
+			policy:    ResponsesToolPolicyFlatten,
+			wantError: `responses tool "computer_use_preview" has no registered Chat function adapter`,
+		},
+		{
+			name:      "computer use preview reject",
+			toolType:  "computer_use_preview",
+			policy:    ResponsesToolPolicyReject,
+			wantError: `responses tool "computer_use_preview" is not supported by this converter route`,
+		},
+		{
+			name:        "computer use preview drop preserves function fallback",
+			toolType:    "computer_use_preview",
+			policy:      ResponsesToolPolicyDrop,
+			wantDropped: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
+				Model: "gpt-test",
+				Input: mustRawMessage(t, "use the computer"),
+				Tools: mustRawMessage(t, []map[string]any{
+					{"type": tt.toolType},
+					{"type": "function", "name": "lookup", "parameters": map[string]any{"type": "object"}},
+				}),
+			}, ResponsesRequestToChatOptions{
+				ToolPolicyResolver: func(toolType string, _ string) string {
+					if toolType == tt.toolType {
+						return tt.policy
+					}
+					return ResponsesToolPolicyPreserve
+				},
+			})
+			if tt.wantDropped {
+				require.NoError(t, err)
+				require.Len(t, got.Tools, 1)
+				assert.Equal(t, "function", got.Tools[0].Type)
+				assert.Equal(t, "lookup", got.Tools[0].Function.Name)
+				return
+			}
+			require.ErrorContains(t, err, tt.wantError)
+		})
+	}
 }
 
 func TestResponsesRequestToChatCompletionsRequestCustomToolCallPreservesRawShape(t *testing.T) {

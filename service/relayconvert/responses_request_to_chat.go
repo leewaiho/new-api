@@ -417,6 +417,15 @@ func responsesRequestToolsToChat(raw json.RawMessage, options ResponsesRequestTo
 		toolName := strings.TrimSpace(common.Interface2String(tool["name"]))
 		policy := responsesToolPolicyForTool(options, toolType, toolName)
 		switch toolType {
+		case "computer", "computer_use", "computer_use_preview":
+			switch policy {
+			case ResponsesToolPolicyDrop:
+				continue
+			case ResponsesToolPolicyReject:
+				return nil, fmt.Errorf("responses tool %q is not supported by this converter route", toolType)
+			default:
+				return nil, fmt.Errorf("responses tool %q has no registered Chat function adapter", toolType)
+			}
 		case "function":
 			out = append(out, responsesFunctionToolToChat(tool, ""))
 		case responsesNativeToolTypeCustom:

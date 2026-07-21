@@ -909,6 +909,93 @@ func TestChatCompletionsStreamToResponsesEventsWaitsForCompleteNativeToolHeader(
 	}
 }
 
+func TestChatCompletionsStreamToResponsesEventsDoesNotMaterializeIncompleteToolHeadersOnFinish(t *testing.T) {
+	state := NewChatToResponsesStreamState("resp_1", "glm-5.2")
+	state.SetToolNameMappings(map[string]dto.ResponsesToolNameMapping{
+		"apply_patch": {
+			Name:           "apply_patch",
+			NativeToolType: responsesNativeToolTypeCustom,
+			ArgumentsCodec: responsesArgumentsCodecCustomInput,
+		},
+		"shell_command": {
+			Name:           "shell_command",
+			NativeToolType: responsesNativeToolTypeShellCommand,
+		},
+	})
+	patchIndex := 0
+	shellIndex := 1
+	finishReason := "tool_calls"
+
+	argumentEvents := mustResponsesEventsFromChatChunk(t, state, &dto.ChatCompletionsStreamResponse{
+		Choices: []dto.ChatCompletionsStreamResponseChoice{{Index: 0, Delta: dto.ChatCompletionsStreamResponseChoiceDelta{
+			ToolCalls: []dto.ToolCallResponse{
+				{Index: &patchIndex, Function: dto.FunctionResponse{Arguments: `{"input":"*** Begin Patch\n*** End Patch"}`}},
+				{Index: &shellIndex, Function: dto.FunctionResponse{Arguments: `{"command":"pwd"}`}},
+			},
+		}}},
+	})
+	require.Len(t, argumentEvents, 1)
+	assert.Equal(t, responsesEventCreated, argumentEvents[0].Type)
+
+	doneEvents := mustResponsesEventsFromChatChunk(t, state, &dto.ChatCompletionsStreamResponse{
+		Choices: []dto.ChatCompletionsStreamResponseChoice{{Index: 0, FinishReason: &finishReason}},
+	})
+	assert.Empty(t, doneEvents, "incomplete headers must not emit tool lifecycle events at finish")
+
+	finalEvents, err := FinalizeChatCompletionsStreamToResponses(state)
+	require.NoError(t, err)
+	require.Len(t, finalEvents, 1)
+	assert.Equal(t, responsesEventCompleted, finalEvents[0].Type)
+	require.NotNil(t, finalEvents[0].Payload.Response)
+	assert.Empty(t, finalEvents[0].Payload.Response.Output)
+}
+
+func TestChatCompletionsStreamToResponsesEventsEmitsReasoningSummaryPartLifecycle(t *testing.T) {
+	state := NewChatToResponsesStreamState("resp_1", "gpt-test")
+	finishReason := "stop"
+
+	events := mustResponsesEventsFromChatChunk(t, state, &dto.ChatCompletionsStreamResponse{
+		Choices: []dto.ChatCompletionsStreamResponseChoice{{Index: 0, Delta: dto.ChatCompletionsStreamResponseChoiceDelta{
+			ReasoningContent: lo.ToPtr("inspect files first"),
+		}}},
+	})
+	require.Len(t, events, 4)
+	assert.Equal(t, responsesEventCreated, events[0].Type)
+	assert.Equal(t, responsesEventOutputItemAdded, events[1].Type)
+	assert.Equal(t, "response.reasoning_summary_part.added", events[2].Type)
+	assert.Equal(t, responsesEventReasoningSummaryDelta, events[3].Type)
+	require.NotNil(t, events[2].Payload.OutputIndex)
+	require.NotNil(t, events[2].Payload.SummaryIndex)
+	require.NotNil(t, events[3].Payload.OutputIndex)
+	require.NotNil(t, events[3].Payload.SummaryIndex)
+	assert.Equal(t, *events[1].Payload.OutputIndex, *events[2].Payload.OutputIndex)
+	assert.Equal(t, *events[2].Payload.OutputIndex, *events[3].Payload.OutputIndex)
+	assert.Equal(t, 0, *events[2].Payload.SummaryIndex)
+	assert.Equal(t, *events[2].Payload.SummaryIndex, *events[3].Payload.SummaryIndex)
+	assert.Equal(t, events[1].Payload.Item.ID, events[2].Payload.ItemID)
+	assert.Equal(t, events[2].Payload.ItemID, events[3].Payload.ItemID)
+	require.NotNil(t, events[2].Payload.Part)
+	assert.Equal(t, "summary_text", events[2].Payload.Part.Type)
+	assert.Empty(t, events[2].Payload.Part.Text)
+
+	doneEvents := mustResponsesEventsFromChatChunk(t, state, &dto.ChatCompletionsStreamResponse{
+		Choices: []dto.ChatCompletionsStreamResponseChoice{{Index: 0, FinishReason: &finishReason}},
+	})
+	require.Len(t, doneEvents, 2)
+	assert.Equal(t, responsesEventReasoningSummaryDone, doneEvents[0].Type)
+	assert.Equal(t, responsesEventOutputItemDone, doneEvents[1].Type)
+	assert.Equal(t, events[2].Payload.ItemID, doneEvents[0].Payload.ItemID)
+	assert.Equal(t, events[2].Payload.ItemID, doneEvents[1].Payload.Item.ID)
+
+	finalEvents, err := FinalizeChatCompletionsStreamToResponses(state)
+	require.NoError(t, err)
+	require.Len(t, finalEvents, 1)
+	assert.Equal(t, responsesEventCompleted, finalEvents[0].Type)
+	require.NotNil(t, finalEvents[0].Payload.Response)
+	require.Len(t, finalEvents[0].Payload.Response.Output, 1)
+	assert.Equal(t, events[2].Payload.ItemID, finalEvents[0].Payload.Response.Output[0].ID)
+}
+
 func assistantMessageWithTool(content string, id string, name string, args string) dto.Message {
 	msg := dto.Message{Role: "assistant", Content: content}
 	msg.SetToolCalls([]dto.ToolCallRequest{
