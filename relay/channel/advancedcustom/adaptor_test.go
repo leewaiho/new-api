@@ -512,6 +512,89 @@ func TestAdaptorResponsesToolsModelOverrideFlattensToolSearchForChatUpstream(t *
 	assert.Equal(t, "tool_search", info.ResponsesToolNameMappings["tool_search"].NativeToolType)
 }
 
+func TestAdaptorResponsesToolsGLMFallbackSearchAndNativeCodingToolsReachChatUpstream(t *testing.T) {
+	adaptor := &Adaptor{}
+	info := advancedCustomRelayInfo(&dto.AdvancedCustomConfig{
+		Routes: []dto.AdvancedCustomRoute{{
+			IncomingPath: "/v1/responses",
+			UpstreamPath: "/v1/chat/completions",
+			Converter:    dto.AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions,
+			ConverterOptions: &dto.AdvancedCustomConverterOptions{
+				ResponsesTools: &dto.AdvancedCustomResponsesToolsOptions{
+					Namespace: dto.AdvancedCustomResponsesToolPolicyFlatten,
+				},
+				ResponsesToolModelOverrides: []dto.AdvancedCustomResponsesToolModelOverride{{
+					Models: []string{"glm-5.2"},
+					ResponsesTools: &dto.AdvancedCustomResponsesToolsOptions{
+						ImageGeneration: dto.AdvancedCustomResponsesToolPolicyDrop,
+						WebSearch:       dto.AdvancedCustomResponsesToolPolicyDrop,
+						ToolSearch:      dto.AdvancedCustomResponsesToolPolicyFlatten,
+					},
+					ToolNames: []dto.AdvancedCustomResponsesToolNamePolicy{
+						{ToolType: "shell_command", Policy: dto.AdvancedCustomResponsesToolPolicyFlatten},
+						{ToolType: "custom", ToolName: "apply_patch", Policy: dto.AdvancedCustomResponsesToolPolicyFlatten},
+					},
+				}},
+			},
+		}},
+	})
+	info.RelayMode = relayconstant.RelayModeResponses
+	info.RequestURLPath = "/v1/responses"
+
+	converted, err := adaptor.ConvertOpenAIResponsesRequest(advancedCustomGinContext("/v1/responses"), info, dto.OpenAIResponsesRequest{
+		Model: "glm-5.2",
+		Input: mustAdvancedCustomRawMessage(t, "search, inspect, and patch the workspace"),
+		Tools: mustAdvancedCustomRawMessage(t, []map[string]any{
+			{"type": "web_search"},
+			{"type": "tool_search"},
+			{
+				"type": "namespace",
+				"name": "mcp__searxng__",
+				"tools": []map[string]any{
+					{
+						"type":        "function",
+						"name":        "search",
+						"description": "Search the web through SearXNG.",
+						"parameters":  map[string]any{"type": "object"},
+					},
+				},
+			},
+			{"type": "shell_command"},
+			{"type": "custom", "name": "apply_patch"},
+		}),
+	})
+	require.NoError(t, err)
+
+	chatReq, ok := converted.(*dto.GeneralOpenAIRequest)
+	require.True(t, ok)
+	require.Len(t, chatReq.Tools, 4)
+	for _, tool := range chatReq.Tools {
+		assert.Equal(t, "function", tool.Type)
+	}
+	assert.Equal(t, "tool_search", chatReq.Tools[0].Function.Name)
+	assert.Equal(t, "mcp__searxng__search", chatReq.Tools[1].Function.Name)
+	assert.Equal(t, "shell_command", chatReq.Tools[2].Function.Name)
+	assert.Equal(t, "apply_patch", chatReq.Tools[3].Function.Name)
+
+	assert.Equal(t, dto.ResponsesToolNameMapping{
+		Name:           "tool_search",
+		NativeToolType: "tool_search",
+	}, info.ResponsesToolNameMappings["tool_search"])
+	assert.Equal(t, dto.ResponsesToolNameMapping{
+		Namespace: "mcp__searxng__",
+		Name:      "search",
+	}, info.ResponsesToolNameMappings["mcp__searxng__search"])
+	assert.Equal(t, dto.ResponsesToolNameMapping{
+		Name:           "shell_command",
+		NativeToolType: "shell_command",
+	}, info.ResponsesToolNameMappings["shell_command"])
+	assert.Equal(t, dto.ResponsesToolNameMapping{
+		Name:           "apply_patch",
+		NativeToolType: "custom",
+		ArgumentsCodec: "custom_input",
+	}, info.ResponsesToolNameMappings["apply_patch"])
+}
+
 func TestAdaptorRejectsUnregisteredNativeToolBeforeChatUpstreamAndRecordsCompatibilityEvent(t *testing.T) {
 	previousDB := model.DB
 	db, err := gorm.Open(sqlite.Open("file:advanced_custom_unregistered_native_tool?mode=memory&cache=shared"), &gorm.Config{})
