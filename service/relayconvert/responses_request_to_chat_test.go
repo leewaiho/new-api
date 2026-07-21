@@ -813,6 +813,117 @@ func TestResponsesRequestToChatCompletionsRequestConvertsNativeToolCallHistoryAn
 	assert.Equal(t, "Done.", got.Messages[1].StringContent())
 }
 
+func TestResponsesRequestToChatCompletionsRequestKeepsHostedWebSearchWithNativeCodingToolHistory(t *testing.T) {
+	mappings := map[string]dto.ResponsesToolNameMapping{}
+	got, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
+		Model: "glm-5.2",
+		Input: mustRawMessage(t, []map[string]any{
+			{
+				"type":      "function_call",
+				"id":        "fc_call_shell",
+				"call_id":   "call_shell",
+				"name":      "shell_command",
+				"arguments": `{"command":"pwd","workdir":"/repo"}`,
+			},
+			{
+				"type":    "custom_tool_call",
+				"id":      "ctc_call_patch",
+				"call_id": "call_patch",
+				"name":    "apply_patch",
+				"input":   "*** Begin Patch\n*** End Patch",
+			},
+			{
+				"type":    "function_call_output",
+				"call_id": "call_shell",
+				"output":  "/repo",
+			},
+			{
+				"type":    "custom_tool_call_output",
+				"call_id": "call_patch",
+				"output":  "Done.",
+			},
+		}),
+		Tools: mustRawMessage(t, []map[string]any{
+			{"type": "web_search"},
+			{"type": "shell_command"},
+			{"type": "custom", "name": "apply_patch"},
+		}),
+		ToolChoice: mustRawMessage(t, map[string]any{"type": "custom", "name": "apply_patch"}),
+	}, ResponsesRequestToChatOptions{
+		ToolPolicies: ResponsesToolPolicies{
+			WebSearch: ResponsesToolPolicyPreserve,
+			Custom:    ResponsesToolPolicyFlatten,
+			Unknown:   ResponsesToolPolicyFlatten,
+		},
+		ToolNameMappings: mappings,
+	})
+	require.NoError(t, err)
+
+	require.Len(t, got.Tools, 3)
+	assert.Equal(t, "web_search", got.Tools[0].Type)
+	assert.Equal(t, "function", got.Tools[1].Type)
+	assert.Equal(t, "shell_command", got.Tools[1].Function.Name)
+	assert.Equal(t, "function", got.Tools[2].Type)
+	assert.Equal(t, "apply_patch", got.Tools[2].Function.Name)
+	assert.Equal(t, dto.ResponsesToolNameMapping{
+		Name:           "shell_command",
+		NativeToolType: responsesNativeToolTypeShellCommand,
+	}, mappings["shell_command"])
+	assert.Equal(t, dto.ResponsesToolNameMapping{
+		Name:           "apply_patch",
+		NativeToolType: responsesNativeToolTypeCustom,
+		ArgumentsCodec: responsesArgumentsCodecCustomInput,
+	}, mappings["apply_patch"])
+	assert.Equal(t, map[string]any{
+		"type": "function",
+		"function": map[string]any{
+			"name": "apply_patch",
+		},
+	}, got.ToolChoice)
+
+	require.Len(t, got.Messages, 3)
+	toolCalls := got.Messages[0].ParseToolCalls()
+	require.Len(t, toolCalls, 2)
+	assert.Equal(t, "call_shell", toolCalls[0].ID)
+	assert.Equal(t, "shell_command", toolCalls[0].Function.Name)
+	assert.Equal(t, `{"command":"pwd","workdir":"/repo"}`, toolCalls[0].Function.Arguments)
+	assert.Equal(t, "call_patch", toolCalls[1].ID)
+	assert.Equal(t, "apply_patch", toolCalls[1].Function.Name)
+	assert.JSONEq(t, `{"input":"*** Begin Patch\n*** End Patch"}`, toolCalls[1].Function.Arguments)
+	assert.Equal(t, "call_shell", got.Messages[1].ToolCallId)
+	assert.Equal(t, "/repo", got.Messages[1].StringContent())
+	assert.Equal(t, "call_patch", got.Messages[2].ToolCallId)
+	assert.Equal(t, "Done.", got.Messages[2].StringContent())
+
+	resp, _, err := ChatCompletionsResponseToResponsesResponse(&dto.OpenAITextResponse{
+		Model: "glm-5.2",
+		Choices: []dto.OpenAITextResponseChoice{{
+			Message:      assistantMessageWithTool("", "call_shell", "shell_command", `{"command":"pwd"}`),
+			FinishReason: "tool_calls",
+		}},
+	}, "resp_1")
+	require.NoError(t, err)
+	resp.Output = append(resp.Output, dto.ResponsesOutput{
+		Type:      responsesOutputTypeFunctionCall,
+		ID:        "call_patch",
+		CallId:    "call_patch",
+		Name:      "apply_patch",
+		Arguments: []byte(`{"input":"*** Begin Patch\n*** End Patch"}`),
+	})
+	require.NoError(t, ApplyResponsesToolNameMappings(resp, mappings))
+
+	require.Len(t, resp.Output, 2)
+	assert.Equal(t, "fc_call_shell", resp.Output[0].ID)
+	assert.Equal(t, "call_shell", resp.Output[0].CallId)
+	assert.Equal(t, responsesOutputTypeFunctionCall, resp.Output[0].Type)
+	assert.Equal(t, "shell_command", resp.Output[0].Name)
+	assert.Equal(t, "ctc_call_patch", resp.Output[1].ID)
+	assert.Equal(t, "call_patch", resp.Output[1].CallId)
+	assert.Equal(t, responsesOutputTypeCustomToolCall, resp.Output[1].Type)
+	assert.Equal(t, "apply_patch", resp.Output[1].Name)
+	assert.JSONEq(t, `"*** Begin Patch\n*** End Patch"`, string(resp.Output[1].Input))
+}
+
 func TestResponsesRequestToChatCompletionsRequestPreservesTopLevelInputTextAfterFunctionCallOutput(t *testing.T) {
 	got, err := ResponsesRequestToChatCompletionsRequest(&dto.OpenAIResponsesRequest{
 		Model: "glm-5.2",
