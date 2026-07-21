@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 
-import type { AdvancedCustomConfig } from '../types'
+import type { AdvancedCustomConfig, AdvancedCustomRoute } from '../types'
 import {
   mergeAdvancedCustomRouteCompatibilityConfig,
   normalizeAdvancedCustomResponsesToolType,
@@ -126,7 +126,7 @@ describe('advanced custom config round trip', () => {
 
 describe('tool search flatten validation', () => {
   test('allows only Responses to Chat routes', () => {
-    const route = {
+    const route: AdvancedCustomRoute = {
       ...validResponsesRoute,
       converter_options: { responses_tools: { tool_search: 'flatten' as const } },
     }
