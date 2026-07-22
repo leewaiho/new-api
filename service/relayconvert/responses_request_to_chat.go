@@ -1089,6 +1089,54 @@ func responsesCallID(item map[string]any) string {
 	return strings.TrimSpace(common.Interface2String(item["id"]))
 }
 
+// NormalizeResponsesInputToolCallItemIDs restores the Responses item-ID
+// prefixes required by OpenAI-compatible Responses upstreams while preserving
+// the call_id used to associate tool outputs with their calls.
+func NormalizeResponsesInputToolCallItemIDs(request *dto.OpenAIResponsesRequest) error {
+	if request == nil || !rawJSONPresent(request.Input) || common.GetJsonType(request.Input) != "array" {
+		return nil
+	}
+
+	var input []map[string]any
+	if err := common.Unmarshal(request.Input, &input); err != nil {
+		return fmt.Errorf("invalid responses input array: %w", err)
+	}
+
+	changed := false
+	for _, item := range input {
+		var prefix string
+		switch strings.TrimSpace(common.Interface2String(item["type"])) {
+		case responsesInputTypeFunctionCall:
+			prefix = "fc"
+		case responsesInputTypeCustomToolCall:
+			prefix = "ctc"
+		default:
+			continue
+		}
+
+		itemID := strings.TrimSpace(common.Interface2String(item["id"]))
+		if strings.HasPrefix(itemID, prefix+"_") || (itemID != "" && !strings.HasPrefix(itemID, "call_")) {
+			continue
+		}
+		callID := responsesCallID(item)
+		if callID == "" {
+			continue
+		}
+		item["id"] = responsesToolItemID(prefix, callID, itemID)
+		changed = true
+	}
+
+	if !changed {
+		return nil
+	}
+	normalized, err := common.Marshal(input)
+	if err != nil {
+		return err
+	}
+	request.Input = normalized
+	return nil
+}
+
 func responsesArgumentsString(value any) string {
 	switch v := value.(type) {
 	case nil:
