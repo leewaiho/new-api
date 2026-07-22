@@ -15,6 +15,7 @@ const (
 	responsesInputTypeFunctionCallOutput   = "function_call_output"
 	responsesInputTypeCustomToolCall       = "custom_tool_call"
 	responsesInputTypeCustomToolCallOutput = "custom_tool_call_output"
+	responsesInputTypeReasoning            = "reasoning"
 	responsesInputTypeToolSearchCall       = "tool_search_call"
 	responsesInputTypeToolSearchOutput     = "tool_search_output"
 )
@@ -302,6 +303,8 @@ func responsesRequestMessagesToChat(req *dto.OpenAIResponsesRequest, mappings ma
 func responsesInputItemToChatMessages(item map[string]any, messages []dto.Message, mappings map[string]dto.ResponsesToolNameMapping) ([]dto.Message, error) {
 	itemType := strings.TrimSpace(common.Interface2String(item["type"]))
 	switch itemType {
+	case responsesInputTypeReasoning:
+		return messages, nil
 	case responsesInputTypeFunctionCall:
 		toolCall, err := responsesFunctionCallItemToChatToolCall(item)
 		if err != nil {

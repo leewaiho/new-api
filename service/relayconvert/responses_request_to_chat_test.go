@@ -627,6 +627,29 @@ func TestResponsesRequestToChatCompletionsRequestFlattensNativeCodingTools(t *te
 	assert.Equal(t, "shell_command", shellChoice.(map[string]any)["function"].(map[string]any)["name"])
 }
 
+func TestResponsesRequestToChatCompletionsRequestFlattensNativeCodingToolsByPolicy(t *testing.T) {
+	got, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
+		Model: "glm-5.2",
+		Input: mustRawMessage(t, "update the file"),
+		Tools: mustRawMessage(t, []map[string]any{
+			{"type": "custom", "name": "apply_patch", "description": "Apply a patch."},
+			{"type": "shell_command", "description": "Run a shell command."},
+		}),
+	}, ResponsesRequestToChatOptions{
+		ToolPolicies: ResponsesToolPolicies{
+			Custom:  ResponsesToolPolicyFlatten,
+			Unknown: ResponsesToolPolicyFlatten,
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, got.Tools, 2)
+
+	assert.Equal(t, "function", got.Tools[0].Type)
+	assert.Equal(t, "apply_patch", got.Tools[0].Function.Name)
+	assert.Equal(t, "function", got.Tools[1].Type)
+	assert.Equal(t, "shell_command", got.Tools[1].Function.Name)
+}
+
 func TestResponsesRequestToChatCompletionsRequestFlattensToolSearchAndHistory(t *testing.T) {
 	mappings := map[string]dto.ResponsesToolNameMapping{}
 	got, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
@@ -949,6 +972,58 @@ func TestResponsesRequestToChatCompletionsRequestPreservesTopLevelInputTextAfter
 	require.Len(t, got.Messages, 3)
 	assert.Equal(t, "user", got.Messages[2].Role)
 	assert.Equal(t, "The command succeeded. Reply with exactly ACK.", got.Messages[2].StringContent())
+}
+
+func TestResponsesRequestToChatCompletionsRequestSkipsReasoningInputItems(t *testing.T) {
+	got, err := ResponsesRequestToChatCompletionsRequest(&dto.OpenAIResponsesRequest{
+		Model: "glm-5.2",
+		Input: mustRawMessage(t, []map[string]any{
+			{
+				"type": "message",
+				"role": "developer",
+				"content": []map[string]any{
+					{"type": "input_text", "text": "Use tools when needed."},
+				},
+			},
+			{
+				"type": "message",
+				"role": "user",
+				"content": []map[string]any{
+					{"type": "input_text", "text": "Update the fixture."},
+				},
+			},
+			{
+				"type": "reasoning",
+				"summary": []map[string]any{
+					{"type": "summary_text", "text": "I will run a command."},
+				},
+			},
+			{
+				"type":      "function_call",
+				"call_id":   "call_shell",
+				"name":      "shell_command",
+				"arguments": `{"command":"true"}`,
+			},
+			{
+				"type":    "function_call_output",
+				"call_id": "call_shell",
+				"output":  "Command completed successfully.",
+			},
+		}),
+	})
+	require.NoError(t, err)
+	require.Len(t, got.Messages, 4)
+
+	assert.Equal(t, "developer", got.Messages[0].Role)
+	assert.Equal(t, "user", got.Messages[1].Role)
+	assert.Equal(t, "assistant", got.Messages[2].Role)
+	assert.Equal(t, "tool", got.Messages[3].Role)
+	assert.Equal(t, "call_shell", got.Messages[3].ToolCallId)
+
+	toolCalls := got.Messages[2].ParseToolCalls()
+	require.Len(t, toolCalls, 1)
+	assert.Equal(t, "call_shell", toolCalls[0].ID)
+	assert.Equal(t, "shell_command", toolCalls[0].Function.Name)
 }
 
 func TestResponsesRequestToChatCompletionsRequestRejectsUnregisteredNativeToolFlatten(t *testing.T) {
