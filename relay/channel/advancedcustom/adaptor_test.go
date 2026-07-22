@@ -583,6 +583,47 @@ func TestAdaptorResponsesPassthroughSendsExpectedToolsToUpstream(t *testing.T) {
 	assert.JSONEq(t, `{"type":"function","name":"shell"}`, string(upstreamRequest.ToolChoice))
 }
 
+func TestAdaptorResponsesPassthroughNormalizesToolCallItemIDs(t *testing.T) {
+	adaptor := &Adaptor{}
+	info := advancedCustomRelayInfo(&dto.AdvancedCustomConfig{
+		Routes: []dto.AdvancedCustomRoute{{
+			IncomingPath: "/v1/responses",
+			UpstreamPath: "/v1/responses",
+			Converter:    dto.AdvancedCustomConverterNone,
+		}},
+	})
+	info.RelayMode = relayconstant.RelayModeResponses
+	info.RequestURLPath = "/v1/responses"
+
+	converted, err := adaptor.ConvertOpenAIResponsesRequest(advancedCustomGinContext("/v1/responses"), info, dto.OpenAIResponsesRequest{
+		Model: "gpt-test",
+		Input: mustAdvancedCustomRawMessage(t, []map[string]any{
+			{
+				"type":      "function_call",
+				"id":        "call_decd9695c7974252bde106f6",
+				"call_id":   "call_decd9695c7974252bde106f6",
+				"name":      "shell_command",
+				"arguments": `{"command":"pwd"}`,
+			},
+			{
+				"type":    "function_call_output",
+				"call_id": "call_decd9695c7974252bde106f6",
+				"output":  "/repo",
+			},
+		}),
+	})
+	require.NoError(t, err)
+
+	upstreamRequest, ok := converted.(dto.OpenAIResponsesRequest)
+	require.True(t, ok)
+	var input []map[string]any
+	require.NoError(t, common.Unmarshal(upstreamRequest.Input, &input))
+	assert.Equal(t, "fc_call_decd9695c7974252bde106f6", input[0]["id"])
+	assert.Equal(t, "call_decd9695c7974252bde106f6", input[0]["call_id"])
+	assert.NotContains(t, input[1], "id")
+	assert.Equal(t, "call_decd9695c7974252bde106f6", input[1]["call_id"])
+}
+
 func TestAdaptorResponsesPassthroughKeepsImageGenFunctionWithoutHostedConflict(t *testing.T) {
 	service.InitHttpClient()
 	var upstreamBody []byte

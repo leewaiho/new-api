@@ -562,6 +562,9 @@ func (a *Adaptor) convertGeminiToOpenAICompatibleRequest(c *gin.Context, info *r
 }
 
 func (a *Adaptor) convertOpenAICompatibleResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.OpenAIResponsesRequest) (any, error) {
+	if err := relayconvert.NormalizeResponsesInputToolCallItemIDs(&request); err != nil {
+		return nil, err
+	}
 	old := info.ChannelType
 	info.ChannelType = constant.ChannelTypeOpenAI
 	converted, err := a.openaiAdaptor.ConvertOpenAIResponsesRequest(c, info, request)
