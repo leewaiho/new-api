@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"bytes"
 	"io"
 	"net/http"
 	"strings"
@@ -129,6 +130,7 @@ func chatCompletionsViaResponses(c *gin.Context, info *relaycommon.RelayInfo, ad
 		return nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 	}
 	defer closer.Close()
+	upstreamRequestJSON := jsonData
 	jsonData = nil
 	info.UpstreamRequestBodySize = size
 	var requestBody io.Reader = body
@@ -149,6 +151,9 @@ func chatCompletionsViaResponses(c *gin.Context, info *relaycommon.RelayInfo, ad
 	upstreamStream := isResponsesEventStreamContentType(httpResp.Header.Get("Content-Type"))
 	info.IsStream = clientStream || upstreamStream
 	if httpResp.StatusCode != http.StatusOK {
+		responseBodyBytes, _ := io.ReadAll(httpResp.Body)
+		httpResp.Body = io.NopCloser(bytes.NewReader(responseBodyBytes))
+		CaptureUpstreamError(info, httpResp.StatusCode, upstreamRequestJSON, responseBodyBytes)
 		newApiErr := service.RelayErrorHandler(c.Request.Context(), httpResp, false)
 		service.ResetStatusCode(newApiErr, statusCodeMappingStr)
 		return nil, newApiErr
