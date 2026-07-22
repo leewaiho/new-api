@@ -491,12 +491,28 @@ func responsesToolPolicyForType(policies ResponsesToolPolicies, toolType string)
 	}
 }
 
+// joinNamespaceName joins a namespace prefix with a function name, inserting a
+// single underscore separator only when the prefix is non-empty and does not
+// already end with one. This keeps names readable (e.g. "mcp__demo__lookup"
+// stays unchanged while "multi_agent_v1" + "close_agent" becomes
+// "multi_agent_v1_close_agent") and avoids ambiguous concatenations.
+func joinNamespaceName(prefix, name string) string {
+	if prefix == "" {
+		return name
+	}
+	if strings.HasSuffix(prefix, "_") {
+		return prefix + name
+	}
+	return prefix + "_" + name
+}
+
 func responsesFunctionToolToChat(tool map[string]any, namePrefix string) dto.ToolCallRequest {
 	name := strings.TrimSpace(common.Interface2String(tool["name"]))
+	fullName := joinNamespaceName(namePrefix, name)
 	return dto.ToolCallRequest{
 		Type: "function",
 		Function: dto.FunctionRequest{
-			Name:        namePrefix + name,
+			Name:        fullName,
 			Description: common.Interface2String(tool["description"]),
 			Parameters:  tool["parameters"],
 		},
@@ -526,7 +542,7 @@ func responsesNamespaceToolToChat(tool map[string]any, mappings map[string]dto.R
 		if nestedName == "" {
 			return nil, fmt.Errorf("namespace tool %q contains function without name", namespace)
 		}
-		flatName := namespace + nestedName
+		flatName := joinNamespaceName(namespace, nestedName)
 		chatTool := responsesFunctionToolToChat(nested, namespace)
 		out = append(out, chatTool)
 		if mappings != nil {
