@@ -162,6 +162,9 @@ func chatCompletionsViaResponses(c *gin.Context, info *relaycommon.RelayInfo, ad
 	if upstreamStream && clientStream {
 		usage, newApiErr := openaichannel.OaiResponsesToChatStreamHandler(c, info, httpResp)
 		if newApiErr != nil {
+			if newApiErr.StatusCode >= http.StatusBadRequest {
+				CaptureUpstreamError(info, newApiErr.StatusCode, upstreamRequestJSON, []byte(newApiErr.ErrorWithStatusCode()))
+			}
 			service.ResetStatusCode(newApiErr, statusCodeMappingStr)
 			return nil, newApiErr
 		}
@@ -171,6 +174,9 @@ func chatCompletionsViaResponses(c *gin.Context, info *relaycommon.RelayInfo, ad
 		info.IsStream = false
 		usage, newApiErr := openaichannel.OaiResponsesToChatBufferedStreamHandler(c, info, httpResp)
 		if newApiErr != nil {
+			if newApiErr.StatusCode >= http.StatusBadRequest {
+				CaptureUpstreamError(info, newApiErr.StatusCode, upstreamRequestJSON, []byte(newApiErr.ErrorWithStatusCode()))
+			}
 			service.ResetStatusCode(newApiErr, statusCodeMappingStr)
 			return nil, newApiErr
 		}
@@ -179,6 +185,9 @@ func chatCompletionsViaResponses(c *gin.Context, info *relaycommon.RelayInfo, ad
 
 	usage, newApiErr := openaichannel.OaiResponsesToChatHandler(c, info, httpResp)
 	if newApiErr != nil {
+		if newApiErr.StatusCode >= http.StatusBadRequest {
+			CaptureUpstreamError(info, newApiErr.StatusCode, upstreamRequestJSON, []byte(newApiErr.ErrorWithStatusCode()))
+		}
 		service.ResetStatusCode(newApiErr, statusCodeMappingStr)
 		return nil, newApiErr
 	}

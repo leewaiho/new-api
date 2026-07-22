@@ -149,6 +149,9 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 
 	usage, newAPIError := adaptor.DoResponse(c, httpResp, info)
 	if newAPIError != nil {
+		if newAPIError.StatusCode >= http.StatusBadRequest {
+			CaptureUpstreamError(info, newAPIError.StatusCode, upstreamRequestJSON, []byte(newAPIError.ErrorWithStatusCode()))
+		}
 		// reset status code 重置状态码
 		service.ResetStatusCode(newAPIError, statusCodeMappingStr)
 		return newAPIError
