@@ -62,14 +62,14 @@ func ChatCompletionsResponseToResponsesResponse(resp *dto.OpenAITextResponse, id
 	if reasoning := choice.Message.GetReasoningContent(); reasoning != "" {
 		out.Output = append(out.Output, dto.ResponsesOutput{
 			Type:   responsesOutputTypeReasoning,
-			ID:     fmt.Sprintf("%s_reasoning_0", id),
+			ID:     responsesReasoningItemID(id),
 			Status: responseOutputStatus(out),
-			Content: []dto.ResponsesOutputContent{
-				{
+			Summary: responsesReasoningSummary(
+				dto.ResponsesReasoningSummaryPart{
 					Type: "summary_text",
 					Text: reasoning,
 				},
-			},
+			),
 		})
 	}
 
@@ -313,7 +313,7 @@ func (s *ChatToResponsesStreamState) appendReasoningDelta(delta string) []ChatTo
 				Type:    responsesOutputTypeReasoning,
 				ID:      s.reasoningID(),
 				Status:  "in_progress",
-				Content: []dto.ResponsesOutputContent{},
+				Summary: responsesReasoningSummary(),
 			},
 		}))
 		events = append(events, responsesStreamEvent(responsesEventReasoningSummaryPartAdded, dto.ResponsesStreamResponse{
@@ -539,7 +539,15 @@ func (s *ChatToResponsesStreamState) messageID() string {
 }
 
 func (s *ChatToResponsesStreamState) reasoningID() string {
-	return fmt.Sprintf("%s_reasoning_0", s.ID)
+	return responsesReasoningItemID(s.ID)
+}
+
+func responsesReasoningItemID(responseID string) string {
+	responseID = strings.TrimPrefix(strings.TrimSpace(responseID), "rs_")
+	if responseID == "" {
+		responseID = "0"
+	}
+	return fmt.Sprintf("rs_%s_0", responseID)
 }
 
 func (s *ChatToResponsesStreamState) messageOutput(status string) *dto.ResponsesOutput {
@@ -563,12 +571,12 @@ func (s *ChatToResponsesStreamState) reasoningOutput(status string) *dto.Respons
 		Type:   responsesOutputTypeReasoning,
 		ID:     s.reasoningID(),
 		Status: status,
-		Content: []dto.ResponsesOutputContent{
-			{
+		Summary: responsesReasoningSummary(
+			dto.ResponsesReasoningSummaryPart{
 				Type: "summary_text",
 				Text: s.reasoning.String(),
 			},
-		},
+		),
 	}
 }
 
