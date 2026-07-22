@@ -1,8 +1,10 @@
 package relayconvert
 
 import (
+	"strings"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
@@ -108,7 +110,38 @@ func TestResponsesResponseToChatCompletionsPreservesTextAndToolCalls(t *testing.
 	assert.Equal(t, 7, usage.TotalTokens)
 }
 
-func TestResponsesResponseToChatCompletionsPreservesReasoningSummary(t *testing.T) {
+func TestResponsesResponseToChatCompletionsPreservesStandardReasoningSummary(t *testing.T) {
+	var resp dto.OpenAIResponsesResponse
+	err := common.Unmarshal([]byte(`{
+		"id": "resp_1",
+		"model": "gpt-test",
+		"status": "completed",
+		"output": [
+			{
+				"type": "reasoning",
+				"id": "rs_1",
+				"status": "completed",
+				"summary": [
+					{"type": "summary_text", "text": "first summary"},
+					{"type": "summary_text", "text": "\n\nsecond summary"}
+				]
+			},
+			{
+				"type": "message",
+				"role": "assistant",
+				"content": [{"type": "output_text", "text": "final"}]
+			}
+		]
+	}`), &resp)
+	require.NoError(t, err)
+
+	chat, _, err := ResponsesResponseToChatCompletionsResponse(&resp, "chatcmpl_1")
+	require.NoError(t, err)
+	assert.Equal(t, "first summary\n\nsecond summary", chat.Choices[0].Message.GetReasoningContent())
+	assert.Equal(t, "final", chat.Choices[0].Message.StringContent())
+}
+
+func TestResponsesResponseToChatCompletionsPreservesLegacyReasoningContent(t *testing.T) {
 	resp := &dto.OpenAIResponsesResponse{
 		ID:     "resp_1",
 		Model:  "gpt-test",
@@ -466,6 +499,55 @@ func TestChatCompletionsResponseToResponsesPreservesTextToolCallsAndUsage(t *tes
 	assert.Equal(t, "call_1", resp.Output[1].CallId)
 	assert.Equal(t, "lookup", resp.Output[1].Name)
 	assert.Equal(t, `"{\"q\":\"x\"}"`, string(resp.Output[1].Arguments))
+}
+
+func TestChatCompletionsResponseToResponsesUsesReasoningSummarySchema(t *testing.T) {
+	reasoning := "inspect before patching"
+	chat := &dto.OpenAITextResponse{
+		Id:    "chatcmpl_1",
+		Model: "gpt-test",
+		Choices: []dto.OpenAITextResponseChoice{
+			{
+				Message:      dto.Message{Role: "assistant", ReasoningContent: &reasoning},
+				FinishReason: "stop",
+			},
+		},
+	}
+
+	resp, _, err := ChatCompletionsResponseToResponsesResponse(chat, "resp_1")
+	require.NoError(t, err)
+	require.Len(t, resp.Output, 1)
+
+	raw, err := common.Marshal(resp.Output[0])
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(gjson.GetBytes(raw, "id").String(), "rs_"))
+	assert.Equal(t, "summary_text", gjson.GetBytes(raw, "summary.0.type").String())
+	assert.Equal(t, reasoning, gjson.GetBytes(raw, "summary.0.text").String())
+	assert.False(t, gjson.GetBytes(raw, "content.0").Exists())
+}
+
+func TestChatCompletionsStreamToResponsesUsesReasoningSummarySchema(t *testing.T) {
+	state := NewChatToResponsesStreamState("resp_1", "gpt-test")
+	reasoning := "inspect before patching"
+
+	events, err := ChatCompletionsStreamChunkToResponsesEvents(&dto.ChatCompletionsStreamResponse{
+		Id: "chatcmpl_1",
+		Choices: []dto.ChatCompletionsStreamResponseChoice{{
+			Delta: dto.ChatCompletionsStreamResponseChoiceDelta{
+				ReasoningContent: &reasoning,
+			},
+		}},
+	}, state)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(events), 3)
+
+	added := events[1].Payload.Item
+	require.NotNil(t, added)
+	raw, err := common.Marshal(added)
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(gjson.GetBytes(raw, "id").String(), "rs_"))
+	assert.True(t, gjson.GetBytes(raw, "summary").IsArray())
+	assert.False(t, gjson.GetBytes(raw, "content.0").Exists())
 }
 
 func TestChatCompletionsResponseToResponsesMapsIncompleteFinishReasons(t *testing.T) {

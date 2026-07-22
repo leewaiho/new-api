@@ -345,17 +345,18 @@ type ResponsesToolNameMapping struct {
 }
 
 type ResponsesOutput struct {
-	Type      string                   `json:"type"`
-	ID        string                   `json:"id"`
-	Status    string                   `json:"status"`
-	Role      string                   `json:"role"`
-	Content   []ResponsesOutputContent `json:"content"`
-	Quality   string                   `json:"quality"`
-	Size      string                   `json:"size"`
-	CallId    string                   `json:"call_id,omitempty"`
-	Name      string                   `json:"name,omitempty"`
-	Namespace string                   `json:"namespace,omitempty"`
-	Arguments json.RawMessage          `json:"arguments,omitempty"`
+	Type      string                     `json:"type"`
+	ID        string                     `json:"id"`
+	Status    string                     `json:"status"`
+	Role      string                     `json:"role"`
+	Content   []ResponsesOutputContent   `json:"content"`
+	Summary   *ResponsesReasoningSummary `json:"summary,omitempty"`
+	Quality   string                     `json:"quality"`
+	Size      string                     `json:"size"`
+	CallId    string                     `json:"call_id,omitempty"`
+	Name      string                     `json:"name,omitempty"`
+	Namespace string                     `json:"namespace,omitempty"`
+	Arguments json.RawMessage            `json:"arguments,omitempty"`
 }
 
 // ArgumentsString returns function call arguments in the string form expected by Chat Completions.
@@ -381,6 +382,8 @@ type ResponsesReasoningSummaryPart struct {
 	Type string `json:"type"`
 	Text string `json:"text"`
 }
+
+type ResponsesReasoningSummary []ResponsesReasoningSummaryPart
 
 const (
 	BuildInToolWebSearchPreview = "web_search_preview"

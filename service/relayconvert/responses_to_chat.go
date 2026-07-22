@@ -203,13 +203,35 @@ func ExtractReasoningTextFromResponses(resp *dto.OpenAIResponsesResponse) string
 		if out.Type != responsesOutputTypeReasoning {
 			continue
 		}
-		for _, c := range out.Content {
-			if c.Text != "" {
-				sb.WriteString(c.Text)
+		sb.WriteString(responsesReasoningSummaryText(out))
+	}
+	return sb.String()
+}
+
+func responsesReasoningSummaryText(out dto.ResponsesOutput) string {
+	var sb strings.Builder
+	if out.Summary != nil {
+		for _, summary := range *out.Summary {
+			if summary.Text != "" {
+				sb.WriteString(summary.Text)
 			}
+		}
+		return sb.String()
+	}
+	for _, content := range out.Content {
+		if content.Text != "" {
+			sb.WriteString(content.Text)
 		}
 	}
 	return sb.String()
+}
+
+func responsesReasoningSummary(parts ...dto.ResponsesReasoningSummaryPart) *dto.ResponsesReasoningSummary {
+	summary := dto.ResponsesReasoningSummary(parts)
+	if summary == nil {
+		summary = make(dto.ResponsesReasoningSummary, 0)
+	}
+	return &summary
 }
 
 type ResponsesToChatStreamState struct {
@@ -380,13 +402,7 @@ func (s *ResponsesToChatStreamState) terminalOutputChunks(response *dto.OpenAIRe
 			}
 			chunks = append(chunks, s.textDelta(text.String())...)
 		case out.Type == responsesOutputTypeReasoning && !s.hasSentReasoning:
-			var reasoning strings.Builder
-			for _, c := range out.Content {
-				if c.Text != "" {
-					reasoning.WriteString(c.Text)
-				}
-			}
-			chunks = append(chunks, s.reasoningDelta(reasoning.String())...)
+			chunks = append(chunks, s.reasoningDelta(responsesReasoningSummaryText(*out))...)
 		case isResponsesToolOutputType(out.Type):
 			chunks = append(chunks, s.toolItem(&dto.ResponsesStreamResponse{Item: out})...)
 		}
@@ -809,9 +825,9 @@ func (a *ResponsesBufferedAccumulator) BuildOutput() []dto.ResponsesOutput {
 	if a.reasoning.Len() > 0 {
 		out = append(out, dto.ResponsesOutput{
 			Type: responsesOutputTypeReasoning,
-			Content: []dto.ResponsesOutputContent{
-				{Type: "summary_text", Text: a.reasoning.String()},
-			},
+			Summary: responsesReasoningSummary(
+				dto.ResponsesReasoningSummaryPart{Type: "summary_text", Text: a.reasoning.String()},
+			),
 		})
 	}
 	if a.text.Len() > 0 {
