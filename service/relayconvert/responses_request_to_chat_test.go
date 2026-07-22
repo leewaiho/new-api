@@ -241,6 +241,45 @@ func TestResponsesRequestToChatCompletionsRequestFlattensNamespaceToolsWithMappi
 	assert.Equal(t, dto.ResponsesToolNameMapping{Namespace: "mcp__demo__", Name: "lookup_order"}, mappings["mcp__demo__lookup_order"])
 }
 
+func TestResponsesRequestToChatCompletionsRequestFlattensNamespaceWithoutTrailingSeparator(t *testing.T) {
+	mappings := map[string]dto.ResponsesToolNameMapping{}
+	got, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
+		Model: "gpt-test",
+		Input: mustRawMessage(t, "hello"),
+		Tools: mustRawMessage(t, []map[string]any{
+			{
+				"type": "namespace",
+				"name": "multi_agent_v1",
+				"tools": []map[string]any{
+					{"type": "function", "name": "close_agent", "parameters": map[string]any{"type": "object"}},
+				},
+			},
+		}),
+	}, ResponsesRequestToChatOptions{
+		FlattenNamespaceTools: true,
+		ToolNameMappings:      mappings,
+	})
+	require.NoError(t, err)
+
+	require.Len(t, got.Tools, 1)
+	assert.Equal(t, "multi_agent_v1_close_agent", got.Tools[0].Function.Name)
+	assert.Equal(t, dto.ResponsesToolNameMapping{Namespace: "multi_agent_v1", Name: "close_agent"}, mappings["multi_agent_v1_close_agent"])
+}
+
+func TestJoinNamespaceNameHandlesSeparators(t *testing.T) {
+	tests := []struct {
+		prefix, name, want string
+	}{
+		{"", "standalone", "standalone"},
+		{"mcp__demo__", "lookup", "mcp__demo__lookup"},
+		{"multi_agent_v1", "close_agent", "multi_agent_v1_close_agent"},
+		{"mcp__codex_apps__gmail", "_search_emails", "mcp__codex_apps__gmail_search_emails"},
+	}
+	for _, tt := range tests {
+		assert.Equal(t, tt.want, joinNamespaceName(tt.prefix, tt.name))
+	}
+}
+
 func TestResponsesRequestToChatCompletionsRequestDropsUnsupportedToolsWhenRequested(t *testing.T) {
 	got, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
 		Model: "gpt-test",
