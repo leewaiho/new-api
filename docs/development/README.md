@@ -12,6 +12,7 @@
 4. [MIGRATE_TO_ADVANCED_CUSTOM.md](./MIGRATE_TO_ADVANCED_CUSTOM.md) — 把"同供应商 Claude 渠道 + OpenAI 渠道"合并成 1 个 Advanced Custom 渠道
 5. [NEWAPI_IMAGE_GEN_HANDOFF_20260715.md](./NEWAPI_IMAGE_GEN_HANDOFF_20260715.md) — image_gen / image_generation 语义冲突修复与归档状态快照
 6. [NEWAPI_RESPONSES_TOOL_COMPATIBILITY_HANDOFF_20260715.md](./NEWAPI_RESPONSES_TOOL_COMPATIBILITY_HANDOFF_20260715.md) — implicit hosted tools、web_search 参数配置化与剩余任务
+7. [部署与数据库同步](../../scripts/deploy/README.md) — 3010/3011 的真实地址，以及创建或重置 3011 时从 3010 快照恢复独立测试数据库的流程
 
 ## 何时看哪份
 
@@ -26,6 +27,7 @@
 | 把 N 个 Claude/OpenAI 渠道合并成 1 个 Advanced Custom | [MIGRATE_TO_ADVANCED_CUSTOM.md](./MIGRATE_TO_ADVANCED_CUSTOM.md)                                                     |
 | 排查 image_gen hosted/function 冲突                   | [NEWAPI_IMAGE_GEN_HANDOFF_20260715.md](./NEWAPI_IMAGE_GEN_HANDOFF_20260715.md)                                       |
 | 接手 Responses Tool Compatibility 配置化              | [NEWAPI_RESPONSES_TOOL_COMPATIBILITY_HANDOFF_20260715.md](./NEWAPI_RESPONSES_TOOL_COMPATIBILITY_HANDOFF_20260715.md) |
+| 创建、重建或部署 3011 测试环境                         | [部署与数据库同步](../../scripts/deploy/README.md)                                                                      |
 | 看上游通用约定（代码风格、JSON、DB、i18n、PR 流程）   | 仓库根 [AGENTS.md](../../AGENTS.md)                                                                                  |
 
 ## 关键事实速记

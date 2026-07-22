@@ -3,6 +3,7 @@ package relayconvert
 import (
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
@@ -59,13 +60,106 @@ func TestApplyResponsesToolNameMappingsRestoresNamespace(t *testing.T) {
 		},
 	}
 
-	ApplyResponsesToolNameMappings(resp, map[string]dto.ResponsesToolNameMapping{
+	require.NoError(t, ApplyResponsesToolNameMappings(resp, map[string]dto.ResponsesToolNameMapping{
 		"mcp__demo__lookup_order": {Namespace: "mcp__demo__", Name: "lookup_order"},
-	})
+	}))
 
 	require.Len(t, resp.Output, 1)
 	assert.Equal(t, "mcp__demo__", resp.Output[0].Namespace)
 	assert.Equal(t, "lookup_order", resp.Output[0].Name)
+}
+
+func TestApplyResponsesToolNameMappingsRestoresNativeCodingTools(t *testing.T) {
+	resp := &dto.OpenAIResponsesResponse{
+		Output: []dto.ResponsesOutput{
+			{
+				Type:      responsesOutputTypeFunctionCall,
+				ID:        "call_patch",
+				CallId:    "call_patch",
+				Name:      "apply_patch",
+				Arguments: []byte(`{"input":"*** Begin Patch\n*** End Patch"}`),
+			},
+			{
+				Type:      responsesOutputTypeFunctionCall,
+				ID:        "call_shell",
+				CallId:    "call_shell",
+				Name:      "shell_command",
+				Arguments: []byte(`{"command":"pwd","workdir":"/repo","timeout_ms":1000,"login":true,"additional_permissions":{"network":true}}`),
+			},
+		},
+	}
+
+	err := ApplyResponsesToolNameMappings(resp, map[string]dto.ResponsesToolNameMapping{
+		"apply_patch": {
+			Name:           "apply_patch",
+			NativeToolType: "custom",
+			ArgumentsCodec: "custom_input",
+		},
+		"shell_command": {
+			Name:           "shell_command",
+			NativeToolType: "shell_command",
+		},
+	})
+	require.NoError(t, err)
+
+	require.Len(t, resp.Output, 2)
+	assert.Equal(t, responsesOutputTypeCustomToolCall, resp.Output[0].Type)
+	assert.Equal(t, "ctc_call_patch", resp.Output[0].ID)
+	assert.Equal(t, "call_patch", resp.Output[0].CallId)
+	assert.Equal(t, "apply_patch", resp.Output[0].Name)
+	assert.JSONEq(t, `"*** Begin Patch\n*** End Patch"`, string(resp.Output[0].Input))
+	assert.Empty(t, resp.Output[0].Arguments)
+
+	assert.Equal(t, responsesOutputTypeFunctionCall, resp.Output[1].Type)
+	assert.Equal(t, "fc_call_shell", resp.Output[1].ID)
+	assert.Equal(t, "call_shell", resp.Output[1].CallId)
+	assert.Equal(t, "shell_command", resp.Output[1].Name)
+	assert.JSONEq(t, `{"command":"pwd","workdir":"/repo","timeout_ms":1000,"login":true,"additional_permissions":{"network":true}}`, string(resp.Output[1].Arguments))
+}
+
+func TestApplyResponsesToolNameMappingsRestoresToolSearch(t *testing.T) {
+	resp := &dto.OpenAIResponsesResponse{
+		Output: []dto.ResponsesOutput{{
+			Type:      responsesOutputTypeFunctionCall,
+			ID:        "call_tool_search_1",
+			CallId:    "call_tool_search_1",
+			Name:      "tool_search",
+			Arguments: []byte(`"{\"query\":\"Gmail search emails\",\"limit\":10}"`),
+		}},
+	}
+
+	require.NoError(t, ApplyResponsesToolNameMappings(resp, map[string]dto.ResponsesToolNameMapping{
+		"tool_search": {Name: "tool_search", NativeToolType: "tool_search"},
+	}))
+	encoded, err := common.Marshal(resp.Output[0])
+	require.NoError(t, err)
+	assert.Equal(t, "tool_search_call", gjson.GetBytes(encoded, "type").String())
+	assert.Equal(t, "call_tool_search_1", gjson.GetBytes(encoded, "call_id").String())
+	assert.Equal(t, "client", gjson.GetBytes(encoded, "execution").String())
+	assert.Equal(t, "Gmail search emails", gjson.GetBytes(encoded, "arguments.query").String())
+	assert.Equal(t, int64(10), gjson.GetBytes(encoded, "arguments.limit").Int())
+	assert.False(t, gjson.GetBytes(encoded, "arguments").IsArray())
+	assert.False(t, gjson.GetBytes(encoded, "id").String() == "fc_call_tool_search_1")
+}
+
+func TestChatCompletionsResponseToResponsesKeepsUnmappedToolSearchAsFunctionCall(t *testing.T) {
+	resp, _, err := ChatCompletionsResponseToResponsesResponse(&dto.OpenAITextResponse{
+		Model: "gpt-test",
+		Choices: []dto.OpenAITextResponseChoice{{
+			Message:      assistantMessageWithTool("", "call_tool_search_1", "tool_search", `{"query":"ordinary function"}`),
+			FinishReason: "tool_calls",
+		}},
+	}, "resp_1")
+	require.NoError(t, err)
+	require.Len(t, resp.Output, 1)
+
+	output := resp.Output[0]
+	assert.Equal(t, responsesOutputTypeFunctionCall, output.Type)
+	assert.Equal(t, "call_tool_search_1", output.ID)
+	assert.Equal(t, "call_tool_search_1", output.CallId)
+	assert.Equal(t, "tool_search", output.Name)
+	assert.JSONEq(t, `"{\"query\":\"ordinary function\"}"`, string(output.Arguments))
+	assert.Empty(t, output.Execution)
 }
 
 func TestResponsesResponseToChatCompletionsPreservesTextAndToolCalls(t *testing.T) {
@@ -543,7 +637,9 @@ func TestChatCompletionsStreamToResponsesEventsAggregatesUsageAndToolArgs(t *tes
 	events = append(events, mustResponsesEventsFromChatChunk(t, state, &dto.ChatCompletionsStreamResponse{
 		Usage: &dto.Usage{PromptTokens: 2, CompletionTokens: 4, TotalTokens: 6},
 	})...)
-	events = append(events, FinalizeChatCompletionsStreamToResponses(state)...)
+	finalEvents, err := FinalizeChatCompletionsStreamToResponses(state)
+	require.NoError(t, err)
+	events = append(events, finalEvents...)
 
 	require.Len(t, events, 10)
 	assert.Equal(t, responsesEventCreated, events[0].Type)
@@ -562,6 +658,444 @@ func TestChatCompletionsStreamToResponsesEventsAggregatesUsageAndToolArgs(t *tes
 	assert.Equal(t, "msg_resp_1_0", events[9].Payload.Response.Output[0].ID)
 	assert.Equal(t, "hello", events[9].Payload.Response.Output[0].Content[0].Text)
 	assert.Equal(t, `"{\"q\":\"x\"}"`, string(events[9].Payload.Response.Output[1].Arguments))
+}
+
+func TestChatCompletionsStreamToResponsesEventsRestoreNativeCodingTools(t *testing.T) {
+	state := NewChatToResponsesStreamState("resp_1", "glm-5.2")
+	state.Created = 123
+	state.SetToolNameMappings(map[string]dto.ResponsesToolNameMapping{
+		"apply_patch": {
+			Name:           "apply_patch",
+			NativeToolType: "custom",
+			ArgumentsCodec: "custom_input",
+		},
+		"shell_command": {
+			Name:           "shell_command",
+			NativeToolType: "shell_command",
+		},
+	})
+	patchIndex := 0
+	shellIndex := 1
+	finishReason := "tool_calls"
+
+	var events []ChatToResponsesStreamEvent
+	events = append(events, mustResponsesEventsFromChatChunk(t, state, &dto.ChatCompletionsStreamResponse{
+		Choices: []dto.ChatCompletionsStreamResponseChoice{{Index: 0, Delta: dto.ChatCompletionsStreamResponseChoiceDelta{
+			ToolCalls: []dto.ToolCallResponse{{
+				Index: &patchIndex,
+				ID:    "call_patch",
+				Type:  "function",
+				Function: dto.FunctionResponse{
+					Name: "apply_patch",
+				},
+			}},
+		}}},
+	})...)
+	events = append(events, mustResponsesEventsFromChatChunk(t, state, &dto.ChatCompletionsStreamResponse{
+		Choices: []dto.ChatCompletionsStreamResponseChoice{{Index: 0, Delta: dto.ChatCompletionsStreamResponseChoiceDelta{
+			ToolCalls: []dto.ToolCallResponse{{
+				Index: &patchIndex,
+				Function: dto.FunctionResponse{
+					Arguments: `{"input":"*** Begin Patch\n*** End Patch"}`,
+				},
+			}},
+		}}},
+	})...)
+	events = append(events, mustResponsesEventsFromChatChunk(t, state, &dto.ChatCompletionsStreamResponse{
+		Choices: []dto.ChatCompletionsStreamResponseChoice{{Index: 0, Delta: dto.ChatCompletionsStreamResponseChoiceDelta{
+			ToolCalls: []dto.ToolCallResponse{{
+				Index: &shellIndex,
+				ID:    "call_shell",
+				Type:  "function",
+				Function: dto.FunctionResponse{
+					Name: "shell_command",
+				},
+			}},
+		}}},
+	})...)
+	events = append(events, mustResponsesEventsFromChatChunk(t, state, &dto.ChatCompletionsStreamResponse{
+		Choices: []dto.ChatCompletionsStreamResponseChoice{{Index: 0, Delta: dto.ChatCompletionsStreamResponseChoiceDelta{
+			ToolCalls: []dto.ToolCallResponse{{
+				Index: &shellIndex,
+				Function: dto.FunctionResponse{
+					Arguments: `{"command":"pwd","workdir":"/repo","additional_permissions":{"network":true}}`,
+				},
+			}},
+		}}},
+	})...)
+	events = append(events, mustResponsesEventsFromChatChunk(t, state, &dto.ChatCompletionsStreamResponse{
+		Choices: []dto.ChatCompletionsStreamResponseChoice{{Index: 0, FinishReason: &finishReason}},
+	})...)
+	finalEvents, err := FinalizeChatCompletionsStreamToResponses(state)
+	require.NoError(t, err)
+	events = append(events, finalEvents...)
+
+	require.NotEmpty(t, events)
+	assert.Equal(t, responsesOutputTypeCustomToolCall, events[1].Payload.Item.Type)
+	assert.Equal(t, "ctc_call_patch", events[1].Payload.Item.ID)
+	assert.Equal(t, "call_patch", events[1].Payload.Item.CallId)
+	assert.Equal(t, responsesOutputTypeFunctionCall, events[2].Payload.Item.Type)
+	assert.Equal(t, "fc_call_shell", events[2].Payload.Item.ID)
+	assert.Equal(t, "call_shell", events[2].Payload.Item.CallId)
+
+	var patchDelta, shellDelta, patchDone, shellDone bool
+	for _, event := range events {
+		switch event.Type {
+		case responsesEventCustomToolInputDelta:
+			patchDelta = event.Payload.Delta == "*** Begin Patch\n*** End Patch"
+		case responsesEventCustomToolInputDone:
+			patchDone = event.Payload.ItemID == "ctc_call_patch"
+		case responsesEventFunctionArgsDelta:
+			if event.Payload.ItemID == "fc_call_shell" {
+				shellDelta = event.Payload.Delta == `{"command":"pwd","workdir":"/repo","additional_permissions":{"network":true}}`
+			}
+		case responsesEventFunctionArgsDone:
+			if event.Payload.ItemID == "fc_call_shell" {
+				shellDone = true
+			}
+		}
+	}
+	assert.True(t, patchDelta)
+	assert.True(t, patchDone)
+	assert.True(t, shellDelta)
+	assert.True(t, shellDone)
+
+	final := events[len(events)-1].Payload.Response
+	require.NotNil(t, final)
+	require.Len(t, final.Output, 2)
+	assert.Equal(t, responsesOutputTypeCustomToolCall, final.Output[0].Type)
+	assert.Equal(t, "ctc_call_patch", final.Output[0].ID)
+	assert.Equal(t, "call_patch", final.Output[0].CallId)
+	assert.JSONEq(t, `"*** Begin Patch\n*** End Patch"`, string(final.Output[0].Input))
+	assert.Equal(t, "fc_call_shell", final.Output[1].ID)
+	assert.Equal(t, "call_shell", final.Output[1].CallId)
+	assert.JSONEq(t, `"{\"command\":\"pwd\",\"workdir\":\"/repo\",\"additional_permissions\":{\"network\":true}}"`, string(final.Output[1].Arguments))
+}
+
+func TestChatCompletionsStreamToResponsesEventsRestoresToolSearch(t *testing.T) {
+	state := NewChatToResponsesStreamState("resp_1", "glm-5.2")
+	state.SetToolNameMappings(map[string]dto.ResponsesToolNameMapping{
+		"tool_search": {Name: "tool_search", NativeToolType: "tool_search"},
+	})
+	toolIndex := 0
+	finishReason := "tool_calls"
+
+	var events []ChatToResponsesStreamEvent
+	events = append(events, mustResponsesEventsFromChatChunk(t, state, &dto.ChatCompletionsStreamResponse{
+		Choices: []dto.ChatCompletionsStreamResponseChoice{{Index: 0, Delta: dto.ChatCompletionsStreamResponseChoiceDelta{
+			ToolCalls: []dto.ToolCallResponse{{
+				Index: &toolIndex,
+				ID:    "call_tool_search_1",
+				Type:  "function",
+				Function: dto.FunctionResponse{
+					Name: "tool_search",
+				},
+			}},
+		}}},
+	})...)
+	events = append(events, mustResponsesEventsFromChatChunk(t, state, &dto.ChatCompletionsStreamResponse{
+		Choices: []dto.ChatCompletionsStreamResponseChoice{{Index: 0, Delta: dto.ChatCompletionsStreamResponseChoiceDelta{
+			ToolCalls: []dto.ToolCallResponse{{
+				Index:    &toolIndex,
+				Function: dto.FunctionResponse{Arguments: `{"query":"Gmail search emails","limit":10}`},
+			}},
+		}}},
+	})...)
+	events = append(events, mustResponsesEventsFromChatChunk(t, state, &dto.ChatCompletionsStreamResponse{
+		Choices: []dto.ChatCompletionsStreamResponseChoice{{Index: 0, FinishReason: &finishReason}},
+	})...)
+	finalEvents, err := FinalizeChatCompletionsStreamToResponses(state)
+	require.NoError(t, err)
+	events = append(events, finalEvents...)
+
+	for _, event := range events {
+		if event.Payload.ItemID != "" {
+			assert.Equal(t, "call_tool_search_1", event.Payload.ItemID)
+		}
+		if event.Payload.Item != nil && event.Payload.Item.CallId == "call_tool_search_1" {
+			assert.Equal(t, "tool_search_call", event.Payload.Item.Type)
+			assert.Equal(t, "call_tool_search_1", event.Payload.Item.ID)
+		}
+	}
+	final := events[len(events)-1].Payload.Response
+	require.NotNil(t, final)
+	require.Len(t, final.Output, 1)
+	encoded, err := common.Marshal(final.Output[0])
+	require.NoError(t, err)
+	assert.Equal(t, "tool_search_call", gjson.GetBytes(encoded, "type").String())
+	assert.Equal(t, "client", gjson.GetBytes(encoded, "execution").String())
+	assert.Equal(t, "Gmail search emails", gjson.GetBytes(encoded, "arguments.query").String())
+	assert.Equal(t, int64(10), gjson.GetBytes(encoded, "arguments.limit").Int())
+}
+
+func TestChatCompletionsStreamToResponsesEventsKeepsNativeToolIDsStableWhenHeadersArriveLate(t *testing.T) {
+	state := NewChatToResponsesStreamState("resp_1", "glm-5.2")
+	state.SetToolNameMappings(map[string]dto.ResponsesToolNameMapping{
+		"apply_patch": {
+			Name:           "apply_patch",
+			NativeToolType: responsesNativeToolTypeCustom,
+			ArgumentsCodec: responsesArgumentsCodecCustomInput,
+		},
+		"shell_command": {
+			Name:           "shell_command",
+			NativeToolType: responsesNativeToolTypeShellCommand,
+		},
+	})
+	patchIndex := 0
+	shellIndex := 1
+	finishReason := "tool_calls"
+
+	var events []ChatToResponsesStreamEvent
+	events = append(events, mustResponsesEventsFromChatChunk(t, state, &dto.ChatCompletionsStreamResponse{
+		Choices: []dto.ChatCompletionsStreamResponseChoice{{Index: 0, Delta: dto.ChatCompletionsStreamResponseChoiceDelta{
+			ToolCalls: []dto.ToolCallResponse{
+				{Index: &patchIndex, Function: dto.FunctionResponse{Arguments: `{"input":"*** Begin Patch\n*** End Patch"}`}},
+				{Index: &shellIndex, Function: dto.FunctionResponse{Arguments: `{"command":"pwd"}`}},
+			},
+		}}},
+	})...)
+	require.Len(t, events, 1, "arguments without id/name must stay buffered until the native adapter is known")
+
+	events = append(events, mustResponsesEventsFromChatChunk(t, state, &dto.ChatCompletionsStreamResponse{
+		Choices: []dto.ChatCompletionsStreamResponseChoice{{Index: 0, Delta: dto.ChatCompletionsStreamResponseChoiceDelta{
+			ToolCalls: []dto.ToolCallResponse{
+				{Index: &shellIndex, ID: "call_shell", Type: "function", Function: dto.FunctionResponse{Name: "shell_command"}},
+				{Index: &patchIndex, ID: "call_patch", Type: "function", Function: dto.FunctionResponse{Name: "apply_patch"}},
+			},
+		}}},
+	})...)
+	events = append(events, mustResponsesEventsFromChatChunk(t, state, &dto.ChatCompletionsStreamResponse{
+		Choices: []dto.ChatCompletionsStreamResponseChoice{{Index: 0, FinishReason: &finishReason}},
+	})...)
+	finalEvents, err := FinalizeChatCompletionsStreamToResponses(state)
+	require.NoError(t, err)
+	events = append(events, finalEvents...)
+
+	expectedIDs := map[string]string{
+		"call_patch": "ctc_call_patch",
+		"call_shell": "fc_call_shell",
+	}
+	for _, event := range events {
+		if event.Payload.Item != nil && event.Payload.Item.CallId != "" {
+			assert.Equal(t, expectedIDs[event.Payload.Item.CallId], event.Payload.Item.ID)
+		}
+		if event.Payload.ItemID != "" {
+			assert.Contains(t, []string{"ctc_call_patch", "fc_call_shell"}, event.Payload.ItemID, "all deltas must use the matching item id")
+		}
+	}
+
+	final := events[len(events)-1].Payload.Response
+	require.NotNil(t, final)
+	require.Len(t, final.Output, 2)
+	assert.Equal(t, "ctc_call_patch", final.Output[0].ID)
+	assert.Equal(t, "fc_call_shell", final.Output[1].ID)
+}
+
+func TestChatCompletionsStreamToResponsesEventsWaitsForCompleteNativeToolHeader(t *testing.T) {
+	tests := []struct {
+		name            string
+		nativeName      string
+		first           dto.ToolCallResponse
+		second          dto.ToolCallResponse
+		arguments       string
+		wantItemID      string
+		wantOutputType  string
+		wantCustomInput bool
+	}{
+		{
+			name:       "apply patch id before name",
+			nativeName: "apply_patch",
+			first: dto.ToolCallResponse{
+				ID: "call_patch",
+			},
+			second: dto.ToolCallResponse{
+				Function: dto.FunctionResponse{Name: "apply_patch"},
+			},
+			arguments:       `{"input":"*** Begin Patch\n*** End Patch"}`,
+			wantItemID:      "ctc_call_patch",
+			wantOutputType:  responsesOutputTypeCustomToolCall,
+			wantCustomInput: true,
+		},
+		{
+			name:       "shell command name before id",
+			nativeName: "shell_command",
+			first: dto.ToolCallResponse{
+				Function: dto.FunctionResponse{Name: "shell_command"},
+			},
+			second: dto.ToolCallResponse{
+				ID: "call_shell",
+			},
+			arguments:      `{"command":"pwd"}`,
+			wantItemID:     "fc_call_shell",
+			wantOutputType: responsesOutputTypeFunctionCall,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			state := NewChatToResponsesStreamState("resp_1", "glm-5.2")
+			state.SetToolNameMappings(map[string]dto.ResponsesToolNameMapping{
+				"apply_patch": {
+					Name:           "apply_patch",
+					NativeToolType: responsesNativeToolTypeCustom,
+					ArgumentsCodec: responsesArgumentsCodecCustomInput,
+				},
+				"shell_command": {
+					Name:           "shell_command",
+					NativeToolType: responsesNativeToolTypeShellCommand,
+				},
+			})
+			toolIndex := 0
+			tt.first.Index = &toolIndex
+			tt.second.Index = &toolIndex
+
+			firstEvents := mustResponsesEventsFromChatChunk(t, state, &dto.ChatCompletionsStreamResponse{
+				Choices: []dto.ChatCompletionsStreamResponseChoice{{Index: 0, Delta: dto.ChatCompletionsStreamResponseChoiceDelta{
+					ToolCalls: []dto.ToolCallResponse{tt.first},
+				}}},
+			})
+			require.Len(t, firstEvents, 1)
+			assert.Equal(t, responsesEventCreated, firstEvents[0].Type)
+
+			secondEvents := mustResponsesEventsFromChatChunk(t, state, &dto.ChatCompletionsStreamResponse{
+				Choices: []dto.ChatCompletionsStreamResponseChoice{{Index: 0, Delta: dto.ChatCompletionsStreamResponseChoiceDelta{
+					ToolCalls: []dto.ToolCallResponse{tt.second},
+				}}},
+			})
+			require.Len(t, secondEvents, 1)
+			assert.Equal(t, responsesEventOutputItemAdded, secondEvents[0].Type)
+			require.NotNil(t, secondEvents[0].Payload.Item)
+			assert.Equal(t, tt.wantItemID, secondEvents[0].Payload.ItemID)
+			assert.Equal(t, tt.wantItemID, secondEvents[0].Payload.Item.ID)
+			assert.Equal(t, tt.wantOutputType, secondEvents[0].Payload.Item.Type)
+
+			argumentEvents := mustResponsesEventsFromChatChunk(t, state, &dto.ChatCompletionsStreamResponse{
+				Choices: []dto.ChatCompletionsStreamResponseChoice{{Index: 0, Delta: dto.ChatCompletionsStreamResponseChoiceDelta{
+					ToolCalls: []dto.ToolCallResponse{{
+						Index:    &toolIndex,
+						Function: dto.FunctionResponse{Arguments: tt.arguments},
+					}},
+				}}},
+			})
+			for _, event := range argumentEvents {
+				assert.Equal(t, tt.wantItemID, event.Payload.ItemID)
+			}
+
+			finishReason := "tool_calls"
+			doneEvents := mustResponsesEventsFromChatChunk(t, state, &dto.ChatCompletionsStreamResponse{
+				Choices: []dto.ChatCompletionsStreamResponseChoice{{Index: 0, FinishReason: &finishReason}},
+			})
+			finalEvents, err := FinalizeChatCompletionsStreamToResponses(state)
+			require.NoError(t, err)
+			allEvents := append(append(firstEvents, secondEvents...), argumentEvents...)
+			allEvents = append(allEvents, doneEvents...)
+			allEvents = append(allEvents, finalEvents...)
+			for _, event := range allEvents {
+				if event.Payload.ItemID != "" {
+					assert.Equal(t, tt.wantItemID, event.Payload.ItemID)
+				}
+				if event.Payload.Item != nil && event.Payload.Item.CallId != "" {
+					assert.Equal(t, tt.wantItemID, event.Payload.Item.ID)
+				}
+			}
+
+			final := finalEvents[len(finalEvents)-1].Payload.Response
+			require.NotNil(t, final)
+			require.Len(t, final.Output, 1)
+			assert.Equal(t, tt.wantItemID, final.Output[0].ID)
+			assert.Equal(t, tt.wantOutputType, final.Output[0].Type)
+			if tt.wantCustomInput {
+				assert.JSONEq(t, `"*** Begin Patch\n*** End Patch"`, string(final.Output[0].Input))
+			}
+		})
+	}
+}
+
+func TestChatCompletionsStreamToResponsesEventsDoesNotMaterializeIncompleteToolHeadersOnFinish(t *testing.T) {
+	state := NewChatToResponsesStreamState("resp_1", "glm-5.2")
+	state.SetToolNameMappings(map[string]dto.ResponsesToolNameMapping{
+		"apply_patch": {
+			Name:           "apply_patch",
+			NativeToolType: responsesNativeToolTypeCustom,
+			ArgumentsCodec: responsesArgumentsCodecCustomInput,
+		},
+		"shell_command": {
+			Name:           "shell_command",
+			NativeToolType: responsesNativeToolTypeShellCommand,
+		},
+	})
+	patchIndex := 0
+	shellIndex := 1
+	finishReason := "tool_calls"
+
+	argumentEvents := mustResponsesEventsFromChatChunk(t, state, &dto.ChatCompletionsStreamResponse{
+		Choices: []dto.ChatCompletionsStreamResponseChoice{{Index: 0, Delta: dto.ChatCompletionsStreamResponseChoiceDelta{
+			ToolCalls: []dto.ToolCallResponse{
+				{Index: &patchIndex, Function: dto.FunctionResponse{Arguments: `{"input":"*** Begin Patch\n*** End Patch"}`}},
+				{Index: &shellIndex, Function: dto.FunctionResponse{Arguments: `{"command":"pwd"}`}},
+			},
+		}}},
+	})
+	require.Len(t, argumentEvents, 1)
+	assert.Equal(t, responsesEventCreated, argumentEvents[0].Type)
+
+	doneEvents := mustResponsesEventsFromChatChunk(t, state, &dto.ChatCompletionsStreamResponse{
+		Choices: []dto.ChatCompletionsStreamResponseChoice{{Index: 0, FinishReason: &finishReason}},
+	})
+	assert.Empty(t, doneEvents, "incomplete headers must not emit tool lifecycle events at finish")
+
+	finalEvents, err := FinalizeChatCompletionsStreamToResponses(state)
+	require.NoError(t, err)
+	require.Len(t, finalEvents, 1)
+	assert.Equal(t, responsesEventCompleted, finalEvents[0].Type)
+	require.NotNil(t, finalEvents[0].Payload.Response)
+	assert.Empty(t, finalEvents[0].Payload.Response.Output)
+}
+
+func TestChatCompletionsStreamToResponsesEventsEmitsReasoningSummaryPartLifecycle(t *testing.T) {
+	state := NewChatToResponsesStreamState("resp_1", "gpt-test")
+	finishReason := "stop"
+
+	events := mustResponsesEventsFromChatChunk(t, state, &dto.ChatCompletionsStreamResponse{
+		Choices: []dto.ChatCompletionsStreamResponseChoice{{Index: 0, Delta: dto.ChatCompletionsStreamResponseChoiceDelta{
+			ReasoningContent: lo.ToPtr("inspect files first"),
+		}}},
+	})
+	require.Len(t, events, 4)
+	assert.Equal(t, responsesEventCreated, events[0].Type)
+	assert.Equal(t, responsesEventOutputItemAdded, events[1].Type)
+	assert.Equal(t, "response.reasoning_summary_part.added", events[2].Type)
+	assert.Equal(t, responsesEventReasoningSummaryDelta, events[3].Type)
+	require.NotNil(t, events[2].Payload.OutputIndex)
+	require.NotNil(t, events[2].Payload.SummaryIndex)
+	require.NotNil(t, events[3].Payload.OutputIndex)
+	require.NotNil(t, events[3].Payload.SummaryIndex)
+	assert.Equal(t, *events[1].Payload.OutputIndex, *events[2].Payload.OutputIndex)
+	assert.Equal(t, *events[2].Payload.OutputIndex, *events[3].Payload.OutputIndex)
+	assert.Equal(t, 0, *events[2].Payload.SummaryIndex)
+	assert.Equal(t, *events[2].Payload.SummaryIndex, *events[3].Payload.SummaryIndex)
+	assert.Equal(t, events[1].Payload.Item.ID, events[2].Payload.ItemID)
+	assert.Equal(t, events[2].Payload.ItemID, events[3].Payload.ItemID)
+	require.NotNil(t, events[2].Payload.Part)
+	assert.Equal(t, "summary_text", events[2].Payload.Part.Type)
+	assert.Empty(t, events[2].Payload.Part.Text)
+
+	doneEvents := mustResponsesEventsFromChatChunk(t, state, &dto.ChatCompletionsStreamResponse{
+		Choices: []dto.ChatCompletionsStreamResponseChoice{{Index: 0, FinishReason: &finishReason}},
+	})
+	require.Len(t, doneEvents, 2)
+	assert.Equal(t, responsesEventReasoningSummaryDone, doneEvents[0].Type)
+	assert.Equal(t, responsesEventOutputItemDone, doneEvents[1].Type)
+	assert.Equal(t, events[2].Payload.ItemID, doneEvents[0].Payload.ItemID)
+	assert.Equal(t, events[2].Payload.ItemID, doneEvents[1].Payload.Item.ID)
+
+	finalEvents, err := FinalizeChatCompletionsStreamToResponses(state)
+	require.NoError(t, err)
+	require.Len(t, finalEvents, 1)
+	assert.Equal(t, responsesEventCompleted, finalEvents[0].Type)
+	require.NotNil(t, finalEvents[0].Payload.Response)
+	require.Len(t, finalEvents[0].Payload.Response.Output, 1)
+	assert.Equal(t, events[2].Payload.ItemID, finalEvents[0].Payload.Response.Output[0].ID)
 }
 
 func assistantMessageWithTool(content string, id string, name string, args string) dto.Message {
