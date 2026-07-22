@@ -492,15 +492,15 @@ func responsesToolPolicyForType(policies ResponsesToolPolicies, toolType string)
 }
 
 // joinNamespaceName joins a namespace prefix with a function name, inserting a
-// single underscore separator only when the prefix is non-empty and does not
-// already end with one. This keeps names readable (e.g. "mcp__demo__lookup"
-// stays unchanged while "multi_agent_v1" + "close_agent" becomes
-// "multi_agent_v1_close_agent") and avoids ambiguous concatenations.
+// single underscore separator only when neither side already provides one.
+// This keeps names readable (e.g. "mcp__demo__lookup" stays unchanged,
+// "multi_agent_v1" + "close_agent" becomes "multi_agent_v1_close_agent") and
+// avoids ambiguous concatenations or doubled separators.
 func joinNamespaceName(prefix, name string) string {
 	if prefix == "" {
 		return name
 	}
-	if strings.HasSuffix(prefix, "_") {
+	if strings.HasSuffix(prefix, "_") || strings.HasPrefix(name, "_") {
 		return prefix + name
 	}
 	return prefix + "_" + name

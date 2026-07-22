@@ -266,6 +266,20 @@ func TestResponsesRequestToChatCompletionsRequestFlattensNamespaceWithoutTrailin
 	assert.Equal(t, dto.ResponsesToolNameMapping{Namespace: "multi_agent_v1", Name: "close_agent"}, mappings["multi_agent_v1_close_agent"])
 }
 
+func TestJoinNamespaceNameHandlesSeparators(t *testing.T) {
+	tests := []struct {
+		prefix, name, want string
+	}{
+		{"", "standalone", "standalone"},
+		{"mcp__demo__", "lookup", "mcp__demo__lookup"},
+		{"multi_agent_v1", "close_agent", "multi_agent_v1_close_agent"},
+		{"mcp__codex_apps__gmail", "_search_emails", "mcp__codex_apps__gmail_search_emails"},
+	}
+	for _, tt := range tests {
+		assert.Equal(t, tt.want, joinNamespaceName(tt.prefix, tt.name))
+	}
+}
+
 func TestResponsesRequestToChatCompletionsRequestDropsUnsupportedToolsWhenRequested(t *testing.T) {
 	got, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
 		Model: "gpt-test",
