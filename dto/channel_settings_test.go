@@ -776,3 +776,30 @@ func TestAdvancedCustomValidateResponsesToolContinuation(t *testing.T) {
 		})
 	}
 }
+
+func TestResolveAdvancedCustomResponsesToolStateReplayPrefersExactModelOverride(t *testing.T) {
+	enabled := &AdvancedCustomResponsesToolStateReplay{Enabled: true, TTLSeconds: 120}
+	options := &AdvancedCustomConverterOptions{
+		ResponsesToolStateReplay: &AdvancedCustomResponsesToolStateReplay{Enabled: true, TTLSeconds: 60},
+		ResponsesToolModelOverrides: []AdvancedCustomResponsesToolModelOverride{{
+			Models:                   []string{"glm-5.2"},
+			ResponsesToolStateReplay: enabled,
+		}},
+	}
+
+	assert.Same(t, enabled, ResolveAdvancedCustomResponsesToolStateReplay(options, "glm-5.2", "provider-model"))
+	assert.Equal(t, 60, ResolveAdvancedCustomResponsesToolStateReplay(options, "other", "provider-model").TTLSeconds)
+	assert.Nil(t, ResolveAdvancedCustomResponsesToolStateReplay(nil, "glm-5.2", "provider-model"))
+}
+
+func TestAdvancedCustomValidateResponsesToolStateReplay(t *testing.T) {
+	config := &AdvancedCustomConfig{Routes: []AdvancedCustomRoute{{
+		IncomingPath: "/v1/responses",
+		UpstreamPath: "/v1/chat/completions",
+		Converter:    AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions,
+		ConverterOptions: &AdvancedCustomConverterOptions{
+			ResponsesToolStateReplay: &AdvancedCustomResponsesToolStateReplay{Enabled: true},
+		},
+	}}}
+	require.ErrorContains(t, config.Validate(), "responses_tool_state_replay.ttl_seconds must be positive when enabled")
+}

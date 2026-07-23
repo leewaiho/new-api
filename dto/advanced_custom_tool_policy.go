@@ -88,6 +88,20 @@ func ResolveAdvancedCustomResponsesToolContinuation(
 	return options.ResponsesToolContinuation
 }
 
+func ResolveAdvancedCustomResponsesToolStateReplay(
+	options *AdvancedCustomConverterOptions,
+	requestedModel string,
+	upstreamModel string,
+) *AdvancedCustomResponsesToolStateReplay {
+	if options == nil {
+		return nil
+	}
+	if override, _, ok := matchAdvancedCustomResponsesToolModelOverride(options, requestedModel, upstreamModel); ok && override.ResponsesToolStateReplay != nil {
+		return override.ResponsesToolStateReplay
+	}
+	return options.ResponsesToolStateReplay
+}
+
 func ResolveAdvancedCustomResponsesWebSearchParameters(
 	options *AdvancedCustomConverterOptions,
 	requestedModel string,
@@ -344,6 +358,16 @@ func validateAdvancedCustomResponsesImplicitHostedConflictPolicy(index int, opti
 	return nil
 }
 
+func validateAdvancedCustomResponsesToolStateReplay(index int, field string, replay *AdvancedCustomResponsesToolStateReplay) error {
+	if replay == nil || !replay.Enabled {
+		return nil
+	}
+	if replay.TTLSeconds <= 0 {
+		return fmt.Errorf("advanced_custom.advanced_routes[%d].%s.ttl_seconds must be positive when enabled", index, field)
+	}
+	return nil
+}
+
 func validateAdvancedCustomResponsesToolContinuation(index int, field string, continuation *AdvancedCustomResponsesToolContinuation) error {
 	if continuation == nil {
 		return nil
@@ -455,6 +479,13 @@ func validateAdvancedCustomResponsesToolModelOverrides(index int, allowFlatten b
 			index,
 			fmt.Sprintf("converter_options.responses_tool_model_overrides[%d].responses_tool_continuation", overrideIndex),
 			override.ResponsesToolContinuation,
+		); err != nil {
+			return err
+		}
+		if err := validateAdvancedCustomResponsesToolStateReplay(
+			index,
+			fmt.Sprintf("converter_options.responses_tool_model_overrides[%d].responses_tool_state_replay", overrideIndex),
+			override.ResponsesToolStateReplay,
 		); err != nil {
 			return err
 		}
