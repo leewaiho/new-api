@@ -1298,3 +1298,135 @@ func TestResponsesRequestToChatCompletionsRequestLeavesWebSearchOptionsUnsetAtIn
 	require.Equal(t, "web_search", gjson.GetBytes(encoded, "tools.297.type").String())
 	require.False(t, gjson.GetBytes(encoded, "tools.297.web_search").Exists())
 }
+
+func TestResponsesRequestToChatCompletionsRequestAppendsConfiguredToolContinuationForPureFunctionOutput(t *testing.T) {
+	got, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
+		Model: "glm-5.2",
+		Input: mustRawMessage(t, []map[string]any{
+			{"type": "function_call", "call_id": "call_1", "name": "lookup", "arguments": `{}`},
+			{"type": "function_call_output", "call_id": "call_1", "output": "ok"},
+		}),
+	}, ResponsesRequestToChatOptions{
+		ToolContinuation: &ResponsesToolContinuation{AppendUserContinuation: true, Text: "Continue using the tool result."},
+	})
+	require.NoError(t, err)
+	require.Len(t, got.Messages, 3)
+	assert.Equal(t, "assistant", got.Messages[0].Role)
+	assert.Equal(t, "tool", got.Messages[1].Role)
+	assert.Equal(t, "call_1", got.Messages[1].ToolCallId)
+	assert.Equal(t, "user", got.Messages[2].Role)
+	assert.Equal(t, "Continue using the tool result.", got.Messages[2].StringContent())
+}
+
+func TestResponsesRequestToChatCompletionsRequestAppendsConfiguredToolContinuationAfterTrailingReasoning(t *testing.T) {
+	got, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
+		Model: "glm-5.2",
+		Input: mustRawMessage(t, []map[string]any{
+			{"type": "function_call", "call_id": "call_1", "name": "lookup", "arguments": `{}`},
+			{"type": "function_call_output", "call_id": "call_1", "output": "ok"},
+			{"type": "reasoning"},
+		}),
+	}, ResponsesRequestToChatOptions{
+		ToolContinuation: &ResponsesToolContinuation{AppendUserContinuation: true, Text: "Continue using the tool result."},
+	})
+	require.NoError(t, err)
+	require.Len(t, got.Messages, 3)
+	assert.Equal(t, "assistant", got.Messages[0].Role)
+	assert.Equal(t, "tool", got.Messages[1].Role)
+	assert.Equal(t, "user", got.Messages[2].Role)
+	assert.Equal(t, "Continue using the tool result.", got.Messages[2].StringContent())
+}
+
+func TestResponsesRequestToChatCompletionsRequestDoesNotDuplicateExplicitInputTextForToolContinuation(t *testing.T) {
+	got, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
+		Model: "glm-5.2",
+		Input: mustRawMessage(t, []map[string]any{
+			{"type": "function_call", "call_id": "call_1", "name": "lookup", "arguments": `{}`},
+			{"type": "function_call_output", "call_id": "call_1", "output": "ok"},
+			{"type": "input_text", "text": "Use the result."},
+		}),
+	}, ResponsesRequestToChatOptions{
+		ToolContinuation: &ResponsesToolContinuation{AppendUserContinuation: true, Text: "Continue using the tool result."},
+	})
+	require.NoError(t, err)
+	require.Len(t, got.Messages, 3)
+	assert.Equal(t, "user", got.Messages[2].Role)
+	assert.Equal(t, "Use the result.", got.Messages[2].StringContent())
+}
+
+func TestResponsesRequestToChatCompletionsRequestLeavesPureFunctionOutputUnchangedWithoutToolContinuation(t *testing.T) {
+	got, err := ResponsesRequestToChatCompletionsRequest(&dto.OpenAIResponsesRequest{
+		Model: "glm-5.2",
+		Input: mustRawMessage(t, []map[string]any{
+			{"type": "function_call", "call_id": "call_1", "name": "lookup", "arguments": `{}`},
+			{"type": "function_call_output", "call_id": "call_1", "output": "ok"},
+		}),
+	})
+	require.NoError(t, err)
+	require.Len(t, got.Messages, 2)
+	assert.Equal(t, "tool", got.Messages[1].Role)
+}
+
+func TestResponsesRequestToChatCompletionsRequestReplaysFunctionToolState(t *testing.T) {
+	req := &dto.OpenAIResponsesRequest{
+		Model:              "glm-5.2",
+		PreviousResponseID: "resp_previous",
+		Input: mustRawMessage(t, []map[string]any{{
+			"type":    "function_call_output",
+			"call_id": "call_shell",
+			"output":  "/workspace",
+		}}),
+	}
+
+	got, err := ResponsesRequestToChatCompletionsRequestWithOptions(req, ResponsesRequestToChatOptions{
+		ToolStateReplay: &ResponsesToolStateReplay{Output: []dto.ResponsesOutput{{
+			Type:      "function_call",
+			ID:        "fc_call_shell",
+			CallId:    "call_shell",
+			Name:      "shell_command",
+			Arguments: mustRawMessage(t, map[string]any{"command": "pwd"}),
+		}}},
+	})
+
+	require.NoError(t, err)
+	assert.Empty(t, req.PreviousResponseID)
+	require.Len(t, got.Messages, 2)
+	toolCalls := got.Messages[0].ParseToolCalls()
+	require.Len(t, toolCalls, 1)
+	assert.Equal(t, "call_shell", toolCalls[0].ID)
+	assert.Equal(t, "shell_command", toolCalls[0].Function.Name)
+	assert.Equal(t, "call_shell", got.Messages[1].ToolCallId)
+	assert.Equal(t, "/workspace", got.Messages[1].StringContent())
+}
+
+func TestResponsesRequestToChatCompletionsRequestReplaysCustomToolState(t *testing.T) {
+	req := &dto.OpenAIResponsesRequest{
+		Model:              "glm-5.2",
+		PreviousResponseID: "resp_previous",
+		Input: mustRawMessage(t, []map[string]any{{
+			"type":    "custom_tool_call_output",
+			"call_id": "call_patch",
+			"output":  "applied",
+		}}),
+	}
+
+	got, err := ResponsesRequestToChatCompletionsRequestWithOptions(req, ResponsesRequestToChatOptions{
+		ToolStateReplay: &ResponsesToolStateReplay{Output: []dto.ResponsesOutput{{
+			Type:   "custom_tool_call",
+			ID:     "ctc_call_patch",
+			CallId: "call_patch",
+			Name:   "apply_patch",
+			Input:  mustRawMessage(t, "*** Begin Patch\n*** End Patch"),
+		}}},
+	})
+
+	require.NoError(t, err)
+	assert.Empty(t, req.PreviousResponseID)
+	require.Len(t, got.Messages, 2)
+	toolCalls := got.Messages[0].ParseToolCalls()
+	require.Len(t, toolCalls, 1)
+	assert.Equal(t, "call_patch", toolCalls[0].ID)
+	assert.Equal(t, "apply_patch", toolCalls[0].Function.Name)
+	assert.Equal(t, "call_patch", got.Messages[1].ToolCallId)
+	assert.Equal(t, "applied", got.Messages[1].StringContent())
+}

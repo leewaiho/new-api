@@ -716,3 +716,90 @@ func TestResolveAdvancedCustomResponsesWebSearchParametersPrefersModelOverride(t
 	require.NotNil(t, resolved.Defaults.Enable)
 	assert.False(t, *resolved.Defaults.Enable)
 }
+
+func TestResolveAdvancedCustomResponsesToolContinuationPrefersExactModelOverride(t *testing.T) {
+	options := &AdvancedCustomConverterOptions{
+		ResponsesToolContinuation: &AdvancedCustomResponsesToolContinuation{
+			WhenOnlyToolOutput: AdvancedCustomResponsesToolContinuationAppendUser,
+			Text:               "route continuation",
+		},
+		ResponsesToolModelOverrides: []AdvancedCustomResponsesToolModelOverride{{
+			Models: []string{"glm-5.2"},
+			ResponsesToolContinuation: &AdvancedCustomResponsesToolContinuation{
+				WhenOnlyToolOutput: AdvancedCustomResponsesToolContinuationAppendUser,
+				Text:               "model continuation",
+			},
+		}},
+	}
+
+	resolved := ResolveAdvancedCustomResponsesToolContinuation(options, "glm-5.2", "provider-model")
+	require.NotNil(t, resolved)
+	assert.Equal(t, "model continuation", resolved.Text)
+
+	resolved = ResolveAdvancedCustomResponsesToolContinuation(options, "other-model", "provider-other")
+	require.NotNil(t, resolved)
+	assert.Equal(t, "route continuation", resolved.Text)
+}
+
+func TestAdvancedCustomValidateResponsesToolContinuation(t *testing.T) {
+	for _, tt := range []struct {
+		name         string
+		continuation *AdvancedCustomResponsesToolContinuation
+		wantError    string
+	}{
+		{
+			name: "invalid mode",
+			continuation: &AdvancedCustomResponsesToolContinuation{
+				WhenOnlyToolOutput: "append_anything",
+				Text:               "continue",
+			},
+			wantError: "when_only_tool_output is invalid",
+		},
+		{
+			name: "empty text",
+			continuation: &AdvancedCustomResponsesToolContinuation{
+				WhenOnlyToolOutput: AdvancedCustomResponsesToolContinuationAppendUser,
+			},
+			wantError: "text is required",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			config := &AdvancedCustomConfig{Routes: []AdvancedCustomRoute{{
+				IncomingPath: "/v1/responses",
+				UpstreamPath: "/v1/chat/completions",
+				Converter:    AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions,
+				ConverterOptions: &AdvancedCustomConverterOptions{
+					ResponsesToolContinuation: tt.continuation,
+				},
+			}}}
+			require.ErrorContains(t, config.Validate(), tt.wantError)
+		})
+	}
+}
+
+func TestResolveAdvancedCustomResponsesToolStateReplayPrefersExactModelOverride(t *testing.T) {
+	enabled := &AdvancedCustomResponsesToolStateReplay{Enabled: true, TTLSeconds: 120}
+	options := &AdvancedCustomConverterOptions{
+		ResponsesToolStateReplay: &AdvancedCustomResponsesToolStateReplay{Enabled: true, TTLSeconds: 60},
+		ResponsesToolModelOverrides: []AdvancedCustomResponsesToolModelOverride{{
+			Models:                   []string{"glm-5.2"},
+			ResponsesToolStateReplay: enabled,
+		}},
+	}
+
+	assert.Same(t, enabled, ResolveAdvancedCustomResponsesToolStateReplay(options, "glm-5.2", "provider-model"))
+	assert.Equal(t, 60, ResolveAdvancedCustomResponsesToolStateReplay(options, "other", "provider-model").TTLSeconds)
+	assert.Nil(t, ResolveAdvancedCustomResponsesToolStateReplay(nil, "glm-5.2", "provider-model"))
+}
+
+func TestAdvancedCustomValidateResponsesToolStateReplay(t *testing.T) {
+	config := &AdvancedCustomConfig{Routes: []AdvancedCustomRoute{{
+		IncomingPath: "/v1/responses",
+		UpstreamPath: "/v1/chat/completions",
+		Converter:    AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions,
+		ConverterOptions: &AdvancedCustomConverterOptions{
+			ResponsesToolStateReplay: &AdvancedCustomResponsesToolStateReplay{Enabled: true},
+		},
+	}}}
+	require.ErrorContains(t, config.Validate(), "responses_tool_state_replay.ttl_seconds must be positive when enabled")
+}

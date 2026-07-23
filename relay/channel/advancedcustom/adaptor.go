@@ -49,6 +49,9 @@ type Adaptor struct {
 	compatibilityRequestedModel string
 	compatibilityUpstreamModel  string
 	compatibilityTools          []relayconvert.ResponsesToolPolicyDecision
+
+	toolStateReplay *dto.AdvancedCustomResponsesToolStateReplay
+	toolStateScope  advancedCustomResponsesToolStateScope
 }
 
 func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
@@ -160,12 +163,31 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 		a.compatibilityTools = summarizeAdvancedCustomResponsesTools(filteredTools)
 		return a.convertOpenAICompatibleResponsesRequest(c, info, request)
 	case dto.AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions:
+		a.toolStateReplay = dto.ResolveAdvancedCustomResponsesToolStateReplay(a.route.ConverterOptions, requestedModel, upstreamModel)
+		a.toolStateScope = advancedCustomResponsesToolStateScopeFor(info, a.route, requestedModel, upstreamModel)
 		mappings := map[string]dto.ResponsesToolNameMapping{}
 		chatOptions := relayconvert.ResponsesRequestToChatOptions{
 			ToolPolicies:       advancedCustomResponsesToolPolicies(a.route.ConverterOptions, requestedModel, upstreamModel),
 			ToolPolicyResolver: policyResolver,
 			ToolNameMappings:   mappings,
 			DropResponseFields: advancedCustomResponsesDropFields(a.route.ConverterOptions),
+		}
+		if continuation := dto.ResolveAdvancedCustomResponsesToolContinuation(a.route.ConverterOptions, requestedModel, upstreamModel); continuation != nil &&
+			strings.TrimSpace(continuation.WhenOnlyToolOutput) == dto.AdvancedCustomResponsesToolContinuationAppendUser {
+			chatOptions.ToolContinuation = &relayconvert.ResponsesToolContinuation{
+				AppendUserContinuation: true,
+				Text:                   continuation.Text,
+			}
+		}
+		if a.toolStateReplay != nil && a.toolStateReplay.Enabled && strings.TrimSpace(request.PreviousResponseID) != "" {
+			state, stateErr := defaultAdvancedCustomResponsesToolStateCache.Load(a.toolStateScope, request.PreviousResponseID)
+			if stateErr != nil {
+				return nil, fmt.Errorf("advanced custom responses tool state replay failed: %w", stateErr)
+			}
+			for name, mapping := range state.ToolNameMappings {
+				mappings[name] = mapping
+			}
+			chatOptions.ToolStateReplay = &relayconvert.ResponsesToolStateReplay{Output: state.Output}
 		}
 		chatReq, err := service.ResponsesRequestToChatCompletionsRequestWithOptions(&request, chatOptions)
 		if err != nil {
@@ -304,9 +326,9 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 		}
 	case dto.AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions:
 		if info.IsStream {
-			usage, err = openai.OaiChatToResponsesStreamHandler(c, info, resp)
+			usage, err = a.chatToResponsesStreamHandler(c, info, resp)
 		} else {
-			usage, err = openai.OaiChatToResponsesHandler(c, info, resp)
+			usage, err = a.chatToResponsesHandler(c, info, resp)
 		}
 	default:
 		err = types.NewOpenAIError(fmt.Errorf("unsupported advanced custom converter: %s", a.converter), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())

@@ -74,6 +74,34 @@ func normalizeAdvancedCustomResponsesHostedCapability(capability string) string 
 	}
 }
 
+func ResolveAdvancedCustomResponsesToolContinuation(
+	options *AdvancedCustomConverterOptions,
+	requestedModel string,
+	upstreamModel string,
+) *AdvancedCustomResponsesToolContinuation {
+	if options == nil {
+		return nil
+	}
+	if override, _, ok := matchAdvancedCustomResponsesToolModelOverride(options, requestedModel, upstreamModel); ok && override.ResponsesToolContinuation != nil {
+		return override.ResponsesToolContinuation
+	}
+	return options.ResponsesToolContinuation
+}
+
+func ResolveAdvancedCustomResponsesToolStateReplay(
+	options *AdvancedCustomConverterOptions,
+	requestedModel string,
+	upstreamModel string,
+) *AdvancedCustomResponsesToolStateReplay {
+	if options == nil {
+		return nil
+	}
+	if override, _, ok := matchAdvancedCustomResponsesToolModelOverride(options, requestedModel, upstreamModel); ok && override.ResponsesToolStateReplay != nil {
+		return override.ResponsesToolStateReplay
+	}
+	return options.ResponsesToolStateReplay
+}
+
 func ResolveAdvancedCustomResponsesWebSearchParameters(
 	options *AdvancedCustomConverterOptions,
 	requestedModel string,
@@ -330,6 +358,29 @@ func validateAdvancedCustomResponsesImplicitHostedConflictPolicy(index int, opti
 	return nil
 }
 
+func validateAdvancedCustomResponsesToolStateReplay(index int, field string, replay *AdvancedCustomResponsesToolStateReplay) error {
+	if replay == nil || !replay.Enabled {
+		return nil
+	}
+	if replay.TTLSeconds <= 0 {
+		return fmt.Errorf("advanced_custom.advanced_routes[%d].%s.ttl_seconds must be positive when enabled", index, field)
+	}
+	return nil
+}
+
+func validateAdvancedCustomResponsesToolContinuation(index int, field string, continuation *AdvancedCustomResponsesToolContinuation) error {
+	if continuation == nil {
+		return nil
+	}
+	if strings.TrimSpace(continuation.WhenOnlyToolOutput) != AdvancedCustomResponsesToolContinuationAppendUser {
+		return fmt.Errorf("advanced_custom.advanced_routes[%d].%s.when_only_tool_output is invalid: %s", index, field, continuation.WhenOnlyToolOutput)
+	}
+	if strings.TrimSpace(continuation.Text) == "" {
+		return fmt.Errorf("advanced_custom.advanced_routes[%d].%s.text is required", index, field)
+	}
+	return nil
+}
+
 func validateAdvancedCustomResponsesToolParameters(index int, field string, parameters *AdvancedCustomResponsesToolParameters) error {
 	if parameters == nil {
 		return nil
@@ -374,8 +425,8 @@ func validateAdvancedCustomResponsesToolModelOverrides(index int, allowFlatten b
 			seenModels[model] = struct{}{}
 		}
 
-		if override.ResponsesTools == nil && len(override.ToolNames) == 0 && len(override.ResponsesImplicitHostedTools) == 0 && override.ResponsesToolParameters == nil {
-			return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options.responses_tool_model_overrides[%d] requires a tool policy, implicit hosted tool, or tool parameter rule", index, overrideIndex)
+		if override.ResponsesTools == nil && len(override.ToolNames) == 0 && len(override.ResponsesImplicitHostedTools) == 0 && override.ResponsesToolParameters == nil && override.ResponsesToolContinuation == nil {
+			return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options.responses_tool_model_overrides[%d] requires a tool policy, implicit hosted tool, tool parameter rule, or tool continuation rule", index, overrideIndex)
 		}
 		if err := validateAdvancedCustomResponsesImplicitHostedTools(
 			index,
@@ -412,8 +463,8 @@ func validateAdvancedCustomResponsesToolModelOverrides(index int, allowFlatten b
 					return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options.responses_tool_model_overrides[%d].responses_tools.%s must differ from the route policy", index, overrideIndex, field.name)
 				}
 			}
-			if !configured && len(override.ToolNames) == 0 && len(override.ResponsesImplicitHostedTools) == 0 && override.ResponsesToolParameters == nil {
-				return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options.responses_tool_model_overrides[%d] requires a non-empty tool policy, implicit hosted tool, or tool parameter rule", index, overrideIndex)
+			if !configured && len(override.ToolNames) == 0 && len(override.ResponsesImplicitHostedTools) == 0 && override.ResponsesToolParameters == nil && override.ResponsesToolContinuation == nil {
+				return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options.responses_tool_model_overrides[%d] requires a non-empty tool policy, implicit hosted tool, tool parameter rule, or tool continuation rule", index, overrideIndex)
 			}
 		}
 
@@ -421,6 +472,20 @@ func validateAdvancedCustomResponsesToolModelOverrides(index int, allowFlatten b
 			index,
 			fmt.Sprintf("converter_options.responses_tool_model_overrides[%d].responses_tool_parameters", overrideIndex),
 			override.ResponsesToolParameters,
+		); err != nil {
+			return err
+		}
+		if err := validateAdvancedCustomResponsesToolContinuation(
+			index,
+			fmt.Sprintf("converter_options.responses_tool_model_overrides[%d].responses_tool_continuation", overrideIndex),
+			override.ResponsesToolContinuation,
+		); err != nil {
+			return err
+		}
+		if err := validateAdvancedCustomResponsesToolStateReplay(
+			index,
+			fmt.Sprintf("converter_options.responses_tool_model_overrides[%d].responses_tool_state_replay", overrideIndex),
+			override.ResponsesToolStateReplay,
 		); err != nil {
 			return err
 		}
