@@ -155,7 +155,7 @@ func TestChatCompletionsResponseToResponsesKeepsUnmappedToolSearchAsFunctionCall
 
 	output := resp.Output[0]
 	assert.Equal(t, responsesOutputTypeFunctionCall, output.Type)
-	assert.Equal(t, "call_tool_search_1", output.ID)
+	assert.Equal(t, "fc_call_tool_search_1", output.ID)
 	assert.Equal(t, "call_tool_search_1", output.CallId)
 	assert.Equal(t, "tool_search", output.Name)
 	assert.JSONEq(t, `"{\"query\":\"ordinary function\"}"`, string(output.Arguments))
@@ -557,6 +557,7 @@ func TestChatCompletionsResponseToResponsesPreservesTextToolCallsAndUsage(t *tes
 	assert.Equal(t, "msg_resp_1_0", resp.Output[0].ID)
 	assert.Equal(t, "I will call.", resp.Output[0].Content[0].Text)
 	assert.Equal(t, responsesOutputTypeFunctionCall, resp.Output[1].Type)
+	assert.Equal(t, "fc_call_1", resp.Output[1].ID)
 	assert.Equal(t, "call_1", resp.Output[1].CallId)
 	assert.Equal(t, "lookup", resp.Output[1].Name)
 	assert.Equal(t, `"{\"q\":\"x\"}"`, string(resp.Output[1].Arguments))

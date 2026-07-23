@@ -672,7 +672,7 @@ func chatToolCallToResponsesOutput(toolCall dto.ToolCallRequest, responseID stri
 	if toolCall.Type == "" || toolCall.Type == "function" {
 		return dto.ResponsesOutput{
 			Type:      responsesOutputTypeFunctionCall,
-			ID:        callID,
+			ID:        responsesToolItemID("fc", callID, callID),
 			Status:    status,
 			CallId:    callID,
 			Name:      toolCall.Function.Name,
