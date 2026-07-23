@@ -41,6 +41,12 @@ type ResponsesToolContinuation struct {
 	Text                   string
 }
 
+// ResponsesToolStateReplay contains only the completed Responses tool-call
+// output items needed to reconstruct a previous_response_id follow-up.
+type ResponsesToolStateReplay struct {
+	Output []dto.ResponsesOutput
+}
+
 // ResponsesRequestToChatOptions controls lossy compatibility behavior needed
 // when a Responses request must be sent to a Chat Completions-only upstream.
 type ResponsesRequestToChatOptions struct {
@@ -58,6 +64,9 @@ type ResponsesRequestToChatOptions struct {
 	// ToolContinuation opts into a provider-specific user continuation after a
 	// pure function/custom tool-output follow-up.
 	ToolContinuation *ResponsesToolContinuation
+	// ToolStateReplay is supplied only after a scoped state cache lookup succeeds.
+	// Without it, previous_response_id remains explicitly unsupported.
+	ToolStateReplay *ResponsesToolStateReplay
 }
 
 // ShouldDropResponseField reports whether the given Responses request field
@@ -98,6 +107,9 @@ func ResponsesRequestToChatCompletionsRequestWithOptions(req *dto.OpenAIResponse
 	}
 	if req.Model == "" {
 		return nil, errors.New("model is required")
+	}
+	if err := applyResponsesToolStateReplay(req, options.ToolStateReplay); err != nil {
+		return nil, err
 	}
 	if err := validateResponsesRequestChatUnsupportedFields(req); err != nil {
 		return nil, err
@@ -247,6 +259,77 @@ func chatFunctionToolNames(tools []dto.ToolCallRequest) map[string]struct{} {
 		}
 	}
 	return names
+}
+
+func applyResponsesToolStateReplay(req *dto.OpenAIResponsesRequest, replay *ResponsesToolStateReplay) error {
+	if req == nil || strings.TrimSpace(req.PreviousResponseID) == "" || replay == nil {
+		return nil
+	}
+	if len(replay.Output) == 0 {
+		return errors.New("responses tool state replay is empty")
+	}
+
+	var current []map[string]any
+	if err := common.Unmarshal(req.Input, &current); err != nil {
+		return fmt.Errorf("responses tool state replay requires input array: %w", err)
+	}
+
+	history := make([]map[string]any, 0, len(replay.Output)+len(current))
+	for _, output := range replay.Output {
+		item, err := responsesToolStateOutputToInputItem(output)
+		if err != nil {
+			return err
+		}
+		history = append(history, item)
+	}
+	history = append(history, current...)
+	input, err := common.Marshal(history)
+	if err != nil {
+		return err
+	}
+	req.Input = input
+	req.PreviousResponseID = ""
+	return nil
+}
+
+func responsesToolStateOutputToInputItem(output dto.ResponsesOutput) (map[string]any, error) {
+	callID := strings.TrimSpace(output.CallId)
+	if callID == "" {
+		return nil, errors.New("responses tool state replay item is missing call_id")
+	}
+	itemID := strings.TrimSpace(output.ID)
+	switch output.Type {
+	case responsesInputTypeFunctionCall:
+		if strings.TrimSpace(output.Name) == "" {
+			return nil, errors.New("responses function tool state replay item is missing name")
+		}
+		item := map[string]any{
+			"type":      responsesInputTypeFunctionCall,
+			"call_id":   callID,
+			"name":      output.Name,
+			"arguments": output.Arguments,
+		}
+		if itemID != "" {
+			item["id"] = itemID
+		}
+		return item, nil
+	case responsesInputTypeCustomToolCall:
+		if strings.TrimSpace(output.Name) == "" {
+			return nil, errors.New("responses custom tool state replay item is missing name")
+		}
+		item := map[string]any{
+			"type":    responsesInputTypeCustomToolCall,
+			"call_id": callID,
+			"name":    output.Name,
+			"input":   output.Input,
+		}
+		if itemID != "" {
+			item["id"] = itemID
+		}
+		return item, nil
+	default:
+		return nil, fmt.Errorf("responses tool state replay does not support output type %q", output.Type)
+	}
 }
 
 func validateResponsesRequestChatUnsupportedFields(req *dto.OpenAIResponsesRequest) error {
