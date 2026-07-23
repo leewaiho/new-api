@@ -130,6 +130,9 @@ type AdvancedCustomConverterOptions struct {
 	// ResponsesToolParameters configures safe, tool-specific compatibility
 	// rewrites after a Responses request is converted to Chat Completions.
 	ResponsesToolParameters *AdvancedCustomResponsesToolParameters `json:"responses_tool_parameters,omitempty"`
+	// ResponsesToolContinuation configures an opt-in user continuation for
+	// pure Responses tool-output follow-ups sent to Chat Completions upstreams.
+	ResponsesToolContinuation *AdvancedCustomResponsesToolContinuation `json:"responses_tool_continuation,omitempty"`
 	// ResponsesToolModelOverrides applies exact model-specific exceptions. A
 	// model matches either the requested model name or the mapped upstream model
 	// name. The same model may only appear in one override.
@@ -146,15 +149,23 @@ type AdvancedCustomResponsesToolsOptions struct {
 }
 
 type AdvancedCustomResponsesToolModelOverride struct {
-	Models                       []string                                `json:"models,omitempty"`
-	ResponsesTools               *AdvancedCustomResponsesToolsOptions    `json:"responses_tools,omitempty"`
-	ToolNames                    []AdvancedCustomResponsesToolNamePolicy `json:"responses_tool_names,omitempty"`
-	ResponsesImplicitHostedTools []string                                `json:"responses_implicit_hosted_tools,omitempty"`
-	ResponsesToolParameters      *AdvancedCustomResponsesToolParameters  `json:"responses_tool_parameters,omitempty"`
+	Models                       []string                                 `json:"models,omitempty"`
+	ResponsesTools               *AdvancedCustomResponsesToolsOptions     `json:"responses_tools,omitempty"`
+	ToolNames                    []AdvancedCustomResponsesToolNamePolicy  `json:"responses_tool_names,omitempty"`
+	ResponsesImplicitHostedTools []string                                 `json:"responses_implicit_hosted_tools,omitempty"`
+	ResponsesToolParameters      *AdvancedCustomResponsesToolParameters   `json:"responses_tool_parameters,omitempty"`
+	ResponsesToolContinuation    *AdvancedCustomResponsesToolContinuation `json:"responses_tool_continuation,omitempty"`
 }
 
 type AdvancedCustomResponsesToolParameters struct {
 	WebSearch *AdvancedCustomWebSearchParameterCompatibility `json:"web_search,omitempty"`
+}
+
+const AdvancedCustomResponsesToolContinuationAppendUser = "append_user_continuation"
+
+type AdvancedCustomResponsesToolContinuation struct {
+	WhenOnlyToolOutput string `json:"when_only_tool_output,omitempty"`
+	Text               string `json:"text,omitempty"`
 }
 
 type AdvancedCustomWebSearchParameterCompatibility struct {
@@ -498,7 +509,15 @@ func validateAdvancedCustomConverterOptions(index int, incomingPath string, conv
 			return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options.responses_tool_parameters requires Responses to Chat conversion", index)
 		}
 	}
+	if options.ResponsesToolContinuation != nil || advancedCustomResponsesModelOverridesHaveToolContinuation(options.ResponsesToolModelOverrides) {
+		if converter != AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions {
+			return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options.responses_tool_continuation requires Responses to Chat conversion", index)
+		}
+	}
 	if err := validateAdvancedCustomResponsesToolParameters(index, "converter_options.responses_tool_parameters", options.ResponsesToolParameters); err != nil {
+		return err
+	}
+	if err := validateAdvancedCustomResponsesToolContinuation(index, "converter_options.responses_tool_continuation", options.ResponsesToolContinuation); err != nil {
 		return err
 	}
 	if err := validateAdvancedCustomResponsesToolModelOverrides(index, allowFlatten, options); err != nil {
@@ -517,12 +536,22 @@ func advancedCustomConverterOptionsPresent(options *AdvancedCustomConverterOptio
 		strings.TrimSpace(options.ResponsesToolConflictPolicy) != "" ||
 		len(options.ResponsesImplicitHostedTools) > 0 ||
 		options.ResponsesToolParameters != nil ||
+		options.ResponsesToolContinuation != nil ||
 		len(options.ResponsesToolModelOverrides) > 0
 }
 
 func advancedCustomResponsesModelOverridesHaveToolParameters(overrides []AdvancedCustomResponsesToolModelOverride) bool {
 	for _, override := range overrides {
 		if override.ResponsesToolParameters != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func advancedCustomResponsesModelOverridesHaveToolContinuation(overrides []AdvancedCustomResponsesToolModelOverride) bool {
+	for _, override := range overrides {
+		if override.ResponsesToolContinuation != nil {
 			return true
 		}
 	}
