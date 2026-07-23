@@ -180,11 +180,14 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 			}
 		}
 		if a.toolStateReplay != nil && a.toolStateReplay.Enabled && strings.TrimSpace(request.PreviousResponseID) != "" {
-			output, stateErr := defaultAdvancedCustomResponsesToolStateCache.Load(a.toolStateScope, request.PreviousResponseID)
+			state, stateErr := defaultAdvancedCustomResponsesToolStateCache.Load(a.toolStateScope, request.PreviousResponseID)
 			if stateErr != nil {
 				return nil, fmt.Errorf("advanced custom responses tool state replay failed: %w", stateErr)
 			}
-			chatOptions.ToolStateReplay = &relayconvert.ResponsesToolStateReplay{Output: output}
+			for name, mapping := range state.ToolNameMappings {
+				mappings[name] = mapping
+			}
+			chatOptions.ToolStateReplay = &relayconvert.ResponsesToolStateReplay{Output: state.Output}
 		}
 		chatReq, err := service.ResponsesRequestToChatCompletionsRequestWithOptions(&request, chatOptions)
 		if err != nil {
