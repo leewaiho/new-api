@@ -167,6 +167,13 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 			ToolNameMappings:   mappings,
 			DropResponseFields: advancedCustomResponsesDropFields(a.route.ConverterOptions),
 		}
+		if continuation := dto.ResolveAdvancedCustomResponsesToolContinuation(a.route.ConverterOptions, requestedModel, upstreamModel); continuation != nil &&
+			strings.TrimSpace(continuation.WhenOnlyToolOutput) == dto.AdvancedCustomResponsesToolContinuationAppendUser {
+			chatOptions.ToolContinuation = &relayconvert.ResponsesToolContinuation{
+				AppendUserContinuation: true,
+				Text:                   continuation.Text,
+			}
+		}
 		chatReq, err := service.ResponsesRequestToChatCompletionsRequestWithOptions(&request, chatOptions)
 		if err != nil {
 			if isAdvancedCustomToolConversionError(err) {

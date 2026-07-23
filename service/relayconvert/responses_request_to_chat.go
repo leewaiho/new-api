@@ -34,6 +34,13 @@ const (
 	responsesArgumentsCodecCustomInput  = "custom_input"
 )
 
+// ResponsesToolContinuation is an explicit provider compatibility action for
+// pure Responses tool-output follow-ups sent to a Chat Completions upstream.
+type ResponsesToolContinuation struct {
+	AppendUserContinuation bool
+	Text                   string
+}
+
 // ResponsesRequestToChatOptions controls lossy compatibility behavior needed
 // when a Responses request must be sent to a Chat Completions-only upstream.
 type ResponsesRequestToChatOptions struct {
@@ -48,6 +55,9 @@ type ResponsesRequestToChatOptions struct {
 	// used for chat-only upstreams that reject Responses-shaped parameters
 	// (for example "metadata").
 	DropResponseFields map[string]struct{}
+	// ToolContinuation opts into a provider-specific user continuation after a
+	// pure function/custom tool-output follow-up.
+	ToolContinuation *ResponsesToolContinuation
 }
 
 // ShouldDropResponseField reports whether the given Responses request field
@@ -137,6 +147,7 @@ func ResponsesRequestToChatCompletionsRequestWithOptions(req *dto.OpenAIResponse
 	if err != nil {
 		return nil, err
 	}
+	messages = appendConfiguredResponsesToolContinuation(req.Input, messages, options.ToolContinuation)
 
 	toolChoice, err := responsesRequestToolChoiceToChat(req.ToolChoice, options, tools)
 	if err != nil {
@@ -298,6 +309,44 @@ func responsesRequestMessagesToChat(req *dto.OpenAIResponsesRequest, mappings ma
 	default:
 		return nil, fmt.Errorf("unsupported responses input type %q", common.GetJsonType(req.Input))
 	}
+}
+
+func appendConfiguredResponsesToolContinuation(input json.RawMessage, messages []dto.Message, continuation *ResponsesToolContinuation) []dto.Message {
+	if continuation == nil || !continuation.AppendUserContinuation || strings.TrimSpace(continuation.Text) == "" {
+		return messages
+	}
+	if len(messages) == 0 || messages[len(messages)-1].Role != "tool" || !responsesInputIsPureToolContinuation(input) {
+		return messages
+	}
+	return append(messages, dto.Message{Role: "user", Content: continuation.Text})
+}
+
+func responsesInputIsPureToolContinuation(input json.RawMessage) bool {
+	var items []map[string]any
+	if err := common.Unmarshal(input, &items); err != nil || len(items) == 0 {
+		return false
+	}
+	sawCall := false
+	sawOutput := false
+	lastType := ""
+	for _, item := range items {
+		itemType := strings.TrimSpace(common.Interface2String(item["type"]))
+		lastType = itemType
+		switch itemType {
+		case responsesInputTypeReasoning:
+			continue
+		case responsesInputTypeFunctionCall, responsesInputTypeCustomToolCall:
+			sawCall = true
+		case responsesInputTypeFunctionCallOutput, responsesInputTypeCustomToolCallOutput:
+			if !sawCall {
+				return false
+			}
+			sawOutput = true
+		default:
+			return false
+		}
+	}
+	return sawCall && sawOutput && (lastType == responsesInputTypeFunctionCallOutput || lastType == responsesInputTypeCustomToolCallOutput)
 }
 
 func responsesInputItemToChatMessages(item map[string]any, messages []dto.Message, mappings map[string]dto.ResponsesToolNameMapping) ([]dto.Message, error) {

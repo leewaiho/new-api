@@ -1801,3 +1801,55 @@ func TestRecordAdvancedCustomToolCompatibilityEventsRecordsInvalidSchema(t *test
 	require.Equal(t, "mcp__broken__", events[0].ToolName)
 	require.Empty(t, events[0].SuggestedPolicy)
 }
+
+func TestAdaptorResponsesToolContinuationAppliesOnlyExactModelOverride(t *testing.T) {
+	config := &dto.AdvancedCustomConfig{Routes: []dto.AdvancedCustomRoute{{
+		IncomingPath: "/v1/responses",
+		UpstreamPath: "/v1/chat/completions",
+		Converter:    dto.AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions,
+		ConverterOptions: &dto.AdvancedCustomConverterOptions{
+			ResponsesToolModelOverrides: []dto.AdvancedCustomResponsesToolModelOverride{{
+				Models: []string{"glm-5.2"},
+				ResponsesToolContinuation: &dto.AdvancedCustomResponsesToolContinuation{
+					WhenOnlyToolOutput: dto.AdvancedCustomResponsesToolContinuationAppendUser,
+					Text:               "model continuation",
+				},
+			}},
+		},
+	}}}
+
+	for _, tt := range []struct {
+		model        string
+		messageCount int
+	}{
+		{model: "glm-5.2", messageCount: 3},
+		{model: "other-model", messageCount: 2},
+	} {
+		t.Run(tt.model, func(t *testing.T) {
+			adaptor := &Adaptor{}
+			info := advancedCustomRelayInfo(config)
+			info.RelayMode = relayconstant.RelayModeResponses
+			info.RequestURLPath = "/v1/responses"
+			info.OriginModelName = tt.model
+			converted, err := adaptor.ConvertOpenAIResponsesRequest(
+				advancedCustomGinContext("/v1/responses"),
+				info,
+				dto.OpenAIResponsesRequest{
+					Model: tt.model,
+					Input: mustAdvancedCustomRawMessage(t, []map[string]any{
+						{"type": "function_call", "call_id": "call_1", "name": "lookup", "arguments": `{}`},
+						{"type": "function_call_output", "call_id": "call_1", "output": "ok"},
+					}),
+				},
+			)
+			require.NoError(t, err)
+			chatRequest, ok := converted.(*dto.GeneralOpenAIRequest)
+			require.True(t, ok)
+			require.Len(t, chatRequest.Messages, tt.messageCount)
+			if tt.model == "glm-5.2" {
+				assert.Equal(t, "user", chatRequest.Messages[2].Role)
+				assert.Equal(t, "model continuation", chatRequest.Messages[2].StringContent())
+			}
+		})
+	}
+}
