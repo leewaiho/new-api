@@ -892,6 +892,59 @@ func TestChatCompletionsStreamToResponsesEventsKeepsNativeToolIDsStableWhenHeade
 	assert.Equal(t, "fc_call_shell", final.Output[1].ID)
 }
 
+func TestChatCompletionsStreamToResponsesEventsPrefixesUnmappedFunctionIDsAfterLateHeader(t *testing.T) {
+	state := NewChatToResponsesStreamState("resp_1", "glm-5.2")
+	toolIndex := 0
+	finishReason := "tool_calls"
+
+	var events []ChatToResponsesStreamEvent
+	events = append(events, mustResponsesEventsFromChatChunk(t, state, &dto.ChatCompletionsStreamResponse{
+		Choices: []dto.ChatCompletionsStreamResponseChoice{{Index: 0, Delta: dto.ChatCompletionsStreamResponseChoiceDelta{
+			ToolCalls: []dto.ToolCallResponse{{
+				Index:    &toolIndex,
+				Function: dto.FunctionResponse{Arguments: `{"value":"now"}`},
+			}},
+		}}},
+	})...)
+	require.Len(t, events, 1, "arguments without id/name must remain buffered")
+
+	events = append(events, mustResponsesEventsFromChatChunk(t, state, &dto.ChatCompletionsStreamResponse{
+		Choices: []dto.ChatCompletionsStreamResponseChoice{{Index: 0, Delta: dto.ChatCompletionsStreamResponseChoiceDelta{
+			ToolCalls: []dto.ToolCallResponse{{
+				Index:    &toolIndex,
+				ID:       "call_lookup",
+				Type:     "function",
+				Function: dto.FunctionResponse{Name: "lookup"},
+			}},
+		}}},
+	})...)
+	events = append(events, mustResponsesEventsFromChatChunk(t, state, &dto.ChatCompletionsStreamResponse{
+		Choices: []dto.ChatCompletionsStreamResponseChoice{{Index: 0, FinishReason: &finishReason}},
+	})...)
+	finalEvents, err := FinalizeChatCompletionsStreamToResponses(state)
+	require.NoError(t, err)
+	events = append(events, finalEvents...)
+
+	for _, event := range events {
+		if event.Payload.Item != nil && event.Payload.Item.CallId == "call_lookup" {
+			assert.Equal(t, "fc_call_lookup", event.Payload.Item.ID)
+		}
+		if event.Payload.ItemID != "" {
+			assert.Equal(t, "fc_call_lookup", event.Payload.ItemID)
+		}
+	}
+	final := events[len(events)-1].Payload.Response
+	require.NotNil(t, final)
+	require.Len(t, final.Output, 1)
+	assert.Equal(t, "fc_call_lookup", final.Output[0].ID)
+	assert.Equal(t, "call_lookup", final.Output[0].CallId)
+}
+
+func TestResponsesToolItemIDIsIdempotentForPrefixedValue(t *testing.T) {
+	assert.Equal(t, "fc_call_lookup", responsesToolItemID("fc", "fc_call_lookup", ""))
+	assert.Equal(t, "fc_call_lookup", responsesToolItemID("fc", "", "fc_call_lookup"))
+}
+
 func TestChatCompletionsStreamToResponsesEventsWaitsForCompleteNativeToolHeader(t *testing.T) {
 	tests := []struct {
 		name            string
