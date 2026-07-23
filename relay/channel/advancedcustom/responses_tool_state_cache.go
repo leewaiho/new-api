@@ -27,6 +27,11 @@ type advancedCustomResponsesToolStateScope struct {
 	UpstreamModel  string
 }
 
+type advancedCustomResponsesToolState struct {
+	Output           []dto.ResponsesOutput                   `json:"output"`
+	ToolNameMappings map[string]dto.ResponsesToolNameMapping `json:"tool_name_mappings,omitempty"`
+}
+
 type advancedCustomResponsesToolStateStore interface {
 	Set(context.Context, string, string, time.Duration) error
 	Get(context.Context, string) (string, error)
@@ -59,7 +64,7 @@ func newAdvancedCustomResponsesToolStateCache(store advancedCustomResponsesToolS
 
 var defaultAdvancedCustomResponsesToolStateCache = newAdvancedCustomResponsesToolStateCache(advancedCustomResponsesToolStateRedisStore{})
 
-func (c *advancedCustomResponsesToolStateCache) Save(scope advancedCustomResponsesToolStateScope, responseID string, output []dto.ResponsesOutput, ttl time.Duration) error {
+func (c *advancedCustomResponsesToolStateCache) Save(scope advancedCustomResponsesToolStateScope, responseID string, state advancedCustomResponsesToolState, ttl time.Duration) error {
 	if c == nil || c.store == nil {
 		return errors.New("advanced custom responses tool state cache is unavailable")
 	}
@@ -69,10 +74,10 @@ func (c *advancedCustomResponsesToolStateCache) Save(scope advancedCustomRespons
 	if ttl <= 0 {
 		return errors.New("advanced custom responses tool state TTL must be positive")
 	}
-	if len(output) == 0 {
+	if len(state.Output) == 0 {
 		return nil
 	}
-	plaintext, err := common.Marshal(output)
+	plaintext, err := common.Marshal(state)
 	if err != nil {
 		return err
 	}
@@ -83,32 +88,37 @@ func (c *advancedCustomResponsesToolStateCache) Save(scope advancedCustomRespons
 	return c.store.Set(context.Background(), c.key(scope, responseID), ciphertext, ttl)
 }
 
-func (c *advancedCustomResponsesToolStateCache) Load(scope advancedCustomResponsesToolStateScope, responseID string) ([]dto.ResponsesOutput, error) {
+func (c *advancedCustomResponsesToolStateCache) Load(scope advancedCustomResponsesToolStateScope, responseID string) (advancedCustomResponsesToolState, error) {
 	if c == nil || c.store == nil {
-		return nil, errors.New("advanced custom responses tool state cache is unavailable")
+		return advancedCustomResponsesToolState{}, errors.New("advanced custom responses tool state cache is unavailable")
 	}
 	if strings.TrimSpace(responseID) == "" {
-		return nil, errAdvancedCustomResponsesToolStateNotFound
+		return advancedCustomResponsesToolState{}, errAdvancedCustomResponsesToolStateNotFound
 	}
 	ciphertext, err := c.store.Get(context.Background(), c.key(scope, responseID))
 	if errors.Is(err, redis.Nil) || errors.Is(err, errAdvancedCustomResponsesToolStateNotFound) {
-		return nil, errAdvancedCustomResponsesToolStateNotFound
+		return advancedCustomResponsesToolState{}, errAdvancedCustomResponsesToolStateNotFound
 	}
 	if err != nil {
-		return nil, err
+		return advancedCustomResponsesToolState{}, err
 	}
 	plaintext, err := decryptAdvancedCustomResponsesToolState(ciphertext)
 	if err != nil {
-		return nil, fmt.Errorf("invalid advanced custom responses tool state: %w", err)
+		return advancedCustomResponsesToolState{}, fmt.Errorf("invalid advanced custom responses tool state: %w", err)
 	}
-	var output []dto.ResponsesOutput
-	if err := common.Unmarshal(plaintext, &output); err != nil {
-		return nil, fmt.Errorf("invalid advanced custom responses tool state: %w", err)
+	var state advancedCustomResponsesToolState
+	if err := common.Unmarshal(plaintext, &state); err == nil && len(state.Output) > 0 {
+		return state, nil
 	}
-	if len(output) == 0 {
-		return nil, errAdvancedCustomResponsesToolStateNotFound
+
+	var legacyOutput []dto.ResponsesOutput
+	if err := common.Unmarshal(plaintext, &legacyOutput); err != nil {
+		return advancedCustomResponsesToolState{}, fmt.Errorf("invalid advanced custom responses tool state: %w", err)
 	}
-	return output, nil
+	if len(legacyOutput) == 0 {
+		return advancedCustomResponsesToolState{}, errAdvancedCustomResponsesToolStateNotFound
+	}
+	return advancedCustomResponsesToolState{Output: legacyOutput}, nil
 }
 
 func (c *advancedCustomResponsesToolStateCache) key(scope advancedCustomResponsesToolStateScope, responseID string) string {

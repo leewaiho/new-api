@@ -30,7 +30,7 @@ func advancedCustomResponsesToolStateScopeFor(info *relaycommon.RelayInfo, route
 	return scope
 }
 
-func (a *Adaptor) cacheResponsesToolState(responseID string, response *dto.OpenAIResponsesResponse) error {
+func (a *Adaptor) cacheResponsesToolState(responseID string, mappings map[string]dto.ResponsesToolNameMapping, response *dto.OpenAIResponsesResponse) error {
 	if a == nil || a.toolStateReplay == nil || !a.toolStateReplay.Enabled || response == nil {
 		return nil
 	}
@@ -47,7 +47,7 @@ func (a *Adaptor) cacheResponsesToolState(responseID string, response *dto.OpenA
 	return defaultAdvancedCustomResponsesToolStateCache.Save(
 		a.toolStateScope,
 		responseID,
-		output,
+		advancedCustomResponsesToolState{Output: output, ToolNameMappings: mappings},
 		time.Duration(a.toolStateReplay.TTLSeconds)*time.Second,
 	)
 }
@@ -84,7 +84,7 @@ func (a *Adaptor) chatToResponsesHandler(c *gin.Context, info *relaycommon.Relay
 		usage = service.ResponseText2Usage(c, text, info.UpstreamModelName, info.GetEstimatePromptTokens())
 		responsesResp.Usage = relayconvert.UsageFromChatUsage(usage)
 	}
-	if err := a.cacheResponsesToolState(responseID, responsesResp); err != nil {
+	if err := a.cacheResponsesToolState(responseID, info.ResponsesToolNameMappings, responsesResp); err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
 
@@ -163,7 +163,7 @@ func (a *Adaptor) chatToResponsesStreamHandler(c *gin.Context, info *relaycommon
 	}
 	for _, event := range finalEvents {
 		if event.Payload.Response != nil {
-			if err := a.cacheResponsesToolState(responseID, event.Payload.Response); err != nil {
+			if err := a.cacheResponsesToolState(responseID, info.ResponsesToolNameMappings, event.Payload.Response); err != nil {
 				return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 			}
 		}
