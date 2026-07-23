@@ -646,10 +646,7 @@ func (s *ChatToResponsesStreamState) toolItemID(name string, callID string, fall
 			}
 		}
 	}
-	if strings.TrimSpace(callID) != "" {
-		return strings.TrimSpace(callID)
-	}
-	return strings.TrimSpace(fallback)
+	return responsesToolItemID("fc", callID, fallback)
 }
 
 func (s *ChatToResponsesStreamState) prepareCustomToolInput(tool *chatToResponsesStreamTool) error {
@@ -777,12 +774,16 @@ func customToolInputFromChatArguments(arguments json.RawMessage) (string, error)
 }
 
 func responsesToolItemID(prefix string, callID string, fallback string) string {
+	prefix = strings.TrimSpace(prefix)
 	value := strings.TrimSpace(callID)
 	if value == "" {
 		value = strings.TrimSpace(fallback)
 	}
 	if value == "" {
 		value = "0"
+	}
+	if prefix != "" && strings.HasPrefix(value, prefix+"_") {
+		return value
 	}
 	return prefix + "_" + value
 }
