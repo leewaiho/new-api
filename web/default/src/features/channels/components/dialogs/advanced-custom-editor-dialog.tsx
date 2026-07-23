@@ -624,7 +624,7 @@ const responseToolPolicyFields: Array<{
   { key: 'namespace', label: 'Namespace', allowFlatten: true },
   { key: 'custom', label: 'Custom', allowFlatten: false },
   { key: 'web_search', label: 'Web search', allowFlatten: false },
-  { key: 'tool_search', label: 'Tool search', allowFlatten: false },
+  { key: 'tool_search', label: 'Tool search', allowFlatten: true },
   { key: 'image_generation', label: 'Image generation', allowFlatten: false },
   { key: 'unknown', label: 'Unknown / other', allowFlatten: false },
 ]

@@ -137,6 +137,13 @@ func ResolveAdvancedCustomResponsesToolPolicy(
 			Source: AdvancedCustomResponsesToolPolicySourceRoute,
 		}
 	}
+	switch strings.TrimSpace(toolType) {
+	case "computer", "computer_use", "computer_use_preview":
+		return AdvancedCustomResponsesToolPolicyResolution{
+			Policy: AdvancedCustomResponsesToolPolicyReject,
+			Source: AdvancedCustomResponsesToolPolicySourceSystemDefault,
+		}
+	}
 	return AdvancedCustomResponsesToolPolicyResolution{
 		Policy: AdvancedCustomResponsesToolPolicyPreserve,
 		Source: AdvancedCustomResponsesToolPolicySourceSystemDefault,
@@ -188,11 +195,14 @@ func findAdvancedCustomResponsesToolModelOverride(options *AdvancedCustomConvert
 }
 
 func advancedCustomResponsesToolNamePolicyMatches(policy AdvancedCustomResponsesToolNamePolicy, toolType string, toolName string) bool {
+	configuredType := strings.TrimSpace(policy.ToolType)
+	actualType := strings.TrimSpace(toolType)
+	if strings.TrimSpace(policy.ToolName) == "" {
+		return IsAdvancedCustomUnnamedNativeResponsesToolType(configuredType) && configuredType == actualType
+	}
 	if strings.TrimSpace(policy.ToolName) != strings.TrimSpace(toolName) {
 		return false
 	}
-	configuredType := strings.TrimSpace(policy.ToolType)
-	actualType := strings.TrimSpace(toolType)
 	if configuredType == actualType {
 		return true
 	}
@@ -224,6 +234,11 @@ func normalizeAdvancedCustomResponsesToolType(toolType string) string {
 	default:
 		return "unknown"
 	}
+}
+
+func IsAdvancedCustomUnnamedNativeResponsesToolType(toolType string) bool {
+	toolType = strings.TrimSpace(toolType)
+	return toolType != "" && toolType != "unknown" && normalizeAdvancedCustomResponsesToolType(toolType) == "unknown"
 }
 
 func advancedCustomResponsesToolPolicyForType(options *AdvancedCustomResponsesToolsOptions, toolType string) (string, bool) {
@@ -379,7 +394,7 @@ func validateAdvancedCustomResponsesToolModelOverrides(index int, allowFlatten b
 				{name: "namespace", toolType: "namespace", policy: override.ResponsesTools.Namespace, allowFlatten: allowFlatten},
 				{name: "custom", toolType: "custom", policy: override.ResponsesTools.Custom},
 				{name: "web_search", toolType: "web_search", policy: override.ResponsesTools.WebSearch},
-				{name: "tool_search", toolType: "tool_search", policy: override.ResponsesTools.ToolSearch},
+				{name: "tool_search", toolType: "tool_search", policy: override.ResponsesTools.ToolSearch, allowFlatten: allowFlatten},
 				{name: "image_generation", toolType: "image_generation", policy: override.ResponsesTools.ImageGeneration},
 				{name: "unknown", toolType: "unknown", policy: override.ResponsesTools.Unknown},
 			}
@@ -415,19 +430,20 @@ func validateAdvancedCustomResponsesToolModelOverrides(index int, allowFlatten b
 			toolType := strings.TrimSpace(namePolicy.ToolType)
 			toolName := strings.TrimSpace(namePolicy.ToolName)
 			policy := strings.TrimSpace(namePolicy.Policy)
-			if toolType == "" || toolName == "" || policy == "" {
+			if toolType == "" || policy == "" || (toolName == "" && !IsAdvancedCustomUnnamedNativeResponsesToolType(toolType)) {
 				return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options.responses_tool_model_overrides[%d].responses_tool_names[%d] requires tool_type, tool_name, and policy", index, overrideIndex, nameIndex)
 			}
 			if normalizeAdvancedCustomResponsesToolType(toolType) == "function" {
 				return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options function tools are always preserved", index)
 			}
-			if policy == AdvancedCustomResponsesToolPolicyFlatten {
-				return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options.responses_tool_names[%d].policy does not support flatten", index, nameIndex)
-			}
-			if err := validateAdvancedCustomResponsesToolPolicy(index, "tool_name", policy, false); err != nil {
+			if err := validateAdvancedCustomResponsesToolPolicy(index, "tool_name", policy, allowFlatten); err != nil {
 				return err
 			}
-			key := normalizeAdvancedCustomResponsesToolType(toolType) + "\x00" + toolName
+			keyToolType := normalizeAdvancedCustomResponsesToolType(toolType)
+			if keyToolType == "unknown" && toolType != "unknown" {
+				keyToolType = toolType
+			}
+			key := keyToolType + "\x00" + toolName
 			if _, exists := seenToolNames[key]; exists {
 				return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options duplicate responses tool name policy: %s/%s", index, toolType, toolName)
 			}

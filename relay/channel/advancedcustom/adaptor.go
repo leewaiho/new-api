@@ -8,6 +8,8 @@ import (
 	"maps"
 	"net/http"
 	"net/url"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -30,6 +32,9 @@ import (
 const ChannelName = "advanced_custom"
 
 const advancedCustomModelPlaceholder = "{model}"
+
+var advancedCustomUpstreamToolIndexPattern = regexp.MustCompile(`(?i)\btools\[(\d+)\]`)
+var advancedCustomExplicitToolTypePattern = regexp.MustCompile(`(?i)\bunsupported\s+tool\s+type\s*:\s*([a-z0-9_.-]+)\b`)
 
 type Adaptor struct {
 	openaiAdaptor openai.Adaptor
@@ -149,15 +154,16 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 	recordAdvancedCustomToolCompatibilityEvents(info, a.route, requestedModel, upstreamModel, decisions, nil)
 	a.compatibilityRequestedModel = requestedModel
 	a.compatibilityUpstreamModel = upstreamModel
-	a.compatibilityTools = summarizeAdvancedCustomResponsesTools(filteredTools)
 	request.Tools = filteredTools
 	switch converter {
 	case dto.AdvancedCustomConverterNone:
+		a.compatibilityTools = summarizeAdvancedCustomResponsesTools(filteredTools)
 		return a.convertOpenAICompatibleResponsesRequest(c, info, request)
 	case dto.AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions:
 		mappings := map[string]dto.ResponsesToolNameMapping{}
 		chatOptions := relayconvert.ResponsesRequestToChatOptions{
 			ToolPolicies:       advancedCustomResponsesToolPolicies(a.route.ConverterOptions, requestedModel, upstreamModel),
+			ToolPolicyResolver: policyResolver,
 			ToolNameMappings:   mappings,
 			DropResponseFields: advancedCustomResponsesDropFields(a.route.ConverterOptions),
 		}
@@ -170,6 +176,13 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 		}
 		if len(mappings) > 0 {
 			info.ResponsesToolNameMappings = mappings
+		}
+		a.compatibilityTools = summarizeAdvancedCustomChatTools(chatReq.Tools)
+		for i := range a.compatibilityTools {
+			if mapping, ok := mappings[a.compatibilityTools[i].ToolName]; ok && mapping.NativeToolType != "" {
+				a.compatibilityTools[i].ToolType = mapping.NativeToolType
+				a.compatibilityTools[i].ToolName = mapping.Name
+			}
 		}
 		return a.convertOpenAICompatibleRequest(c, info, chatReq)
 	default:
@@ -562,6 +575,9 @@ func (a *Adaptor) convertGeminiToOpenAICompatibleRequest(c *gin.Context, info *r
 }
 
 func (a *Adaptor) convertOpenAICompatibleResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.OpenAIResponsesRequest) (any, error) {
+	if err := relayconvert.NormalizeResponsesInputToolCallItemIDs(&request); err != nil {
+		return nil, err
+	}
 	old := info.ChannelType
 	info.ChannelType = constant.ChannelTypeOpenAI
 	converted, err := a.openaiAdaptor.ConvertOpenAIResponsesRequest(c, info, request)
@@ -599,12 +615,39 @@ func summarizeAdvancedCustomResponsesTools(raw json.RawMessage) []relayconvert.R
 		return nil
 	}
 	out := make([]relayconvert.ResponsesToolPolicyDecision, 0, len(tools))
-	for _, tool := range tools {
+	for toolIndex, tool := range tools {
 		toolType := strings.TrimSpace(common.Interface2String(tool["type"]))
 		if toolType == "" {
 			continue
 		}
-		out = append(out, relayconvert.ResponsesToolPolicyDecision{ToolType: toolType, ToolName: strings.TrimSpace(common.Interface2String(tool["name"]))})
+		out = append(out, relayconvert.ResponsesToolPolicyDecision{ToolIndex: toolIndex, ToolType: toolType, ToolName: strings.TrimSpace(common.Interface2String(tool["name"]))})
+	}
+	return out
+}
+
+func summarizeAdvancedCustomChatTools(tools []dto.ToolCallRequest) []relayconvert.ResponsesToolPolicyDecision {
+	out := make([]relayconvert.ResponsesToolPolicyDecision, 0, len(tools))
+	for toolIndex, tool := range tools {
+		toolType := strings.TrimSpace(tool.Type)
+		if toolType == "" {
+			continue
+		}
+		toolName := ""
+		if toolType == "function" {
+			toolName = strings.TrimSpace(tool.Function.Name)
+		} else if len(tool.Custom) > 0 {
+			var customTool struct {
+				Name string `json:"name"`
+			}
+			if err := common.Unmarshal(tool.Custom, &customTool); err == nil {
+				toolName = strings.TrimSpace(customTool.Name)
+			}
+		}
+		out = append(out, relayconvert.ResponsesToolPolicyDecision{
+			ToolIndex: toolIndex,
+			ToolType:  toolType,
+			ToolName:  toolName,
+		})
 	}
 	return out
 }
@@ -618,10 +661,22 @@ func recordAdvancedCustomUpstreamToolCompatibilityEvents(info *relaycommon.Relay
 		return
 	}
 	message := cause.ErrorWithStatusCode()
-	matchedTools := make([]relayconvert.ResponsesToolPolicyDecision, 0, len(tools))
-	for _, tool := range tools {
-		if advancedCustomUpstreamErrorMentionsTool(message, tool.ToolType, tool.ToolName) {
-			matchedTools = append(matchedTools, tool)
+	matchedTools := []relayconvert.ResponsesToolPolicyDecision{}
+	if toolIndex, ok := advancedCustomUpstreamToolIndex(message); ok {
+		for _, tool := range tools {
+			if tool.ToolIndex == toolIndex {
+				matchedTools = []relayconvert.ResponsesToolPolicyDecision{tool}
+				break
+			}
+		}
+	} else if explicitType, ok := advancedCustomExplicitToolType(message); ok {
+		for _, tool := range tools {
+			if strings.EqualFold(strings.TrimSpace(tool.ToolType), explicitType) {
+				matchedTools = append(matchedTools, tool)
+			}
+		}
+		if len(matchedTools) != 1 {
+			matchedTools = nil
 		}
 	}
 	if len(matchedTools) == 0 {
@@ -647,10 +702,13 @@ func classifyAdvancedCustomUpstreamToolError(statusCode int, message string, too
 	}
 	lower := strings.ToLower(message)
 	normalizedType := strings.ToLower(strings.TrimSpace(toolType))
+	if normalizedType == "" {
+		return model.ToolCompatibilityEventTypeUnclassified, ""
+	}
 	// Only explicit unsupported-tool wording may recommend a policy change. A
 	// generic 400 remains evidence for review, never an automatic Drop proposal.
-	if strings.Contains(lower, "unsupported tool type") || strings.Contains(lower, "tool type is not supported") || strings.Contains(lower, "does not support tool") {
-		if normalizedType == "" || normalizedType == "function" {
+	if strings.Contains(lower, "unsupported tool type") || strings.Contains(lower, "tool type is not supported") || strings.Contains(lower, "does not support tool") || strings.Contains(lower, "type is illegal") {
+		if normalizedType == "function" {
 			return model.ToolCompatibilityEventTypeUpstreamUnsupported, ""
 		}
 		return model.ToolCompatibilityEventTypeUpstreamUnsupported, dto.AdvancedCustomResponsesToolPolicyDrop
@@ -658,39 +716,24 @@ func classifyAdvancedCustomUpstreamToolError(statusCode int, message string, too
 	return model.ToolCompatibilityEventTypeUnclassified, ""
 }
 
-func advancedCustomUpstreamErrorMentionsTool(message string, toolType string, toolName string) bool {
-	lower := strings.ToLower(message)
-	if name := strings.ToLower(strings.TrimSpace(toolName)); name != "" && strings.Contains(lower, name) {
-		return true
+func advancedCustomUpstreamToolIndex(message string) (int, bool) {
+	match := advancedCustomUpstreamToolIndexPattern.FindStringSubmatch(message)
+	if len(match) != 2 {
+		return 0, false
 	}
-	for _, alias := range advancedCustomToolTypeAliases(toolType) {
-		if strings.Contains(lower, alias) {
-			return true
-		}
+	toolIndex, err := strconv.Atoi(match[1])
+	if err != nil || toolIndex < 0 {
+		return 0, false
 	}
-	return false
+	return toolIndex, true
 }
 
-func advancedCustomToolTypeAliases(toolType string) []string {
-	switch strings.ToLower(strings.TrimSpace(toolType)) {
-	case "web_search", "web_search_preview":
-		return []string{"web_search", "web_search_preview"}
-	case "image_gen", "image_generation":
-		return []string{"image_gen", "image_generation"}
-	case "tool_search":
-		return []string{"tool_search"}
-	case "namespace":
-		return []string{"namespace"}
-	case "custom":
-		return []string{"custom"}
-	case "function":
-		return []string{"function"}
-	default:
-		if normalized := strings.ToLower(strings.TrimSpace(toolType)); normalized != "" {
-			return []string{normalized}
-		}
-		return nil
+func advancedCustomExplicitToolType(message string) (string, bool) {
+	match := advancedCustomExplicitToolTypePattern.FindStringSubmatch(message)
+	if len(match) != 2 {
+		return "", false
 	}
+	return strings.ToLower(strings.TrimSpace(match[1])), true
 }
 
 func isAdvancedCustomToolConversionError(err error) bool {
@@ -727,6 +770,16 @@ func recordAdvancedCustomToolCompatibilityEvents(
 			eventType = model.ToolCompatibilityEventTypePolicyDrop
 		case dto.AdvancedCustomResponsesToolPolicyReject:
 			eventType = model.ToolCompatibilityEventTypePolicyReject
+			if route.Converter == dto.AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions &&
+				dto.ResolveAdvancedCustomResponsesToolPolicy(
+					route.ConverterOptions,
+					requestedModel,
+					upstreamModel,
+					decision.ToolType,
+					decision.ToolName,
+				).Source == dto.AdvancedCustomResponsesToolPolicySourceSystemDefault {
+				suggestedPolicy = dto.AdvancedCustomResponsesToolPolicyDrop
+			}
 		case dto.AdvancedCustomResponsesToolConflictPolicyDeduplicate:
 			eventType = model.ToolCompatibilityEventTypeNameConflict
 			suggestedPolicy = dto.AdvancedCustomResponsesToolConflictPolicyDeduplicate

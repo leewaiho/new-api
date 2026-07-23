@@ -40,7 +40,9 @@ func OaiChatToResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	if err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
-	relayconvert.ApplyResponsesToolNameMappings(responsesResp, info.ResponsesToolNameMappings)
+	if err := relayconvert.ApplyResponsesToolNameMappings(responsesResp, info.ResponsesToolNameMappings); err != nil {
+		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+	}
 	if usage == nil || usage.TotalTokens == 0 {
 		text := service.ExtractOutputTextFromResponses(responsesResp)
 		usage = service.ResponseText2Usage(c, text, info.UpstreamModelName, info.GetEstimatePromptTokens())
@@ -123,7 +125,11 @@ func OaiChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		state.Usage = relayconvert.UsageFromChatUsage(usage)
 	}
 
-	for _, event := range relayconvert.FinalizeChatCompletionsStreamToResponses(state) {
+	finalEvents, err := relayconvert.FinalizeChatCompletionsStreamToResponses(state)
+	if err != nil {
+		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+	}
+	for _, event := range finalEvents {
 		if !sendEvent(event) {
 			return nil, streamErr
 		}
