@@ -1279,6 +1279,25 @@ func TestResponsesRequestToChatCompletionsRequestAppendsConfiguredToolContinuati
 	assert.Equal(t, "Continue using the tool result.", got.Messages[2].StringContent())
 }
 
+func TestResponsesRequestToChatCompletionsRequestAppendsConfiguredToolContinuationAfterTrailingReasoning(t *testing.T) {
+	got, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
+		Model: "glm-5.2",
+		Input: mustRawMessage(t, []map[string]any{
+			{"type": "function_call", "call_id": "call_1", "name": "lookup", "arguments": `{}`},
+			{"type": "function_call_output", "call_id": "call_1", "output": "ok"},
+			{"type": "reasoning"},
+		}),
+	}, ResponsesRequestToChatOptions{
+		ToolContinuation: &ResponsesToolContinuation{AppendUserContinuation: true, Text: "Continue using the tool result."},
+	})
+	require.NoError(t, err)
+	require.Len(t, got.Messages, 3)
+	assert.Equal(t, "assistant", got.Messages[0].Role)
+	assert.Equal(t, "tool", got.Messages[1].Role)
+	assert.Equal(t, "user", got.Messages[2].Role)
+	assert.Equal(t, "Continue using the tool result.", got.Messages[2].StringContent())
+}
+
 func TestResponsesRequestToChatCompletionsRequestDoesNotDuplicateExplicitInputTextForToolContinuation(t *testing.T) {
 	got, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
 		Model: "glm-5.2",

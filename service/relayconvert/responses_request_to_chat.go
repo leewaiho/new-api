@@ -331,7 +331,6 @@ func responsesInputIsPureToolContinuation(input json.RawMessage) bool {
 	lastType := ""
 	for _, item := range items {
 		itemType := strings.TrimSpace(common.Interface2String(item["type"]))
-		lastType = itemType
 		switch itemType {
 		case responsesInputTypeReasoning:
 			continue
@@ -345,6 +344,7 @@ func responsesInputIsPureToolContinuation(input json.RawMessage) bool {
 		default:
 			return false
 		}
+		lastType = itemType
 	}
 	return sawCall && sawOutput && (lastType == responsesInputTypeFunctionCallOutput || lastType == responsesInputTypeCustomToolCallOutput)
 }
