@@ -1878,13 +1878,18 @@ func TestAdvancedCustomResponsesToolStateCacheScopesExpiresAndEncrypts(t *testin
 		Name:      "shell_command",
 		Arguments: json.RawMessage(`{"command":"cat /private/secret"}`),
 	}}
+	mappings := map[string]dto.ResponsesToolNameMapping{
+		"shell_command": {Name: "shell_command", NativeToolType: "shell_command"},
+	}
+	state := advancedCustomResponsesToolState{Output: output, ToolNameMappings: mappings}
 
-	require.NoError(t, cache.Save(scope, "resp_1", output, time.Minute))
+	require.NoError(t, cache.Save(scope, "resp_1", state, time.Minute))
 	assert.NotContains(t, store.value(cache.key(scope, "resp_1")), "cat /private/secret")
 
 	loaded, err := cache.Load(scope, "resp_1")
 	require.NoError(t, err)
-	require.Equal(t, output, loaded)
+	require.Equal(t, state, loaded)
+	require.Equal(t, mappings, loaded.ToolNameMappings)
 
 	_, err = cache.Load(advancedCustomResponsesToolStateScope{
 		TokenID:        12,
@@ -1897,6 +1902,34 @@ func TestAdvancedCustomResponsesToolStateCacheScopesExpiresAndEncrypts(t *testin
 	now = now.Add(time.Minute)
 	_, err = cache.Load(scope, "resp_1")
 	require.ErrorIs(t, err, errAdvancedCustomResponsesToolStateNotFound)
+}
+
+func TestAdvancedCustomResponsesToolStateCacheLoadsLegacyEncryptedShellState(t *testing.T) {
+	store := newAdvancedCustomResponsesToolStateMemoryStore()
+	cache := newAdvancedCustomResponsesToolStateCache(store)
+	scope := advancedCustomResponsesToolStateScope{
+		TokenID:        11,
+		Route:          "/v1/responses->/v1/chat/completions",
+		RequestedModel: "glm-5.2",
+		UpstreamModel:  "glm-5.2",
+	}
+	legacyOutput := []dto.ResponsesOutput{{
+		Type:      "function_call",
+		ID:        "fc_call_shell",
+		CallId:    "call_shell",
+		Name:      "shell_command",
+		Arguments: json.RawMessage(`{"command":"pwd"}`),
+	}}
+	plaintext, err := common.Marshal(legacyOutput)
+	require.NoError(t, err)
+	ciphertext, err := encryptAdvancedCustomResponsesToolState(plaintext)
+	require.NoError(t, err)
+	require.NoError(t, store.Set(context.Background(), cache.key(scope, "resp_legacy"), ciphertext, time.Minute))
+
+	loaded, err := cache.Load(scope, "resp_legacy")
+	require.NoError(t, err)
+	require.Equal(t, legacyOutput, loaded.Output)
+	require.Empty(t, loaded.ToolNameMappings)
 }
 
 func TestAdaptorResponsesToChatReplaysScopedToolState(t *testing.T) {
@@ -1923,13 +1956,13 @@ func TestAdaptorResponsesToChatReplaysScopedToolState(t *testing.T) {
 	route := config.Routes[0]
 	info.ChannelMeta.ChannelId = 16
 	scope := advancedCustomResponsesToolStateScopeFor(info, route, "glm-5.2", "glm-5.2")
-	require.NoError(t, defaultAdvancedCustomResponsesToolStateCache.Save(scope, "resp_previous", []dto.ResponsesOutput{{
+	require.NoError(t, defaultAdvancedCustomResponsesToolStateCache.Save(scope, "resp_previous", advancedCustomResponsesToolState{Output: []dto.ResponsesOutput{{
 		Type:      "function_call",
 		ID:        "fc_call_shell",
 		CallId:    "call_shell",
 		Name:      "shell_command",
 		Arguments: json.RawMessage(`{"command":"pwd"}`),
-	}}, time.Minute))
+	}}}, time.Minute))
 	info.ChannelMeta.ChannelId = 21
 
 	adaptor := &Adaptor{}
@@ -1949,6 +1982,103 @@ func TestAdaptorResponsesToChatReplaysScopedToolState(t *testing.T) {
 	assert.Equal(t, "call_shell", toolCalls[0].ID)
 	assert.Equal(t, "shell_command", toolCalls[0].Function.Name)
 	assert.Equal(t, "call_shell", chatReq.Messages[1].ToolCallId)
+}
+
+func TestAdaptorResponsesToChatReplaysCachedApplyPatchAsFunctionTool(t *testing.T) {
+	oldCache := defaultAdvancedCustomResponsesToolStateCache
+	store := newAdvancedCustomResponsesToolStateMemoryStore()
+	defaultAdvancedCustomResponsesToolStateCache = newAdvancedCustomResponsesToolStateCache(store)
+	t.Cleanup(func() { defaultAdvancedCustomResponsesToolStateCache = oldCache })
+
+	config := &dto.AdvancedCustomConfig{Routes: []dto.AdvancedCustomRoute{{
+		IncomingPath: "/v1/responses",
+		UpstreamPath: "/v1/chat/completions",
+		Converter:    dto.AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions,
+		ConverterOptions: &dto.AdvancedCustomConverterOptions{
+			ResponsesToolStateReplay: &dto.AdvancedCustomResponsesToolStateReplay{Enabled: true, TTLSeconds: 60},
+		},
+	}}}
+	info := advancedCustomRelayInfo(config)
+	info.TokenId = 11
+	info.RelayMode = relayconstant.RelayModeResponses
+	info.RequestURLPath = "/v1/responses"
+	info.OriginModelName = "glm-5.2"
+
+	route := config.Routes[0]
+	scope := advancedCustomResponsesToolStateScopeFor(info, route, "glm-5.2", "glm-5.2")
+	require.NoError(t, defaultAdvancedCustomResponsesToolStateCache.Save(scope, "resp_previous", advancedCustomResponsesToolState{Output: []dto.ResponsesOutput{{
+		Type:   "custom_tool_call",
+		ID:     "ctc_call_patch",
+		CallId: "call_patch",
+		Name:   "apply_patch",
+		Input:  mustAdvancedCustomRawMessage(t, "*** Begin Patch\n*** End Patch"),
+	}}, ToolNameMappings: map[string]dto.ResponsesToolNameMapping{
+		"apply_patch": {Name: "apply_patch", NativeToolType: "custom", ArgumentsCodec: "custom_input"},
+	}}, time.Minute))
+
+	adaptor := &Adaptor{}
+	converted, err := adaptor.ConvertOpenAIResponsesRequest(advancedCustomGinContext("/v1/responses"), info, dto.OpenAIResponsesRequest{
+		Model:              "glm-5.2",
+		PreviousResponseID: "resp_previous",
+		Input: mustAdvancedCustomRawMessage(t, []map[string]any{{
+			"type": "custom_tool_call_output", "call_id": "call_patch", "output": "applied",
+		}}),
+	})
+	require.NoError(t, err)
+	chatReq, ok := converted.(*dto.GeneralOpenAIRequest)
+	require.True(t, ok)
+	toolCalls := chatReq.Messages[0].ParseToolCalls()
+	require.Len(t, toolCalls, 1)
+	assert.Equal(t, "function", toolCalls[0].Type)
+	assert.Equal(t, "apply_patch", toolCalls[0].Function.Name)
+}
+
+func TestAdaptorResponsesToChatReplaysCachedUnknownCustomWithoutGuessing(t *testing.T) {
+	oldCache := defaultAdvancedCustomResponsesToolStateCache
+	store := newAdvancedCustomResponsesToolStateMemoryStore()
+	defaultAdvancedCustomResponsesToolStateCache = newAdvancedCustomResponsesToolStateCache(store)
+	t.Cleanup(func() { defaultAdvancedCustomResponsesToolStateCache = oldCache })
+
+	config := &dto.AdvancedCustomConfig{Routes: []dto.AdvancedCustomRoute{{
+		IncomingPath: "/v1/responses",
+		UpstreamPath: "/v1/chat/completions",
+		Converter:    dto.AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions,
+		ConverterOptions: &dto.AdvancedCustomConverterOptions{
+			ResponsesToolStateReplay: &dto.AdvancedCustomResponsesToolStateReplay{Enabled: true, TTLSeconds: 60},
+		},
+	}}}
+	info := advancedCustomRelayInfo(config)
+	info.TokenId = 11
+	info.RelayMode = relayconstant.RelayModeResponses
+	info.RequestURLPath = "/v1/responses"
+	info.OriginModelName = "glm-5.2"
+
+	route := config.Routes[0]
+	scope := advancedCustomResponsesToolStateScopeFor(info, route, "glm-5.2", "glm-5.2")
+	require.NoError(t, defaultAdvancedCustomResponsesToolStateCache.Save(scope, "resp_previous", advancedCustomResponsesToolState{
+		Output: []dto.ResponsesOutput{{
+			Type:   "custom_tool_call",
+			ID:     "ctc_unknown",
+			CallId: "call_unknown",
+			Name:   "vendor_custom_tool",
+			Input:  mustAdvancedCustomRawMessage(t, "opaque input"),
+		}},
+	}, time.Minute))
+
+	converted, err := (&Adaptor{}).ConvertOpenAIResponsesRequest(advancedCustomGinContext("/v1/responses"), info, dto.OpenAIResponsesRequest{
+		Model:              "glm-5.2",
+		PreviousResponseID: "resp_previous",
+		Input: mustAdvancedCustomRawMessage(t, []map[string]any{{
+			"type": "custom_tool_call_output", "call_id": "call_unknown", "output": "opaque result",
+		}}),
+	})
+	require.NoError(t, err)
+	chatReq, ok := converted.(*dto.GeneralOpenAIRequest)
+	require.True(t, ok)
+	toolCalls := chatReq.Messages[0].ParseToolCalls()
+	require.Len(t, toolCalls, 1)
+	assert.Equal(t, dto.CustomType, toolCalls[0].Type)
+	assert.Equal(t, "vendor_custom_tool", toolCalls[0].Function.Name)
 }
 
 func TestAdaptorResponsesToChatStateReplayRejectsMissScopeMismatchAndDisabled(t *testing.T) {
@@ -1987,9 +2117,9 @@ func TestAdaptorResponsesToChatStateReplayRejectsMissScopeMismatchAndDisabled(t 
 	require.ErrorIs(t, err, errAdvancedCustomResponsesToolStateNotFound)
 
 	scope := advancedCustomResponsesToolStateScopeFor(newInfo(enabled, 11), enabled.Routes[0], "glm-5.2", "glm-5.2")
-	require.NoError(t, defaultAdvancedCustomResponsesToolStateCache.Save(scope, "resp_previous", []dto.ResponsesOutput{{
+	require.NoError(t, defaultAdvancedCustomResponsesToolStateCache.Save(scope, "resp_previous", advancedCustomResponsesToolState{Output: []dto.ResponsesOutput{{
 		Type: "function_call", ID: "fc_call_shell", CallId: "call_shell", Name: "shell_command", Arguments: json.RawMessage(`{}`),
-	}}, time.Minute))
+	}}}, time.Minute))
 	_, err = (&Adaptor{}).ConvertOpenAIResponsesRequest(advancedCustomGinContext("/v1/responses"), newInfo(enabled, 12), request())
 	require.ErrorIs(t, err, errAdvancedCustomResponsesToolStateNotFound)
 
@@ -2035,11 +2165,12 @@ func TestAdvancedCustomResponsesToChatStreamCapturesToolState(t *testing.T) {
 	require.Nil(t, err)
 	output, loadErr := defaultAdvancedCustomResponsesToolStateCache.Load(scope, "chatcmpl-stream-state")
 	require.NoError(t, loadErr)
-	require.Len(t, output, 1)
-	assert.Equal(t, "function_call", output[0].Type)
-	assert.Equal(t, "fc_call_shell", output[0].ID)
-	assert.Equal(t, "call_shell", output[0].CallId)
-	assert.Equal(t, "shell_command", output[0].Name)
+	require.Len(t, output.Output, 1)
+	assert.Equal(t, "function_call", output.Output[0].Type)
+	assert.Equal(t, "fc_call_shell", output.Output[0].ID)
+	assert.Equal(t, "call_shell", output.Output[0].CallId)
+	assert.Equal(t, "shell_command", output.Output[0].Name)
+	assert.Equal(t, info.ResponsesToolNameMappings, output.ToolNameMappings)
 }
 
 type advancedCustomResponsesToolStateMemoryStore struct {
@@ -2083,6 +2214,9 @@ func TestAdvancedCustomResponsesToChatBufferedHandlerCapturesNativeShellToolStat
 	info.TokenId = 11
 	info.ChannelId = 16
 	info.UpstreamModelName = "glm-5.2"
+	info.ResponsesToolNameMappings = map[string]dto.ResponsesToolNameMapping{
+		"shell_command": {Name: "shell_command", NativeToolType: "shell_command"},
+	}
 	scope := advancedCustomResponsesToolStateScope{
 		TokenID:        11,
 		Route:          "/v1/responses\x1f/v1/chat/completions\x1fopenai-responses-to-openai-chat-completions",
@@ -2122,9 +2256,9 @@ func TestAdvancedCustomResponsesToChatBufferedHandlerCapturesNativeShellToolStat
 
 	output, loadErr := defaultAdvancedCustomResponsesToolStateCache.Load(scope, "chatcmpl-buffered-state")
 	require.NoError(t, loadErr)
-	require.Len(t, output, 1)
-	assert.Equal(t, "function_call", output[0].Type)
-	assert.Equal(t, "fc_call_shell", output[0].ID)
-	assert.Equal(t, "call_shell", output[0].CallId)
-	assert.Equal(t, "shell_command", output[0].Name)
+	require.Len(t, output.Output, 1)
+	assert.Equal(t, "function_call", output.Output[0].Type)
+	assert.Equal(t, "fc_call_shell", output.Output[0].ID)
+	assert.Equal(t, "call_shell", output.Output[0].CallId)
+	assert.Equal(t, "shell_command", output.Output[0].Name)
 }
