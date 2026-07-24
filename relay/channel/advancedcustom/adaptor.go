@@ -300,7 +300,26 @@ func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, request
 	if info.RelayMode == relayconstant.RelayModeRealtime {
 		return channel.DoWssRequest(a, c, info, requestBody)
 	}
-	return channel.DoApiRequest(a, c, info, requestBody)
+	resp, err := channel.DoApiRequest(a, c, info, requestBody)
+	if err != nil {
+		return nil, err
+	}
+	if info.RelayMode == relayconstant.RelayModeResponses && len(a.compatibilityTools) > 0 &&
+		(resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices) {
+		recordAdvancedCustomUpstreamToolCompatibilityEvents(
+			info,
+			a.route,
+			a.compatibilityRequestedModel,
+			a.compatibilityUpstreamModel,
+			a.compatibilityTools,
+			types.NewErrorWithStatusCode(
+				fmt.Errorf("upstream returned HTTP status %d", resp.StatusCode),
+				types.ErrorCodeBadResponse,
+				resp.StatusCode,
+			),
+		)
+	}
+	return resp, nil
 }
 
 func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (usage any, err *types.NewAPIError) {

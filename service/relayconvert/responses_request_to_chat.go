@@ -159,6 +159,10 @@ func ResponsesRequestToChatCompletionsRequestWithOptions(req *dto.OpenAIResponse
 	if err != nil {
 		return nil, err
 	}
+	tools, err = appendResponsesCustomHistoryFunctionTools(tools, req.Input, options.ToolNameMappings, options)
+	if err != nil {
+		return nil, err
+	}
 	messages = appendConfiguredResponsesToolContinuation(req.Input, messages, options.ToolContinuation)
 
 	toolChoice, err := responsesRequestToolChoiceToChat(req.ToolChoice, options, tools)
@@ -601,7 +605,65 @@ func responsesFunctionCallItemToChatToolCall(item map[string]any) (dto.ToolCallR
 	}, nil
 }
 
+func responsesCustomToolCallShouldFlatten(name string, mappings map[string]dto.ResponsesToolNameMapping, options ResponsesRequestToChatOptions) bool {
+	if mapping, ok := mappings[name]; ok &&
+		mapping.NativeToolType == responsesNativeToolTypeCustom &&
+		mapping.ArgumentsCodec == responsesArgumentsCodecCustomInput {
+		return true
+	}
+	return responsesToolPolicyForTool(options, responsesNativeToolTypeCustom, name) == ResponsesToolPolicyFlatten
+}
+
+func responsesCustomToolCallFunctionParameters() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"required":             []string{"input"},
+		"properties": map[string]any{
+			"input": map[string]any{"type": "string"},
+		},
+	}
+}
+
+func appendResponsesCustomHistoryFunctionTools(tools []dto.ToolCallRequest, input json.RawMessage, mappings map[string]dto.ResponsesToolNameMapping, options ResponsesRequestToChatOptions) ([]dto.ToolCallRequest, error) {
+	if !rawJSONPresent(input) || common.GetJsonType(input) != "array" {
+		return tools, nil
+	}
+	var items []map[string]any
+	if err := common.Unmarshal(input, &items); err != nil {
+		return nil, fmt.Errorf("invalid input array: %w", err)
+	}
+	knownNames := chatFunctionToolNames(tools)
+	for _, item := range items {
+		if strings.TrimSpace(common.Interface2String(item["type"])) != responsesInputTypeCustomToolCall {
+			continue
+		}
+		name := strings.TrimSpace(common.Interface2String(item["name"]))
+		if !responsesCustomToolCallShouldFlatten(name, mappings, options) {
+			continue
+		}
+		if name == "" {
+			return nil, errors.New("custom_tool_call item is missing name")
+		}
+		if _, exists := knownNames[name]; exists {
+			continue
+		}
+		tools = append(tools, dto.ToolCallRequest{
+			Type: "function",
+			Function: dto.FunctionRequest{
+				Name:       name,
+				Parameters: responsesCustomToolCallFunctionParameters(),
+			},
+		})
+		knownNames[name] = struct{}{}
+	}
+	return tools, nil
+}
+
 func responsesCustomToolCallItemToChatFunction(item map[string]any, name string) (dto.ToolCallRequest, error) {
+	if name == "" {
+		return dto.ToolCallRequest{}, errors.New("custom_tool_call item is missing name")
+	}
 	input := common.Interface2String(item["input"])
 	arguments, err := common.Marshal(map[string]string{"input": input})
 	if err != nil {
@@ -619,12 +681,7 @@ func responsesCustomToolCallItemToChatFunction(item map[string]any, name string)
 
 func responsesCustomToolCallItemToChatToolCall(item map[string]any, mappings map[string]dto.ResponsesToolNameMapping, options ResponsesRequestToChatOptions) (dto.ToolCallRequest, error) {
 	name := strings.TrimSpace(common.Interface2String(item["name"]))
-	if mapping, ok := mappings[name]; ok &&
-		mapping.NativeToolType == responsesNativeToolTypeCustom &&
-		mapping.ArgumentsCodec == responsesArgumentsCodecCustomInput {
-		return responsesCustomToolCallItemToChatFunction(item, name)
-	}
-	if responsesToolPolicyForTool(options, responsesNativeToolTypeCustom, name) == ResponsesToolPolicyFlatten {
+	if responsesCustomToolCallShouldFlatten(name, mappings, options) {
 		return responsesCustomToolCallItemToChatFunction(item, name)
 	}
 

@@ -1425,6 +1425,17 @@ func TestResponsesRequestToChatCompletionsRequestFlattensUnmappedCustomHistoryWh
 	})
 
 	require.NoError(t, err)
+	require.Len(t, got.Tools, 1)
+	assert.Equal(t, "function", got.Tools[0].Type)
+	assert.Equal(t, "legacy_patch", got.Tools[0].Function.Name)
+	assert.Equal(t, map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"required":             []string{"input"},
+		"properties": map[string]any{
+			"input": map[string]any{"type": "string"},
+		},
+	}, got.Tools[0].Function.Parameters)
 	require.Len(t, got.Messages, 2)
 	toolCalls := got.Messages[0].ParseToolCalls()
 	require.Len(t, toolCalls, 1)
@@ -1434,6 +1445,49 @@ func TestResponsesRequestToChatCompletionsRequestFlattensUnmappedCustomHistoryWh
 	assert.JSONEq(t, `{"input":"*** Begin Patch\n*** End Patch"}`, toolCalls[0].Function.Arguments)
 	assert.Equal(t, "call_legacy_patch", got.Messages[1].ToolCallId)
 	assert.Equal(t, "applied", got.Messages[1].StringContent())
+}
+
+func TestResponsesRequestToChatCompletionsRequestDoesNotDuplicateExplicitFunctionToolForFlattenedCustomHistory(t *testing.T) {
+	explicitParameters := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"patch": map[string]any{"type": "string"},
+		},
+	}
+	got, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
+		Model: "glm-5.2",
+		Input: mustRawMessage(t, []map[string]any{
+			{
+				"type":    "custom_tool_call",
+				"call_id": "call_legacy_patch",
+				"name":    "legacy_patch",
+				"input":   "*** Begin Patch\n*** End Patch",
+			},
+			{
+				"type":    "custom_tool_call_output",
+				"call_id": "call_legacy_patch",
+				"output":  "applied",
+			},
+		}),
+		Tools: mustRawMessage(t, []map[string]any{{
+			"type":       "function",
+			"name":       "legacy_patch",
+			"parameters": explicitParameters,
+		}}),
+	}, ResponsesRequestToChatOptions{
+		ToolPolicyResolver: func(toolType string, toolName string) string {
+			if toolType == "custom" && toolName == "legacy_patch" {
+				return ResponsesToolPolicyFlatten
+			}
+			return ResponsesToolPolicyPreserve
+		},
+	})
+
+	require.NoError(t, err)
+	require.Len(t, got.Tools, 1)
+	assert.Equal(t, "function", got.Tools[0].Type)
+	assert.Equal(t, "legacy_patch", got.Tools[0].Function.Name)
+	assert.Equal(t, explicitParameters, got.Tools[0].Function.Parameters)
 }
 
 func TestResponsesRequestToChatCompletionsRequestPreservesUnmappedCustomHistoryWhenPolicyPreservesIt(t *testing.T) {
