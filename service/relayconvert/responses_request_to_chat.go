@@ -155,7 +155,7 @@ func ResponsesRequestToChatCompletionsRequestWithOptions(req *dto.OpenAIResponse
 		}
 	}
 
-	messages, err := responsesRequestMessagesToChat(req, options.ToolNameMappings)
+	messages, err := responsesRequestMessagesToChat(req, options.ToolNameMappings, options)
 	if err != nil {
 		return nil, err
 	}
@@ -352,7 +352,7 @@ func validateResponsesRequestChatUnsupportedFields(req *dto.OpenAIResponsesReque
 	return nil
 }
 
-func responsesRequestMessagesToChat(req *dto.OpenAIResponsesRequest, mappings map[string]dto.ResponsesToolNameMapping) ([]dto.Message, error) {
+func responsesRequestMessagesToChat(req *dto.OpenAIResponsesRequest, mappings map[string]dto.ResponsesToolNameMapping, options ResponsesRequestToChatOptions) ([]dto.Message, error) {
 	messages := make([]dto.Message, 0)
 	if rawJSONPresent(req.Instructions) {
 		instructions, err := responsesJSONString(req.Instructions)
@@ -382,7 +382,7 @@ func responsesRequestMessagesToChat(req *dto.OpenAIResponsesRequest, mappings ma
 			return nil, fmt.Errorf("invalid input array: %w", err)
 		}
 		for _, item := range items {
-			nextMessages, err := responsesInputItemToChatMessages(item, messages, mappings)
+			nextMessages, err := responsesInputItemToChatMessages(item, messages, mappings, options)
 			if err != nil {
 				return nil, err
 			}
@@ -432,7 +432,7 @@ func responsesInputIsPureToolContinuation(input json.RawMessage) bool {
 	return sawCall && sawOutput && (lastType == responsesInputTypeFunctionCallOutput || lastType == responsesInputTypeCustomToolCallOutput)
 }
 
-func responsesInputItemToChatMessages(item map[string]any, messages []dto.Message, mappings map[string]dto.ResponsesToolNameMapping) ([]dto.Message, error) {
+func responsesInputItemToChatMessages(item map[string]any, messages []dto.Message, mappings map[string]dto.ResponsesToolNameMapping, options ResponsesRequestToChatOptions) ([]dto.Message, error) {
 	itemType := strings.TrimSpace(common.Interface2String(item["type"]))
 	switch itemType {
 	case responsesInputTypeReasoning:
@@ -444,7 +444,7 @@ func responsesInputItemToChatMessages(item map[string]any, messages []dto.Messag
 		}
 		return appendToolCallToLastAssistant(messages, toolCall), nil
 	case responsesInputTypeCustomToolCall:
-		toolCall, err := responsesCustomToolCallItemToChatToolCall(item, mappings)
+		toolCall, err := responsesCustomToolCallItemToChatToolCall(item, mappings, options)
 		if err != nil {
 			return nil, err
 		}
@@ -601,24 +601,31 @@ func responsesFunctionCallItemToChatToolCall(item map[string]any) (dto.ToolCallR
 	}, nil
 }
 
-func responsesCustomToolCallItemToChatToolCall(item map[string]any, mappings map[string]dto.ResponsesToolNameMapping) (dto.ToolCallRequest, error) {
+func responsesCustomToolCallItemToChatFunction(item map[string]any, name string) (dto.ToolCallRequest, error) {
+	input := common.Interface2String(item["input"])
+	arguments, err := common.Marshal(map[string]string{"input": input})
+	if err != nil {
+		return dto.ToolCallRequest{}, err
+	}
+	return dto.ToolCallRequest{
+		ID:   responsesCallID(item),
+		Type: "function",
+		Function: dto.FunctionRequest{
+			Name:      name,
+			Arguments: string(arguments),
+		},
+	}, nil
+}
+
+func responsesCustomToolCallItemToChatToolCall(item map[string]any, mappings map[string]dto.ResponsesToolNameMapping, options ResponsesRequestToChatOptions) (dto.ToolCallRequest, error) {
 	name := strings.TrimSpace(common.Interface2String(item["name"]))
 	if mapping, ok := mappings[name]; ok &&
 		mapping.NativeToolType == responsesNativeToolTypeCustom &&
 		mapping.ArgumentsCodec == responsesArgumentsCodecCustomInput {
-		input := common.Interface2String(item["input"])
-		arguments, err := common.Marshal(map[string]string{"input": input})
-		if err != nil {
-			return dto.ToolCallRequest{}, err
-		}
-		return dto.ToolCallRequest{
-			ID:   responsesCallID(item),
-			Type: "function",
-			Function: dto.FunctionRequest{
-				Name:      name,
-				Arguments: string(arguments),
-			},
-		}, nil
+		return responsesCustomToolCallItemToChatFunction(item, name)
+	}
+	if responsesToolPolicyForTool(options, responsesNativeToolTypeCustom, name) == ResponsesToolPolicyFlatten {
+		return responsesCustomToolCallItemToChatFunction(item, name)
 	}
 
 	raw, err := common.Marshal(item)

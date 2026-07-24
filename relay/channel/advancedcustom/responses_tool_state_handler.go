@@ -67,7 +67,9 @@ func (a *Adaptor) chatToResponsesHandler(c *gin.Context, info *relaycommon.Relay
 	if err := common.Unmarshal(body, &chatResp); err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
-	if oaiError := chatResp.GetOpenAIError(); oaiError != nil && oaiError.Type != "" {
+	if oaiError := chatResp.GetOpenAIError(); oaiError != nil &&
+		(oaiError.Type != "" ||
+			(resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices) && oaiError.Message != "") {
 		return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
 	}
 
