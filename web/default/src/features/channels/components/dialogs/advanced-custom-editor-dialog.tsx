@@ -622,7 +622,7 @@ const responseToolPolicyFields: Array<{
   allowFlatten: boolean
 }> = [
   { key: 'namespace', label: 'Namespace', allowFlatten: true },
-  { key: 'custom', label: 'Custom', allowFlatten: false },
+  { key: 'custom', label: 'Custom', allowFlatten: true },
   { key: 'web_search', label: 'Web search', allowFlatten: false },
   { key: 'tool_search', label: 'Tool search', allowFlatten: true },
   { key: 'image_generation', label: 'Image generation', allowFlatten: false },
