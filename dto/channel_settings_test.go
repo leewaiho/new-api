@@ -123,6 +123,26 @@ func TestAdvancedCustomValidateResponsesToolPolicies(t *testing.T) {
 	}
 	require.ErrorContains(t, flattenNonNamespace.Validate(), "responses_tools.web_search is invalid")
 
+	flattenNativeCodingTools := &AdvancedCustomConfig{
+		Routes: []AdvancedCustomRoute{
+			{
+				IncomingPath: "/v1/responses",
+				UpstreamPath: "/v1/chat/completions",
+				Converter:    AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions,
+				ConverterOptions: &AdvancedCustomConverterOptions{
+					ResponsesToolModelOverrides: []AdvancedCustomResponsesToolModelOverride{{
+						Models: []string{"glm-5.2"},
+						ToolNames: []AdvancedCustomResponsesToolNamePolicy{
+							{ToolType: "custom", ToolName: "apply_patch", Policy: AdvancedCustomResponsesToolPolicyFlatten},
+							{ToolType: "shell_command", Policy: AdvancedCustomResponsesToolPolicyFlatten},
+						},
+					}},
+				},
+			},
+		},
+	}
+	require.NoError(t, flattenNativeCodingTools.Validate())
+
 	flattenUnknown := &AdvancedCustomConfig{
 		Routes: []AdvancedCustomRoute{
 			{
@@ -136,6 +156,30 @@ func TestAdvancedCustomValidateResponsesToolPolicies(t *testing.T) {
 		},
 	}
 	require.ErrorContains(t, flattenUnknown.Validate(), "responses_tools.unknown is invalid")
+}
+
+func TestAdvancedCustomValidateToolSearchFlattenOnlyForResponsesToChat(t *testing.T) {
+	valid := &AdvancedCustomConfig{Routes: []AdvancedCustomRoute{{
+		IncomingPath: "/v1/responses",
+		UpstreamPath: "/v1/chat/completions",
+		Converter:    AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions,
+		ConverterOptions: &AdvancedCustomConverterOptions{
+			ResponsesToolModelOverrides: []AdvancedCustomResponsesToolModelOverride{{
+				Models: []string{"glm-5.2"},
+				ResponsesTools: &AdvancedCustomResponsesToolsOptions{
+					ToolSearch: AdvancedCustomResponsesToolPolicyFlatten,
+				},
+			}},
+		},
+	}}}
+	require.NoError(t, valid.Validate())
+
+	invalid := *valid
+	invalidRoute := valid.Routes[0]
+	invalidRoute.Converter = AdvancedCustomConverterNone
+	invalidRoute.UpstreamPath = "/v1/responses"
+	invalid.Routes = []AdvancedCustomRoute{invalidRoute}
+	require.ErrorContains(t, invalid.Validate(), "responses_tools.tool_search")
 }
 
 func TestAdvancedCustomValidateResponsesToolPoliciesForPassthrough(t *testing.T) {
@@ -171,6 +215,24 @@ func TestAdvancedCustomValidateResponsesToolPoliciesForPassthrough(t *testing.T)
 		},
 	}
 	require.ErrorContains(t, flatten.Validate(), "namespace flatten is not supported by converter none")
+
+	flattenModelToolName := &AdvancedCustomConfig{
+		Routes: []AdvancedCustomRoute{{
+			IncomingPath: "/v1/responses",
+			UpstreamPath: "/v1/responses",
+			Converter:    AdvancedCustomConverterNone,
+			ConverterOptions: &AdvancedCustomConverterOptions{
+				ResponsesToolModelOverrides: []AdvancedCustomResponsesToolModelOverride{{
+					Models: []string{"glm-5.2"},
+					ToolNames: []AdvancedCustomResponsesToolNamePolicy{{
+						ToolType: "shell_command",
+						Policy:   AdvancedCustomResponsesToolPolicyFlatten,
+					}},
+				}},
+			},
+		}},
+	}
+	require.ErrorContains(t, flattenModelToolName.Validate(), "responses_tools.tool_name is invalid")
 
 	dropFields := &AdvancedCustomConfig{
 		Routes: []AdvancedCustomRoute{
@@ -216,6 +278,84 @@ func TestAdvancedCustomValidateResponsesToolModelOverrides(t *testing.T) {
 	}
 	require.NoError(t, valid.Validate())
 
+	unnamedNativeType := &AdvancedCustomConfig{
+		Routes: []AdvancedCustomRoute{{
+			IncomingPath: "/v1/responses",
+			UpstreamPath: "/v1/responses",
+			Converter:    AdvancedCustomConverterNone,
+			ConverterOptions: &AdvancedCustomConverterOptions{
+				ResponsesToolModelOverrides: []AdvancedCustomResponsesToolModelOverride{{
+					Models: []string{"glm-5.2"},
+					ToolNames: []AdvancedCustomResponsesToolNamePolicy{
+						{
+							ToolType: "shell_command",
+							Policy:   AdvancedCustomResponsesToolPolicyDrop,
+						},
+						{
+							ToolType: "apply_patch",
+							Policy:   AdvancedCustomResponsesToolPolicyDrop,
+						},
+					},
+				}},
+			},
+		}},
+	}
+	require.NoError(t, unnamedNativeType.Validate())
+
+	knownTypeWithoutName := &AdvancedCustomConfig{
+		Routes: []AdvancedCustomRoute{{
+			IncomingPath: "/v1/responses",
+			UpstreamPath: "/v1/responses",
+			Converter:    AdvancedCustomConverterNone,
+			ConverterOptions: &AdvancedCustomConverterOptions{
+				ResponsesToolModelOverrides: []AdvancedCustomResponsesToolModelOverride{{
+					Models: []string{"glm-5.2"},
+					ToolNames: []AdvancedCustomResponsesToolNamePolicy{{
+						ToolType: "web_search",
+						Policy:   AdvancedCustomResponsesToolPolicyDrop,
+					}},
+				}},
+			},
+		}},
+	}
+	require.ErrorContains(t, knownTypeWithoutName.Validate(), "requires tool_type, tool_name, and policy")
+
+	duplicateUnnamedNativeType := &AdvancedCustomConfig{
+		Routes: []AdvancedCustomRoute{{
+			IncomingPath: "/v1/responses",
+			UpstreamPath: "/v1/responses",
+			Converter:    AdvancedCustomConverterNone,
+			ConverterOptions: &AdvancedCustomConverterOptions{
+				ResponsesToolModelOverrides: []AdvancedCustomResponsesToolModelOverride{{
+					Models: []string{"glm-5.2"},
+					ToolNames: []AdvancedCustomResponsesToolNamePolicy{
+						{ToolType: "shell_command", Policy: AdvancedCustomResponsesToolPolicyDrop},
+						{ToolType: "shell_command", Policy: AdvancedCustomResponsesToolPolicyReject},
+					},
+				}},
+			},
+		}},
+	}
+	require.ErrorContains(t, duplicateUnnamedNativeType.Validate(), "duplicate responses tool name policy")
+
+	duplicateKnownAlias := &AdvancedCustomConfig{
+		Routes: []AdvancedCustomRoute{{
+			IncomingPath: "/v1/responses",
+			UpstreamPath: "/v1/responses",
+			Converter:    AdvancedCustomConverterNone,
+			ConverterOptions: &AdvancedCustomConverterOptions{
+				ResponsesToolModelOverrides: []AdvancedCustomResponsesToolModelOverride{{
+					Models: []string{"glm-5.2"},
+					ToolNames: []AdvancedCustomResponsesToolNamePolicy{
+						{ToolType: "image_gen", ToolName: "imagegen", Policy: AdvancedCustomResponsesToolPolicyDrop},
+						{ToolType: "image_generation", ToolName: "imagegen", Policy: AdvancedCustomResponsesToolPolicyReject},
+					},
+				}},
+			},
+		}},
+	}
+	require.ErrorContains(t, duplicateKnownAlias.Validate(), "duplicate responses tool name policy")
+
 	duplicateModel := valid
 	duplicateModel.Routes[0].ConverterOptions.ResponsesToolModelOverrides = append(
 		duplicateModel.Routes[0].ConverterOptions.ResponsesToolModelOverrides,
@@ -237,6 +377,28 @@ func TestAdvancedCustomValidateResponsesToolModelOverrides(t *testing.T) {
 		},
 	}
 	require.ErrorContains(t, functionPolicy.Validate(), "function tools are always preserved")
+}
+
+func TestResolveAdvancedCustomResponsesToolPolicyUsesExactUnnamedNativeTypePerModel(t *testing.T) {
+	options := &AdvancedCustomConverterOptions{
+		ResponsesToolModelOverrides: []AdvancedCustomResponsesToolModelOverride{{
+			Models: []string{"glm-5.2"},
+			ToolNames: []AdvancedCustomResponsesToolNamePolicy{{
+				ToolType: "shell_command",
+				Policy:   AdvancedCustomResponsesToolPolicyDrop,
+			}},
+		}},
+	}
+
+	shellPolicy := ResolveAdvancedCustomResponsesToolPolicy(options, "glm-5.2", "glm-5.2", "shell_command", "")
+	require.Equal(t, AdvancedCustomResponsesToolPolicyDrop, shellPolicy.Policy)
+	require.Equal(t, AdvancedCustomResponsesToolPolicySourceModelToolName, shellPolicy.Source)
+
+	applyPatchPolicy := ResolveAdvancedCustomResponsesToolPolicy(options, "glm-5.2", "glm-5.2", "apply_patch", "")
+	require.Equal(t, AdvancedCustomResponsesToolPolicyPreserve, applyPatchPolicy.Policy)
+
+	otherModelPolicy := ResolveAdvancedCustomResponsesToolPolicy(options, "glm-5.3", "glm-5.3", "shell_command", "")
+	require.Equal(t, AdvancedCustomResponsesToolPolicyPreserve, otherModelPolicy.Policy)
 }
 
 func TestResolveAdvancedCustomResponsesToolPolicy(t *testing.T) {
@@ -553,4 +715,91 @@ func TestResolveAdvancedCustomResponsesWebSearchParametersPrefersModelOverride(t
 	require.NotNil(t, resolved)
 	require.NotNil(t, resolved.Defaults.Enable)
 	assert.False(t, *resolved.Defaults.Enable)
+}
+
+func TestResolveAdvancedCustomResponsesToolContinuationPrefersExactModelOverride(t *testing.T) {
+	options := &AdvancedCustomConverterOptions{
+		ResponsesToolContinuation: &AdvancedCustomResponsesToolContinuation{
+			WhenOnlyToolOutput: AdvancedCustomResponsesToolContinuationAppendUser,
+			Text:               "route continuation",
+		},
+		ResponsesToolModelOverrides: []AdvancedCustomResponsesToolModelOverride{{
+			Models: []string{"glm-5.2"},
+			ResponsesToolContinuation: &AdvancedCustomResponsesToolContinuation{
+				WhenOnlyToolOutput: AdvancedCustomResponsesToolContinuationAppendUser,
+				Text:               "model continuation",
+			},
+		}},
+	}
+
+	resolved := ResolveAdvancedCustomResponsesToolContinuation(options, "glm-5.2", "provider-model")
+	require.NotNil(t, resolved)
+	assert.Equal(t, "model continuation", resolved.Text)
+
+	resolved = ResolveAdvancedCustomResponsesToolContinuation(options, "other-model", "provider-other")
+	require.NotNil(t, resolved)
+	assert.Equal(t, "route continuation", resolved.Text)
+}
+
+func TestAdvancedCustomValidateResponsesToolContinuation(t *testing.T) {
+	for _, tt := range []struct {
+		name         string
+		continuation *AdvancedCustomResponsesToolContinuation
+		wantError    string
+	}{
+		{
+			name: "invalid mode",
+			continuation: &AdvancedCustomResponsesToolContinuation{
+				WhenOnlyToolOutput: "append_anything",
+				Text:               "continue",
+			},
+			wantError: "when_only_tool_output is invalid",
+		},
+		{
+			name: "empty text",
+			continuation: &AdvancedCustomResponsesToolContinuation{
+				WhenOnlyToolOutput: AdvancedCustomResponsesToolContinuationAppendUser,
+			},
+			wantError: "text is required",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			config := &AdvancedCustomConfig{Routes: []AdvancedCustomRoute{{
+				IncomingPath: "/v1/responses",
+				UpstreamPath: "/v1/chat/completions",
+				Converter:    AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions,
+				ConverterOptions: &AdvancedCustomConverterOptions{
+					ResponsesToolContinuation: tt.continuation,
+				},
+			}}}
+			require.ErrorContains(t, config.Validate(), tt.wantError)
+		})
+	}
+}
+
+func TestResolveAdvancedCustomResponsesToolStateReplayPrefersExactModelOverride(t *testing.T) {
+	enabled := &AdvancedCustomResponsesToolStateReplay{Enabled: true, TTLSeconds: 120}
+	options := &AdvancedCustomConverterOptions{
+		ResponsesToolStateReplay: &AdvancedCustomResponsesToolStateReplay{Enabled: true, TTLSeconds: 60},
+		ResponsesToolModelOverrides: []AdvancedCustomResponsesToolModelOverride{{
+			Models:                   []string{"glm-5.2"},
+			ResponsesToolStateReplay: enabled,
+		}},
+	}
+
+	assert.Same(t, enabled, ResolveAdvancedCustomResponsesToolStateReplay(options, "glm-5.2", "provider-model"))
+	assert.Equal(t, 60, ResolveAdvancedCustomResponsesToolStateReplay(options, "other", "provider-model").TTLSeconds)
+	assert.Nil(t, ResolveAdvancedCustomResponsesToolStateReplay(nil, "glm-5.2", "provider-model"))
+}
+
+func TestAdvancedCustomValidateResponsesToolStateReplay(t *testing.T) {
+	config := &AdvancedCustomConfig{Routes: []AdvancedCustomRoute{{
+		IncomingPath: "/v1/responses",
+		UpstreamPath: "/v1/chat/completions",
+		Converter:    AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions,
+		ConverterOptions: &AdvancedCustomConverterOptions{
+			ResponsesToolStateReplay: &AdvancedCustomResponsesToolStateReplay{Enabled: true},
+		},
+	}}}
+	require.ErrorContains(t, config.Validate(), "responses_tool_state_replay.ttl_seconds must be positive when enabled")
 }

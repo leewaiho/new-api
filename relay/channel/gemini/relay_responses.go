@@ -153,7 +153,11 @@ func GeminiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, r
 	if usage != nil {
 		state.Usage = relayconvert.UsageFromChatUsage(usage)
 	}
-	for _, event := range relayconvert.FinalizeChatCompletionsStreamToResponses(state) {
+	finalEvents, finalizeErr := relayconvert.FinalizeChatCompletionsStreamToResponses(state)
+	if finalizeErr != nil {
+		return nil, types.NewOpenAIError(finalizeErr, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+	}
+	for _, event := range finalEvents {
 		if !sendEvent(event) {
 			return nil, streamErr
 		}

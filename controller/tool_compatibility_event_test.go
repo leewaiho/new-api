@@ -74,6 +74,27 @@ func TestApplyModelToolCompatibilitySuggestionRejectsFunctionTool(t *testing.T) 
 	require.ErrorContains(t, err, "function tools cannot be disabled")
 }
 
+func TestApplyModelToolCompatibilitySuggestionUsesUnnamedNativeTypeWithoutUnknownPolicy(t *testing.T) {
+	options := &dto.AdvancedCustomConverterOptions{}
+	event := &model.ToolCompatibilityEvent{
+		ToolType:        "shell_command",
+		SuggestedPolicy: dto.AdvancedCustomResponsesToolPolicyDrop,
+	}
+	require.NoError(t, applyModelToolCompatibilitySuggestion(options, "glm-5.2", event))
+	require.Len(t, options.ResponsesToolModelOverrides, 1)
+	override := options.ResponsesToolModelOverrides[0]
+	require.Equal(t, []string{"glm-5.2"}, override.Models)
+	require.Nil(t, override.ResponsesTools)
+	require.Equal(t, []dto.AdvancedCustomResponsesToolNamePolicy{{
+		ToolType: "shell_command",
+		ToolName: "",
+		Policy:   dto.AdvancedCustomResponsesToolPolicyDrop,
+	}}, override.ToolNames)
+
+	removeModelToolCompatibilityOverride(options, "glm-5.2", "shell_command", "")
+	require.Empty(t, options.ResponsesToolModelOverrides)
+}
+
 func TestApplyModelToolCompatibilitySuggestionRejectsRouteConflictPolicy(t *testing.T) {
 	options := &dto.AdvancedCustomConverterOptions{}
 	err := applyModelToolCompatibilitySuggestion(options, "glm-5.2", &model.ToolCompatibilityEvent{
@@ -187,6 +208,49 @@ func TestApplyToolCompatibilitySuggestionToSelectedModelReturnsEffectivePolicy(t
 	require.Len(t, route.ConverterOptions.ResponsesToolModelOverrides, 1)
 	require.Equal(t, []string{"glm-5.3"}, route.ConverterOptions.ResponsesToolModelOverrides[0].Models)
 	require.Equal(t, dto.AdvancedCustomResponsesToolPolicyDrop, route.ConverterOptions.ResponsesToolModelOverrides[0].ResponsesTools.ImageGeneration)
+}
+
+func TestApplyAndRestoreToolCompatibilitySuggestionUsesUnnamedNativeType(t *testing.T) {
+	withToolCompatibilityControllerDB(t)
+	channel := createToolCompatibilityChannel(t, &dto.AdvancedCustomConverterOptions{})
+	event := createToolCompatibilityEvent(t, channel.Id, model.ToolCompatibilityEventTypeUpstreamUnsupported, "shell_command", "", dto.AdvancedCustomResponsesToolPolicyDrop)
+
+	response := runToolCompatibilityMutation(t, ApplyToolCompatibilityEventSuggestion, event.Id, `{}`)
+	require.True(t, response.Success, response.Message)
+	require.Equal(t, dto.AdvancedCustomResponsesToolPolicyDrop, response.Data.EffectivePolicy)
+	require.Equal(t, dto.AdvancedCustomResponsesToolPolicySourceModelToolName, response.Data.PolicySource)
+	route := loadToolCompatibilityRoute(t, channel.Id)
+	require.Len(t, route.ConverterOptions.ResponsesToolModelOverrides, 1)
+	override := route.ConverterOptions.ResponsesToolModelOverrides[0]
+	require.Nil(t, override.ResponsesTools)
+	require.Equal(t, []dto.AdvancedCustomResponsesToolNamePolicy{{
+		ToolType: "shell_command",
+		Policy:   dto.AdvancedCustomResponsesToolPolicyDrop,
+	}}, override.ToolNames)
+
+	response = runToolCompatibilityMutation(t, RestoreToolCompatibilityEventModelDefault, event.Id, `{}`)
+	require.True(t, response.Success, response.Message)
+	require.Equal(t, dto.AdvancedCustomResponsesToolPolicyPreserve, response.Data.EffectivePolicy)
+	require.Empty(t, loadToolCompatibilityRoute(t, channel.Id).ConverterOptions.ResponsesToolModelOverrides)
+}
+
+func TestApplyToolCompatibilitySuggestionForSystemDefaultComputerRejectUsesModelToolNameRule(t *testing.T) {
+	withToolCompatibilityControllerDB(t)
+	channel := createToolCompatibilityChannel(t, &dto.AdvancedCustomConverterOptions{})
+	event := createToolCompatibilityEvent(t, channel.Id, model.ToolCompatibilityEventTypePolicyReject, "computer", "", dto.AdvancedCustomResponsesToolPolicyDrop)
+
+	response := runToolCompatibilityMutation(t, ApplyToolCompatibilityEventSuggestion, event.Id, `{}`)
+	require.True(t, response.Success, response.Message)
+	require.Equal(t, dto.AdvancedCustomResponsesToolPolicyDrop, response.Data.EffectivePolicy)
+	require.Equal(t, dto.AdvancedCustomResponsesToolPolicySourceModelToolName, response.Data.PolicySource)
+
+	route := loadToolCompatibilityRoute(t, channel.Id)
+	require.Len(t, route.ConverterOptions.ResponsesToolModelOverrides, 1)
+	require.Equal(t, []dto.AdvancedCustomResponsesToolNamePolicy{{
+		ToolType: "computer",
+		ToolName: "",
+		Policy:   dto.AdvancedCustomResponsesToolPolicyDrop,
+	}}, route.ConverterOptions.ResponsesToolModelOverrides[0].ToolNames)
 }
 
 func TestApplyToolCompatibilitySuggestionRejectsStaleModelWithoutChangingStatus(t *testing.T) {

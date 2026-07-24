@@ -74,6 +74,34 @@ func normalizeAdvancedCustomResponsesHostedCapability(capability string) string 
 	}
 }
 
+func ResolveAdvancedCustomResponsesToolContinuation(
+	options *AdvancedCustomConverterOptions,
+	requestedModel string,
+	upstreamModel string,
+) *AdvancedCustomResponsesToolContinuation {
+	if options == nil {
+		return nil
+	}
+	if override, _, ok := matchAdvancedCustomResponsesToolModelOverride(options, requestedModel, upstreamModel); ok && override.ResponsesToolContinuation != nil {
+		return override.ResponsesToolContinuation
+	}
+	return options.ResponsesToolContinuation
+}
+
+func ResolveAdvancedCustomResponsesToolStateReplay(
+	options *AdvancedCustomConverterOptions,
+	requestedModel string,
+	upstreamModel string,
+) *AdvancedCustomResponsesToolStateReplay {
+	if options == nil {
+		return nil
+	}
+	if override, _, ok := matchAdvancedCustomResponsesToolModelOverride(options, requestedModel, upstreamModel); ok && override.ResponsesToolStateReplay != nil {
+		return override.ResponsesToolStateReplay
+	}
+	return options.ResponsesToolStateReplay
+}
+
 func ResolveAdvancedCustomResponsesWebSearchParameters(
 	options *AdvancedCustomConverterOptions,
 	requestedModel string,
@@ -137,6 +165,13 @@ func ResolveAdvancedCustomResponsesToolPolicy(
 			Source: AdvancedCustomResponsesToolPolicySourceRoute,
 		}
 	}
+	switch strings.TrimSpace(toolType) {
+	case "computer", "computer_use", "computer_use_preview":
+		return AdvancedCustomResponsesToolPolicyResolution{
+			Policy: AdvancedCustomResponsesToolPolicyReject,
+			Source: AdvancedCustomResponsesToolPolicySourceSystemDefault,
+		}
+	}
 	return AdvancedCustomResponsesToolPolicyResolution{
 		Policy: AdvancedCustomResponsesToolPolicyPreserve,
 		Source: AdvancedCustomResponsesToolPolicySourceSystemDefault,
@@ -188,11 +223,14 @@ func findAdvancedCustomResponsesToolModelOverride(options *AdvancedCustomConvert
 }
 
 func advancedCustomResponsesToolNamePolicyMatches(policy AdvancedCustomResponsesToolNamePolicy, toolType string, toolName string) bool {
+	configuredType := strings.TrimSpace(policy.ToolType)
+	actualType := strings.TrimSpace(toolType)
+	if strings.TrimSpace(policy.ToolName) == "" {
+		return IsAdvancedCustomUnnamedNativeResponsesToolType(configuredType) && configuredType == actualType
+	}
 	if strings.TrimSpace(policy.ToolName) != strings.TrimSpace(toolName) {
 		return false
 	}
-	configuredType := strings.TrimSpace(policy.ToolType)
-	actualType := strings.TrimSpace(toolType)
 	if configuredType == actualType {
 		return true
 	}
@@ -224,6 +262,11 @@ func normalizeAdvancedCustomResponsesToolType(toolType string) string {
 	default:
 		return "unknown"
 	}
+}
+
+func IsAdvancedCustomUnnamedNativeResponsesToolType(toolType string) bool {
+	toolType = strings.TrimSpace(toolType)
+	return toolType != "" && toolType != "unknown" && normalizeAdvancedCustomResponsesToolType(toolType) == "unknown"
 }
 
 func advancedCustomResponsesToolPolicyForType(options *AdvancedCustomResponsesToolsOptions, toolType string) (string, bool) {
@@ -315,6 +358,29 @@ func validateAdvancedCustomResponsesImplicitHostedConflictPolicy(index int, opti
 	return nil
 }
 
+func validateAdvancedCustomResponsesToolStateReplay(index int, field string, replay *AdvancedCustomResponsesToolStateReplay) error {
+	if replay == nil || !replay.Enabled {
+		return nil
+	}
+	if replay.TTLSeconds <= 0 {
+		return fmt.Errorf("advanced_custom.advanced_routes[%d].%s.ttl_seconds must be positive when enabled", index, field)
+	}
+	return nil
+}
+
+func validateAdvancedCustomResponsesToolContinuation(index int, field string, continuation *AdvancedCustomResponsesToolContinuation) error {
+	if continuation == nil {
+		return nil
+	}
+	if strings.TrimSpace(continuation.WhenOnlyToolOutput) != AdvancedCustomResponsesToolContinuationAppendUser {
+		return fmt.Errorf("advanced_custom.advanced_routes[%d].%s.when_only_tool_output is invalid: %s", index, field, continuation.WhenOnlyToolOutput)
+	}
+	if strings.TrimSpace(continuation.Text) == "" {
+		return fmt.Errorf("advanced_custom.advanced_routes[%d].%s.text is required", index, field)
+	}
+	return nil
+}
+
 func validateAdvancedCustomResponsesToolParameters(index int, field string, parameters *AdvancedCustomResponsesToolParameters) error {
 	if parameters == nil {
 		return nil
@@ -359,8 +425,8 @@ func validateAdvancedCustomResponsesToolModelOverrides(index int, allowFlatten b
 			seenModels[model] = struct{}{}
 		}
 
-		if override.ResponsesTools == nil && len(override.ToolNames) == 0 && len(override.ResponsesImplicitHostedTools) == 0 && override.ResponsesToolParameters == nil {
-			return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options.responses_tool_model_overrides[%d] requires a tool policy, implicit hosted tool, or tool parameter rule", index, overrideIndex)
+		if override.ResponsesTools == nil && len(override.ToolNames) == 0 && len(override.ResponsesImplicitHostedTools) == 0 && override.ResponsesToolParameters == nil && override.ResponsesToolContinuation == nil {
+			return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options.responses_tool_model_overrides[%d] requires a tool policy, implicit hosted tool, tool parameter rule, or tool continuation rule", index, overrideIndex)
 		}
 		if err := validateAdvancedCustomResponsesImplicitHostedTools(
 			index,
@@ -379,7 +445,7 @@ func validateAdvancedCustomResponsesToolModelOverrides(index int, allowFlatten b
 				{name: "namespace", toolType: "namespace", policy: override.ResponsesTools.Namespace, allowFlatten: allowFlatten},
 				{name: "custom", toolType: "custom", policy: override.ResponsesTools.Custom},
 				{name: "web_search", toolType: "web_search", policy: override.ResponsesTools.WebSearch},
-				{name: "tool_search", toolType: "tool_search", policy: override.ResponsesTools.ToolSearch},
+				{name: "tool_search", toolType: "tool_search", policy: override.ResponsesTools.ToolSearch, allowFlatten: allowFlatten},
 				{name: "image_generation", toolType: "image_generation", policy: override.ResponsesTools.ImageGeneration},
 				{name: "unknown", toolType: "unknown", policy: override.ResponsesTools.Unknown},
 			}
@@ -397,8 +463,8 @@ func validateAdvancedCustomResponsesToolModelOverrides(index int, allowFlatten b
 					return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options.responses_tool_model_overrides[%d].responses_tools.%s must differ from the route policy", index, overrideIndex, field.name)
 				}
 			}
-			if !configured && len(override.ToolNames) == 0 && len(override.ResponsesImplicitHostedTools) == 0 && override.ResponsesToolParameters == nil {
-				return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options.responses_tool_model_overrides[%d] requires a non-empty tool policy, implicit hosted tool, or tool parameter rule", index, overrideIndex)
+			if !configured && len(override.ToolNames) == 0 && len(override.ResponsesImplicitHostedTools) == 0 && override.ResponsesToolParameters == nil && override.ResponsesToolContinuation == nil {
+				return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options.responses_tool_model_overrides[%d] requires a non-empty tool policy, implicit hosted tool, tool parameter rule, or tool continuation rule", index, overrideIndex)
 			}
 		}
 
@@ -409,25 +475,40 @@ func validateAdvancedCustomResponsesToolModelOverrides(index int, allowFlatten b
 		); err != nil {
 			return err
 		}
+		if err := validateAdvancedCustomResponsesToolContinuation(
+			index,
+			fmt.Sprintf("converter_options.responses_tool_model_overrides[%d].responses_tool_continuation", overrideIndex),
+			override.ResponsesToolContinuation,
+		); err != nil {
+			return err
+		}
+		if err := validateAdvancedCustomResponsesToolStateReplay(
+			index,
+			fmt.Sprintf("converter_options.responses_tool_model_overrides[%d].responses_tool_state_replay", overrideIndex),
+			override.ResponsesToolStateReplay,
+		); err != nil {
+			return err
+		}
 
 		seenToolNames := make(map[string]struct{})
 		for nameIndex, namePolicy := range override.ToolNames {
 			toolType := strings.TrimSpace(namePolicy.ToolType)
 			toolName := strings.TrimSpace(namePolicy.ToolName)
 			policy := strings.TrimSpace(namePolicy.Policy)
-			if toolType == "" || toolName == "" || policy == "" {
+			if toolType == "" || policy == "" || (toolName == "" && !IsAdvancedCustomUnnamedNativeResponsesToolType(toolType)) {
 				return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options.responses_tool_model_overrides[%d].responses_tool_names[%d] requires tool_type, tool_name, and policy", index, overrideIndex, nameIndex)
 			}
 			if normalizeAdvancedCustomResponsesToolType(toolType) == "function" {
 				return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options function tools are always preserved", index)
 			}
-			if policy == AdvancedCustomResponsesToolPolicyFlatten {
-				return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options.responses_tool_names[%d].policy does not support flatten", index, nameIndex)
-			}
-			if err := validateAdvancedCustomResponsesToolPolicy(index, "tool_name", policy, false); err != nil {
+			if err := validateAdvancedCustomResponsesToolPolicy(index, "tool_name", policy, allowFlatten); err != nil {
 				return err
 			}
-			key := normalizeAdvancedCustomResponsesToolType(toolType) + "\x00" + toolName
+			keyToolType := normalizeAdvancedCustomResponsesToolType(toolType)
+			if keyToolType == "unknown" && toolType != "unknown" {
+				keyToolType = toolType
+			}
+			key := keyToolType + "\x00" + toolName
 			if _, exists := seenToolNames[key]; exists {
 				return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options duplicate responses tool name policy: %s/%s", index, toolType, toolName)
 			}

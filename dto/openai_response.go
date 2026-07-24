@@ -340,8 +340,10 @@ type IncompleteDetails struct {
 // ResponsesToolNameMapping records how a flattened Chat Completions function
 // name maps back to the original Responses namespace tool identity.
 type ResponsesToolNameMapping struct {
-	Namespace string
-	Name      string
+	Namespace      string
+	Name           string
+	NativeToolType string
+	ArgumentsCodec string
 }
 
 type ResponsesOutput struct {
@@ -355,7 +357,9 @@ type ResponsesOutput struct {
 	CallId    string                   `json:"call_id,omitempty"`
 	Name      string                   `json:"name,omitempty"`
 	Namespace string                   `json:"namespace,omitempty"`
+	Execution string                   `json:"execution,omitempty"`
 	Arguments json.RawMessage          `json:"arguments,omitempty"`
+	Input     json.RawMessage          `json:"input,omitempty"`
 }
 
 // ArgumentsString returns function call arguments in the string form expected by Chat Completions.

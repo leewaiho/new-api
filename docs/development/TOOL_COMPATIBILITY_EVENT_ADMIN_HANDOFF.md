@@ -71,12 +71,16 @@ release/prod: 043e96e2 merge: model-aware Responses tool policies into release/p
 
 ```text
 URL: http://192.168.200.10:3011
+host: 192.168.200.10 (homelab)
+directory: /opt/newapi-test
 image: ghcr.io/leewaiho/new-api:test
 image id: sha256:5fb51a25dfdce847a6d2bce8c5d36d77e23c51eb5ebcd275321ae1cf3559e2fe
 status: running / healthy
 DB: new-api-test-pg
 Redis: new-api-test-redis
 ```
+
+3011 是隔离测试环境，不是本地 WSL。创建、重建或刷新测试基线前，必须在 `/opt/newapi-test` 先启动 test stack，并执行 `./sync-db-from-prod.sh` 将 3010 PostgreSQL 快照恢复至 `new-api-test-pg`；随后执行 `docker compose restart new-api-test`。恢复会覆盖测试数据，之后的 E2E 配置仅允许写入 3011 测试库。
 
 已完成运行时 fake-upstream E2E：默认 Preserve、冲突去重、模型级 image drop、删空 fail-fast、无效 tool_choice fail-fast均通过。临时渠道和 fake upstream 已清理。
 
@@ -674,7 +678,7 @@ parse → visual edit → stringify → parse
 
 只有再次确认该 feature 已允许合入 test 后执行：
 
-1. 使用独立测试数据库，不能连接 3010 生产数据库。
+1. 在 `192.168.200.10` 的 `/opt/newapi-test` 创建或重置 3011，并先用 `./sync-db-from-prod.sh` 从 3010 快照恢复独立测试库。
 2. 部署 3011。
 3. 验证 migration。
 4. 使用测试账号/Token。

@@ -1,9 +1,11 @@
-package openai
+package advancedcustom
 
 import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
@@ -16,7 +18,41 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func OaiChatToResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
+func advancedCustomResponsesToolStateScopeFor(info *relaycommon.RelayInfo, route dto.AdvancedCustomRoute, requestedModel string, upstreamModel string) advancedCustomResponsesToolStateScope {
+	scope := advancedCustomResponsesToolStateScope{
+		Route:          strings.Join([]string{route.IncomingPath, route.UpstreamPath, route.Converter}, "\x1f"),
+		RequestedModel: requestedModel,
+		UpstreamModel:  upstreamModel,
+	}
+	if info != nil {
+		scope.TokenID = info.TokenId
+	}
+	return scope
+}
+
+func (a *Adaptor) cacheResponsesToolState(responseID string, response *dto.OpenAIResponsesResponse) error {
+	if a == nil || a.toolStateReplay == nil || !a.toolStateReplay.Enabled || response == nil {
+		return nil
+	}
+	output := make([]dto.ResponsesOutput, 0, len(response.Output))
+	for _, item := range response.Output {
+		switch item.Type {
+		case "function_call", "custom_tool_call":
+			output = append(output, item)
+		}
+	}
+	if len(output) == 0 {
+		return nil
+	}
+	return defaultAdvancedCustomResponsesToolStateCache.Save(
+		a.toolStateScope,
+		responseID,
+		output,
+		time.Duration(a.toolStateReplay.TTLSeconds)*time.Second,
+	)
+}
+
+func (a *Adaptor) chatToResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
 	if resp == nil || resp.Body == nil {
 		return nil, types.NewOpenAIError(fmt.Errorf("invalid response"), types.ErrorCodeBadResponse, http.StatusInternalServerError)
 	}
@@ -48,17 +84,19 @@ func OaiChatToResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 		usage = service.ResponseText2Usage(c, text, info.UpstreamModelName, info.GetEstimatePromptTokens())
 		responsesResp.Usage = relayconvert.UsageFromChatUsage(usage)
 	}
+	if err := a.cacheResponsesToolState(responseID, responsesResp); err != nil {
+		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+	}
 
 	responseBody, err := common.Marshal(responsesResp)
 	if err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeJsonMarshalFailed, http.StatusInternalServerError)
 	}
-
 	service.IOCopyBytesGracefully(c, resp, responseBody)
 	return usage, nil
 }
 
-func OaiChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
+func (a *Adaptor) chatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
 	if resp == nil || resp.Body == nil {
 		return nil, types.NewOpenAIError(fmt.Errorf("invalid response"), types.ErrorCodeBadResponse, http.StatusInternalServerError)
 	}
@@ -84,7 +122,6 @@ func OaiChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 			sr.Stop(streamErr)
 			return
 		}
-
 		var errorResp dto.OpenAITextResponse
 		if err := common.UnmarshalJsonStr(data, &errorResp); err == nil {
 			if oaiError := errorResp.GetOpenAIError(); oaiError != nil && oaiError.Type != "" {
@@ -93,14 +130,12 @@ func OaiChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 				return
 			}
 		}
-
 		var chunk dto.ChatCompletionsStreamResponse
 		if err := common.UnmarshalJsonStr(data, &chunk); err != nil {
 			logger.LogError(c, "failed to unmarshal chat stream response: "+err.Error())
 			sr.Error(err)
 			return
 		}
-
 		events, err := relayconvert.ChatCompletionsStreamChunkToResponsesEvents(&chunk, state)
 		if err != nil {
 			streamErr = types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
@@ -114,26 +149,27 @@ func OaiChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 			}
 		}
 	})
-
 	if streamErr != nil {
 		return nil, streamErr
 	}
-
 	usage := state.Usage
 	if usage == nil || usage.TotalTokens == 0 {
 		usage = service.ResponseText2Usage(c, state.UsageText(), info.UpstreamModelName, info.GetEstimatePromptTokens())
 		state.Usage = relayconvert.UsageFromChatUsage(usage)
 	}
-
 	finalEvents, err := relayconvert.FinalizeChatCompletionsStreamToResponses(state)
 	if err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
 	for _, event := range finalEvents {
+		if event.Payload.Response != nil {
+			if err := a.cacheResponsesToolState(responseID, event.Payload.Response); err != nil {
+				return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+			}
+		}
 		if !sendEvent(event) {
 			return nil, streamErr
 		}
 	}
-
 	return usage, nil
 }
