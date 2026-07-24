@@ -804,6 +804,61 @@ func TestAdaptorResponsesToChatDoResponseRecordsUnclassifiedEventForStreamingGen
 	assert.Empty(t, events[0].SuggestedPolicy)
 }
 
+func TestAdaptorResponsesToChatDoRequestRecordsUnclassifiedEventForGeneric400(t *testing.T) {
+	previousDB := model.DB
+	db, err := gorm.Open(sqlite.Open("file:advanced_custom_do_request_generic_400?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.ToolCompatibilityEvent{}))
+	model.DB = db
+	t.Cleanup(func() { model.DB = previousDB })
+
+	service.InitHttpClient()
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":{"message":"API 调用参数有误，请检查文档。","code":1210}}`))
+	}))
+	defer upstream.Close()
+
+	adaptor := &Adaptor{}
+	info := advancedCustomRelayInfo(&dto.AdvancedCustomConfig{Routes: []dto.AdvancedCustomRoute{{
+		IncomingPath: "/v1/responses",
+		UpstreamPath: upstream.URL + "/v1/chat/completions",
+		Converter:    dto.AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions,
+	}}})
+	info.ChannelMeta.ChannelId = 97
+	info.ChannelId = 97
+	info.RelayMode = relayconstant.RelayModeResponses
+	info.RequestURLPath = "/v1/responses"
+	c := advancedCustomGinContext("/v1/responses")
+
+	converted, err := adaptor.ConvertOpenAIResponsesRequest(c, info, dto.OpenAIResponsesRequest{
+		Model: "glm-5.2",
+		Input: mustAdvancedCustomRawMessage(t, "run a command"),
+		Tools: mustAdvancedCustomRawMessage(t, []map[string]any{{
+			"type": "shell_command",
+		}}),
+	})
+	require.NoError(t, err)
+	body, err := common.Marshal(converted)
+	require.NoError(t, err)
+	info.UpstreamRequestBodySize = int64(len(body))
+
+	response, err := adaptor.DoRequest(c, info, bytes.NewReader(body))
+	require.NoError(t, err)
+	resp, ok := response.(*http.Response)
+	require.True(t, ok)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+
+	var events []model.ToolCompatibilityEvent
+	require.NoError(t, db.Find(&events).Error)
+	require.Len(t, events, 1)
+	assert.Equal(t, model.ToolCompatibilityEventTypeUnclassified, events[0].EventType)
+	assert.Empty(t, events[0].ToolType)
+	assert.Empty(t, events[0].SuggestedPolicy)
+}
+
 func TestAdaptorResponsesToChatDoResponseRecordsFlattenedToolSearchByOriginalType(t *testing.T) {
 	previousDB := model.DB
 	db, err := gorm.Open(sqlite.Open("file:advanced_custom_tool_search_do_response?mode=memory&cache=shared"), &gorm.Config{})
