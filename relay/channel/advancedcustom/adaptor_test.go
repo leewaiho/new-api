@@ -751,6 +751,59 @@ func TestAdaptorResponsesToChatCompatibilityEventUsesConvertedToolIndex(t *testi
 	require.Equal(t, dto.AdvancedCustomResponsesToolPolicyDrop, events[0].SuggestedPolicy)
 }
 
+func TestAdaptorResponsesToChatDoResponseRecordsUnclassifiedEventForStreamingGeneric400(t *testing.T) {
+	previousDB := model.DB
+	db, err := gorm.Open(sqlite.Open("file:advanced_custom_streaming_generic_400?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.ToolCompatibilityEvent{}))
+	model.DB = db
+	t.Cleanup(func() { model.DB = previousDB })
+	oldStreamingTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 30
+	t.Cleanup(func() { constant.StreamingTimeout = oldStreamingTimeout })
+
+	adaptor := &Adaptor{}
+	info := advancedCustomRelayInfo(&dto.AdvancedCustomConfig{Routes: []dto.AdvancedCustomRoute{{
+		IncomingPath: "/v1/responses",
+		UpstreamPath: "/v1/chat/completions",
+		Converter:    dto.AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions,
+	}}})
+	info.ChannelMeta.ChannelId = 97
+	info.ChannelId = 97
+	info.RelayMode = relayconstant.RelayModeResponses
+	info.RequestURLPath = "/v1/responses"
+	info.IsStream = true
+	stream := true
+
+	_, err = adaptor.ConvertOpenAIResponsesRequest(advancedCustomGinContext("/v1/responses"), info, dto.OpenAIResponsesRequest{
+		Model:  "glm-5.2",
+		Stream: &stream,
+		Input:  mustAdvancedCustomRawMessage(t, "run a command"),
+		Tools: mustAdvancedCustomRawMessage(t, []map[string]any{{
+			"type": "shell_command",
+		}}),
+	})
+	require.NoError(t, err)
+	require.Len(t, adaptor.compatibilityTools, 1)
+	assert.Equal(t, "shell_command", adaptor.compatibilityTools[0].ToolType)
+
+	response := &http.Response{
+		StatusCode: http.StatusBadRequest,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"API 调用参数有误，请检查文档。","code":1210}}`)),
+	}
+	_, responseErr := adaptor.DoResponse(advancedCustomGinContext("/v1/responses"), response, info)
+	require.NotNil(t, responseErr)
+	require.GreaterOrEqual(t, responseErr.StatusCode, http.StatusBadRequest)
+
+	var events []model.ToolCompatibilityEvent
+	require.NoError(t, db.Find(&events).Error)
+	require.Len(t, events, 1)
+	assert.Equal(t, model.ToolCompatibilityEventTypeUnclassified, events[0].EventType)
+	assert.Empty(t, events[0].ToolType)
+	assert.Empty(t, events[0].SuggestedPolicy)
+}
+
 func TestAdaptorResponsesToChatDoResponseRecordsFlattenedToolSearchByOriginalType(t *testing.T) {
 	previousDB := model.DB
 	db, err := gorm.Open(sqlite.Open("file:advanced_custom_tool_search_do_response?mode=memory&cache=shared"), &gorm.Config{})

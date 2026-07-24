@@ -325,7 +325,7 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 			usage, err = openai.OaiResponsesToChatHandler(c, info, resp)
 		}
 	case dto.AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions:
-		if info.IsStream {
+		if info.IsStream && resp != nil && resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
 			usage, err = a.chatToResponsesStreamHandler(c, info, resp)
 		} else {
 			usage, err = a.chatToResponsesHandler(c, info, resp)
