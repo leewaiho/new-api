@@ -158,6 +158,62 @@ func TestAdvancedCustomValidateResponsesToolPolicies(t *testing.T) {
 	require.ErrorContains(t, flattenUnknown.Validate(), "responses_tools.unknown is invalid")
 }
 
+func TestAdvancedCustomValidateCustomFlattenOnlyForResponsesToChat(t *testing.T) {
+	routePolicy := &AdvancedCustomConfig{Routes: []AdvancedCustomRoute{{
+		IncomingPath: "/v1/responses",
+		UpstreamPath: "/v1/chat/completions",
+		Converter:    AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions,
+		ConverterOptions: &AdvancedCustomConverterOptions{
+			ResponsesTools: &AdvancedCustomResponsesToolsOptions{
+				Custom: AdvancedCustomResponsesToolPolicyFlatten,
+			},
+		},
+	}}}
+	require.NoError(t, routePolicy.Validate())
+
+	modelOverride := &AdvancedCustomConfig{Routes: []AdvancedCustomRoute{{
+		IncomingPath: "/v1/responses",
+		UpstreamPath: "/v1/chat/completions",
+		Converter:    AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions,
+		ConverterOptions: &AdvancedCustomConverterOptions{
+			ResponsesToolModelOverrides: []AdvancedCustomResponsesToolModelOverride{{
+				Models: []string{"glm-5.2"},
+				ResponsesTools: &AdvancedCustomResponsesToolsOptions{
+					Custom: AdvancedCustomResponsesToolPolicyFlatten,
+				},
+			}},
+		},
+	}}}
+	require.NoError(t, modelOverride.Validate())
+
+	nativeForwarding := &AdvancedCustomConfig{Routes: []AdvancedCustomRoute{{
+		IncomingPath: "/v1/responses",
+		UpstreamPath: "/v1/responses",
+		Converter:    AdvancedCustomConverterNone,
+		ConverterOptions: &AdvancedCustomConverterOptions{
+			ResponsesTools: &AdvancedCustomResponsesToolsOptions{
+				Custom: AdvancedCustomResponsesToolPolicyFlatten,
+			},
+		},
+	}}}
+	require.ErrorContains(t, nativeForwarding.Validate(), "responses_tools.custom is invalid")
+
+	nativeModelOverride := &AdvancedCustomConfig{Routes: []AdvancedCustomRoute{{
+		IncomingPath: "/v1/responses",
+		UpstreamPath: "/v1/responses",
+		Converter:    AdvancedCustomConverterNone,
+		ConverterOptions: &AdvancedCustomConverterOptions{
+			ResponsesToolModelOverrides: []AdvancedCustomResponsesToolModelOverride{{
+				Models: []string{"glm-5.2"},
+				ResponsesTools: &AdvancedCustomResponsesToolsOptions{
+					Custom: AdvancedCustomResponsesToolPolicyFlatten,
+				},
+			}},
+		},
+	}}}
+	require.ErrorContains(t, nativeModelOverride.Validate(), "responses_tools.custom is invalid")
+}
+
 func TestAdvancedCustomValidateToolSearchFlattenOnlyForResponsesToChat(t *testing.T) {
 	valid := &AdvancedCustomConfig{Routes: []AdvancedCustomRoute{{
 		IncomingPath: "/v1/responses",
