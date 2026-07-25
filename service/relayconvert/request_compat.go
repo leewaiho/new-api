@@ -76,6 +76,10 @@ func ApplyResponsesToolConflictPolicy(rawTools json.RawMessage, policy string) (
 	return oairesponses.ApplyResponsesToolConflictPolicy(rawTools, policy)
 }
 
+func ApplyResponsesToolConflictPolicyWithImplicitHostedTools(rawTools json.RawMessage, policy string, implicitHostedTools []string) (json.RawMessage, []ResponsesToolPolicyDecision, error) {
+	return oairesponses.ApplyResponsesToolConflictPolicyWithImplicitHostedTools(rawTools, policy, implicitHostedTools)
+}
+
 func ValidateResponsesToolChoiceAfterPolicy(rawChoice json.RawMessage, decisions []ResponsesToolPolicyDecision) error {
 	return oairesponses.ValidateResponsesToolChoiceAfterPolicy(rawChoice, decisions)
 }

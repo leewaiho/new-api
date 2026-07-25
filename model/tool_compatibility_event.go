@@ -169,7 +169,7 @@ func RecordToolCompatibilityEvent(input ToolCompatibilityEventInput) (*ToolCompa
 		if !isToolCompatibilityEventRetryableError(err) || attempt == toolCompatibilityEventMaxRecordAttempts-1 {
 			return nil, err
 		}
-		backoff := 5 * time.Millisecond << min(attempt, 4)
+		backoff := 5 * time.Millisecond << minInt(attempt, 4)
 		time.Sleep(backoff)
 	}
 	return nil, errors.New("tool compatibility event retry exhausted")
@@ -227,7 +227,7 @@ func recordToolCompatibilityEventAttempt(input ToolCompatibilityEventInput, even
 	return &result, err
 }
 
-func min(a, b int) int {
+func minInt(a, b int) int {
 	if a < b {
 		return a
 	}

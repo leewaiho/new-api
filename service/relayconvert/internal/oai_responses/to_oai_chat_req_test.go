@@ -463,7 +463,7 @@ func TestResponsesRequestToChatCompletionsRequestDropsResponseFieldsByName(t *te
 		Input:                mustRawMessage(t, "hello"),
 		Metadata:             mustRawMessage(t, map[string]any{"codex": "trace"}),
 		Store:                mustRawMessage(t, true),
-		TopLogProbs:          intPtr(2),
+		TopLogProbs:          common.GetPointer(2),
 		ServiceTier:          "auto",
 		SafetyIdentifier:     mustRawMessage(t, "user-1"),
 		PromptCacheRetention: mustRawMessage(t, "24h"),
