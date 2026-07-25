@@ -1,0 +1,57 @@
+name: Verify selected ref (no publish)
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref to verify
+        required: true
+        default: main
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify ${{ inputs.ref }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout selected ref
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: latest
+
+      - name: Setup Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+
+      - name: Build frontend
+        working-directory: web
+        env:
+          CI: ""
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: |
+          bun install --frozen-lockfile
+          DISABLE_ESLINT_PLUGIN=true \
+            VITE_REACT_APP_VERSION="$(git -C .. describe --tags --always)" \
+            bun run build
+
+      - name: Test Go packages
+        run: timeout 15m go test -timeout 10m ./...
+
+      - name: Build server
+        run: |
+          VERSION="$(git describe --tags --always)"
+          go build -trimpath \
+            -ldflags "-s -w -X new-api/common.Version=${VERSION}" \
+            -o /tmp/new-api .
