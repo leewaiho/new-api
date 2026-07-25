@@ -631,7 +631,10 @@ func advancedCustomPopulateChatWebSearchOptions(options *dto.AdvancedCustomConve
 func advancedCustomUsesGLMChatWebSearchSchema(info *relaycommon.RelayInfo, requestModel string) bool {
 	models := []string{requestModel}
 	if info != nil {
-		models = append(models, info.OriginModelName, info.UpstreamModelName)
+		models = append(models, info.OriginModelName)
+		if info.ChannelMeta != nil {
+			models = append(models, info.UpstreamModelName)
+		}
 	}
 	for _, modelName := range models {
 		normalized := strings.ToLower(strings.TrimSpace(modelName))
