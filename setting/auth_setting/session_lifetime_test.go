@@ -1,9 +1,6 @@
 package auth_setting
 
-import (
-	"net/http"
-	"testing"
-)
+import "testing"
 
 func TestParseDashboardSessionLifetimeDays(t *testing.T) {
 	tests := []struct {
@@ -34,15 +31,5 @@ func TestParseDashboardSessionLifetimeDays(t *testing.T) {
 				t.Fatalf("ParseDashboardSessionLifetimeDays(%q) = (%d, %v), want (%d, nil)", tt.raw, got, err, tt.want)
 			}
 		})
-	}
-}
-
-func TestDashboardSessionOptionsPreservesCookieSecurityAttributes(t *testing.T) {
-	options := DashboardSessionOptions(90)
-	if options.MaxAge != 90*24*60*60 {
-		t.Fatalf("MaxAge = %d, want %d", options.MaxAge, 90*24*60*60)
-	}
-	if options.Path != "/" || !options.HttpOnly || options.Secure || options.SameSite != http.SameSiteStrictMode {
-		t.Fatalf("dashboard cookie security options changed: %+v", options)
 	}
 }

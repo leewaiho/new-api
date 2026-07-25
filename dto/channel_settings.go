@@ -73,6 +73,12 @@ const (
 	advancedCustomConverterOpenAIChatToGeminiContent   = "openai_chat_completions_to_gemini_generate_content"
 )
 
+// These aliases are used by Advanced Custom callers outside the dto package.
+const (
+	AdvancedCustomConverterNone                                   = advancedCustomConverterNone
+	AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions = advancedCustomConverterOpenAIResponsesToOpenAIChat
+)
+
 const (
 	AdvancedCustomAuthTypeNone   = "none"
 	AdvancedCustomAuthTypeHeader = "header"
