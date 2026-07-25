@@ -2,18 +2,14 @@ package auth_setting
 
 import (
 	"fmt"
-	"net/http"
 	"strconv"
 	"strings"
-
-	"github.com/gin-contrib/sessions"
 )
 
 const (
 	OptionDashboardSessionLifetimeDays  = "DashboardSessionLifetimeDays"
 	DefaultDashboardSessionLifetimeDays = 30
 	MaxDashboardSessionLifetimeDays     = 3650
-	secondsPerDay                       = 24 * 60 * 60
 )
 
 func ParseDashboardSessionLifetimeDays(raw string) (int, error) {
@@ -32,15 +28,4 @@ func NormalizeDashboardSessionLifetimeDays(days int) int {
 		return DefaultDashboardSessionLifetimeDays
 	}
 	return days
-}
-
-func DashboardSessionOptions(days int) sessions.Options {
-	days = NormalizeDashboardSessionLifetimeDays(days)
-	return sessions.Options{
-		Path:     "/",
-		MaxAge:   days * secondsPerDay,
-		HttpOnly: true,
-		Secure:   false,
-		SameSite: http.SameSiteStrictMode,
-	}
 }
