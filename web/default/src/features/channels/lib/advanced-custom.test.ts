@@ -144,6 +144,81 @@ describe('tool search flatten validation', () => {
   })
 })
 
+
+describe('custom flatten validation', () => {
+  test('allows Responses to Chat custom flatten but rejects native forwarding', () => {
+    const routePolicy: AdvancedCustomConfig = {
+      advanced_routes: [
+        {
+          ...validResponsesRoute,
+          converter_options: { responses_tools: { custom: 'flatten' as const } },
+        },
+      ],
+    }
+    assert.equal(validateAdvancedCustomConfig(routePolicy), null)
+
+    const modelOverride: AdvancedCustomConfig = {
+      advanced_routes: [
+        {
+          ...validResponsesRoute,
+          converter_options: {
+            responses_tool_model_overrides: [
+              {
+                models: ['glm-5.2'],
+                responses_tools: { custom: 'flatten' as const },
+                responses_tool_names: [
+                  {
+                    tool_type: 'custom',
+                    tool_name: 'legacy_patch',
+                    policy: 'flatten',
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+    }
+    assert.equal(validateAdvancedCustomConfig(modelOverride), null)
+
+    routePolicy.advanced_routes![0].converter = 'none'
+    routePolicy.advanced_routes![0].upstream_path = '/v1/responses'
+    assert.match(
+      validateAdvancedCustomConfig(routePolicy)?.message || '',
+      /custom flatten/
+    )
+
+    const nativeModelOverride: AdvancedCustomConfig = {
+      advanced_routes: [
+        {
+          incoming_path: '/v1/responses',
+          upstream_path: '/v1/responses',
+          converter: 'none',
+          converter_options: {
+            responses_tool_model_overrides: [
+              {
+                models: ['glm-5.2'],
+                responses_tools: { custom: 'flatten' as const },
+                responses_tool_names: [
+                  {
+                    tool_type: 'custom',
+                    tool_name: 'legacy_patch',
+                    policy: 'flatten',
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+    }
+    assert.match(
+      validateAdvancedCustomConfig(nativeModelOverride)?.message || '',
+      /Tool name rule policy is invalid|custom flatten/
+    )
+  })
+})
+
 describe('advanced custom compatibility mutation merge', () => {
   test('updates only compatibility policy fields for the matching route', () => {
     const current: AdvancedCustomConfig = {

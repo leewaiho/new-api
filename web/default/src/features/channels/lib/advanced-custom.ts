@@ -106,7 +106,7 @@ export const ADVANCED_CUSTOM_RESPONSES_TOOL_POLICY_OPTIONS: Array<{
     value: 'flatten',
     label: 'Flatten',
     description:
-      'Only valid for namespace: expand into individual function tools.',
+      'Only valid for namespace, custom, or tool_search after Responses to Chat conversion.',
   },
   {
     value: 'drop',
@@ -1234,9 +1234,10 @@ function validateRouteConverterOptions(
       if (
         policy === 'flatten' &&
         toolType !== 'namespace' &&
+        toolType !== 'custom' &&
         toolType !== 'tool_search'
       ) {
-        return `Responses tool policy flatten only supports namespace or tool_search`
+        return `Responses tool policy flatten only supports namespace, custom, or tool_search`
       }
     }
   }
@@ -1290,9 +1291,13 @@ function validateRouteConverterOptions(
   if (routeParameterError) return routeParameterError
   if (
     route.converter === 'none' &&
-    (tools?.namespace === 'flatten' || tools?.tool_search === 'flatten')
+    (
+      tools?.namespace === 'flatten' ||
+      tools?.custom === 'flatten' ||
+      tools?.tool_search === 'flatten'
+    )
   ) {
-    return 'Native forwarding does not support namespace or tool_search flatten'
+    return 'Native forwarding does not support namespace, custom, or tool_search flatten'
   }
   if (route.converter === 'none' && dropFields && dropFields.length > 0) {
     return 'Native forwarding does not support Responses drop fields'
@@ -1353,8 +1358,11 @@ function validateRouteConverterOptions(
         if (
           !allowedPolicies.has(policy) ||
           (policy === 'flatten' &&
-            toolType !== 'tool_search' &&
-            toolType !== 'namespace')
+            (route.converter !==
+              'openai_responses_to_openai_chat_completions' ||
+              (toolType !== 'tool_search' &&
+                toolType !== 'namespace' &&
+                toolType !== 'custom')))
         ) {
           return 'Tool name rule policy is invalid'
         }

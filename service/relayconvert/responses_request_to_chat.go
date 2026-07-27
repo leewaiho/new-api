@@ -155,7 +155,11 @@ func ResponsesRequestToChatCompletionsRequestWithOptions(req *dto.OpenAIResponse
 		}
 	}
 
-	messages, err := responsesRequestMessagesToChat(req, options.ToolNameMappings)
+	messages, err := responsesRequestMessagesToChat(req, options.ToolNameMappings, options)
+	if err != nil {
+		return nil, err
+	}
+	tools, err = appendResponsesCustomHistoryFunctionTools(tools, req.Input, options.ToolNameMappings, options)
 	if err != nil {
 		return nil, err
 	}
@@ -352,7 +356,7 @@ func validateResponsesRequestChatUnsupportedFields(req *dto.OpenAIResponsesReque
 	return nil
 }
 
-func responsesRequestMessagesToChat(req *dto.OpenAIResponsesRequest, mappings map[string]dto.ResponsesToolNameMapping) ([]dto.Message, error) {
+func responsesRequestMessagesToChat(req *dto.OpenAIResponsesRequest, mappings map[string]dto.ResponsesToolNameMapping, options ResponsesRequestToChatOptions) ([]dto.Message, error) {
 	messages := make([]dto.Message, 0)
 	if rawJSONPresent(req.Instructions) {
 		instructions, err := responsesJSONString(req.Instructions)
@@ -382,7 +386,7 @@ func responsesRequestMessagesToChat(req *dto.OpenAIResponsesRequest, mappings ma
 			return nil, fmt.Errorf("invalid input array: %w", err)
 		}
 		for _, item := range items {
-			nextMessages, err := responsesInputItemToChatMessages(item, messages, mappings)
+			nextMessages, err := responsesInputItemToChatMessages(item, messages, mappings, options)
 			if err != nil {
 				return nil, err
 			}
@@ -432,7 +436,7 @@ func responsesInputIsPureToolContinuation(input json.RawMessage) bool {
 	return sawCall && sawOutput && (lastType == responsesInputTypeFunctionCallOutput || lastType == responsesInputTypeCustomToolCallOutput)
 }
 
-func responsesInputItemToChatMessages(item map[string]any, messages []dto.Message, mappings map[string]dto.ResponsesToolNameMapping) ([]dto.Message, error) {
+func responsesInputItemToChatMessages(item map[string]any, messages []dto.Message, mappings map[string]dto.ResponsesToolNameMapping, options ResponsesRequestToChatOptions) ([]dto.Message, error) {
 	itemType := strings.TrimSpace(common.Interface2String(item["type"]))
 	switch itemType {
 	case responsesInputTypeReasoning:
@@ -444,7 +448,7 @@ func responsesInputItemToChatMessages(item map[string]any, messages []dto.Messag
 		}
 		return appendToolCallToLastAssistant(messages, toolCall), nil
 	case responsesInputTypeCustomToolCall:
-		toolCall, err := responsesCustomToolCallItemToChatToolCall(item, mappings)
+		toolCall, err := responsesCustomToolCallItemToChatToolCall(item, mappings, options)
 		if err != nil {
 			return nil, err
 		}
@@ -601,24 +605,84 @@ func responsesFunctionCallItemToChatToolCall(item map[string]any) (dto.ToolCallR
 	}, nil
 }
 
-func responsesCustomToolCallItemToChatToolCall(item map[string]any, mappings map[string]dto.ResponsesToolNameMapping) (dto.ToolCallRequest, error) {
-	name := strings.TrimSpace(common.Interface2String(item["name"]))
+func responsesCustomToolCallShouldFlatten(name string, mappings map[string]dto.ResponsesToolNameMapping, options ResponsesRequestToChatOptions) bool {
 	if mapping, ok := mappings[name]; ok &&
 		mapping.NativeToolType == responsesNativeToolTypeCustom &&
 		mapping.ArgumentsCodec == responsesArgumentsCodecCustomInput {
-		input := common.Interface2String(item["input"])
-		arguments, err := common.Marshal(map[string]string{"input": input})
-		if err != nil {
-			return dto.ToolCallRequest{}, err
+		return true
+	}
+	return responsesToolPolicyForTool(options, responsesNativeToolTypeCustom, name) == ResponsesToolPolicyFlatten
+}
+
+func responsesCustomToolCallFunctionParameters() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"required":             []string{"input"},
+		"properties": map[string]any{
+			"input": map[string]any{"type": "string"},
+		},
+	}
+}
+
+func appendResponsesCustomHistoryFunctionTools(tools []dto.ToolCallRequest, input json.RawMessage, mappings map[string]dto.ResponsesToolNameMapping, options ResponsesRequestToChatOptions) ([]dto.ToolCallRequest, error) {
+	if !rawJSONPresent(input) || common.GetJsonType(input) != "array" {
+		return tools, nil
+	}
+	var items []map[string]any
+	if err := common.Unmarshal(input, &items); err != nil {
+		return nil, fmt.Errorf("invalid input array: %w", err)
+	}
+	knownNames := chatFunctionToolNames(tools)
+	for _, item := range items {
+		if strings.TrimSpace(common.Interface2String(item["type"])) != responsesInputTypeCustomToolCall {
+			continue
 		}
-		return dto.ToolCallRequest{
-			ID:   responsesCallID(item),
+		name := strings.TrimSpace(common.Interface2String(item["name"]))
+		if !responsesCustomToolCallShouldFlatten(name, mappings, options) {
+			continue
+		}
+		if name == "" {
+			return nil, errors.New("custom_tool_call item is missing name")
+		}
+		if _, exists := knownNames[name]; exists {
+			continue
+		}
+		tools = append(tools, dto.ToolCallRequest{
 			Type: "function",
 			Function: dto.FunctionRequest{
-				Name:      name,
-				Arguments: string(arguments),
+				Name:       name,
+				Parameters: responsesCustomToolCallFunctionParameters(),
 			},
-		}, nil
+		})
+		knownNames[name] = struct{}{}
+	}
+	return tools, nil
+}
+
+func responsesCustomToolCallItemToChatFunction(item map[string]any, name string) (dto.ToolCallRequest, error) {
+	if name == "" {
+		return dto.ToolCallRequest{}, errors.New("custom_tool_call item is missing name")
+	}
+	input := common.Interface2String(item["input"])
+	arguments, err := common.Marshal(map[string]string{"input": input})
+	if err != nil {
+		return dto.ToolCallRequest{}, err
+	}
+	return dto.ToolCallRequest{
+		ID:   responsesCallID(item),
+		Type: "function",
+		Function: dto.FunctionRequest{
+			Name:      name,
+			Arguments: string(arguments),
+		},
+	}, nil
+}
+
+func responsesCustomToolCallItemToChatToolCall(item map[string]any, mappings map[string]dto.ResponsesToolNameMapping, options ResponsesRequestToChatOptions) (dto.ToolCallRequest, error) {
+	name := strings.TrimSpace(common.Interface2String(item["name"]))
+	if responsesCustomToolCallShouldFlatten(name, mappings, options) {
+		return responsesCustomToolCallItemToChatFunction(item, name)
 	}
 
 	raw, err := common.Marshal(item)

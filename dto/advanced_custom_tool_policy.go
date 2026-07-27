@@ -443,7 +443,7 @@ func validateAdvancedCustomResponsesToolModelOverrides(index int, allowFlatten b
 				allowFlatten bool
 			}{
 				{name: "namespace", toolType: "namespace", policy: override.ResponsesTools.Namespace, allowFlatten: allowFlatten},
-				{name: "custom", toolType: "custom", policy: override.ResponsesTools.Custom},
+				{name: "custom", toolType: "custom", policy: override.ResponsesTools.Custom, allowFlatten: allowFlatten},
 				{name: "web_search", toolType: "web_search", policy: override.ResponsesTools.WebSearch},
 				{name: "tool_search", toolType: "tool_search", policy: override.ResponsesTools.ToolSearch, allowFlatten: allowFlatten},
 				{name: "image_generation", toolType: "image_generation", policy: override.ResponsesTools.ImageGeneration},

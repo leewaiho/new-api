@@ -465,7 +465,7 @@ func validateAdvancedCustomConverterOptions(index int, incomingPath string, conv
 		if err := validateAdvancedCustomResponsesToolPolicy(index, "namespace", options.ResponsesTools.Namespace, allowFlatten); err != nil {
 			return err
 		}
-		if err := validateAdvancedCustomResponsesToolPolicy(index, "custom", options.ResponsesTools.Custom, false); err != nil {
+		if err := validateAdvancedCustomResponsesToolPolicy(index, "custom", options.ResponsesTools.Custom, allowFlatten); err != nil {
 			return err
 		}
 		if err := validateAdvancedCustomResponsesToolPolicy(index, "web_search", options.ResponsesTools.WebSearch, false); err != nil {
