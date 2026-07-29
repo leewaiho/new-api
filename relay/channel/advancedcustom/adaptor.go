@@ -168,6 +168,7 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 		mappings := map[string]dto.ResponsesToolNameMapping{}
 		chatOptions := relayconvert.ResponsesRequestToChatOptions{
 			ToolPolicies:       advancedCustomResponsesToolPolicies(a.route.ConverterOptions, requestedModel, upstreamModel),
+			ToolChoicePolicies: advancedCustomResponsesToolChoicePolicies(a.route.ConverterOptions, requestedModel, upstreamModel),
 			ToolPolicyResolver: policyResolver,
 			ToolNameMappings:   mappings,
 			DropResponseFields: advancedCustomResponsesDropFields(a.route.ConverterOptions),
@@ -192,7 +193,15 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 		chatReq, err := service.ResponsesRequestToChatCompletionsRequestWithOptions(&request, chatOptions)
 		if err != nil {
 			if isAdvancedCustomToolConversionError(err) {
-				recordAdvancedCustomToolCompatibilityEvents(info, a.route, requestedModel, upstreamModel, summarizeAdvancedCustomResponsesTools(filteredTools), err)
+				decisions := summarizeAdvancedCustomResponsesTools(filteredTools)
+				var toolChoiceErr *relayconvert.ResponsesToolChoiceCompatibilityError
+				if errors.As(err, &toolChoiceErr) {
+					decisions = []relayconvert.ResponsesToolPolicyDecision{{
+						ToolType: toolChoiceErr.ToolType,
+						Policy:   toolChoiceErr.Policy,
+					}}
+				}
+				recordAdvancedCustomToolCompatibilityEvents(info, a.route, requestedModel, upstreamModel, decisions, err)
 			}
 			return nil, err
 		}
@@ -845,6 +854,12 @@ func recordAdvancedCustomToolCompatibilityEvents(
 		if err != nil {
 			common.SysError("record tool compatibility event failed: " + err.Error())
 		}
+	}
+}
+
+func advancedCustomResponsesToolChoicePolicies(options *dto.AdvancedCustomConverterOptions, requestedModel string, upstreamModel string) relayconvert.ResponsesToolChoicePolicies {
+	return relayconvert.ResponsesToolChoicePolicies{
+		WebSearch: dto.ResolveAdvancedCustomResponsesToolChoicePolicy(options, requestedModel, upstreamModel, "web_search"),
 	}
 }
 

@@ -2370,3 +2370,46 @@ func TestAdvancedCustomResponsesToChatBufferedHandlerCapturesNativeShellToolStat
 	assert.Equal(t, "call_shell", output.Output[0].CallId)
 	assert.Equal(t, "shell_command", output.Output[0].Name)
 }
+
+func TestAdaptorResponsesToChatRejectsForcedWebSearchChoiceAndRecordsModelCompatibilityEvent(t *testing.T) {
+	previousDB := model.DB
+	db, err := gorm.Open(sqlite.Open("file:advanced_custom_forced_web_search_choice?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.ToolCompatibilityEvent{}))
+	model.DB = db
+	t.Cleanup(func() { model.DB = previousDB })
+
+	adaptor := &Adaptor{}
+	info := advancedCustomRelayInfo(&dto.AdvancedCustomConfig{Routes: []dto.AdvancedCustomRoute{{
+		IncomingPath: "/v1/responses",
+		UpstreamPath: "/v1/chat/completions",
+		Converter:    dto.AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions,
+		ConverterOptions: &dto.AdvancedCustomConverterOptions{
+			ResponsesToolModelOverrides: []dto.AdvancedCustomResponsesToolModelOverride{{
+				Models: []string{"glm-5.2"},
+				ResponsesToolChoice: &dto.AdvancedCustomResponsesToolChoiceCompatibility{
+					WebSearch: dto.AdvancedCustomResponsesToolChoicePolicyReject,
+				},
+			}},
+		},
+	}}})
+	info.RelayMode = relayconstant.RelayModeResponses
+	info.RequestURLPath = "/v1/responses"
+	info.OriginModelName = "glm-5.2"
+	info.ChannelMeta.ChannelId = 97
+
+	_, err = adaptor.ConvertOpenAIResponsesRequest(advancedCustomGinContext("/v1/responses"), info, dto.OpenAIResponsesRequest{
+		Model:      "glm-5.2",
+		Input:      mustAdvancedCustomRawMessage(t, "search for the answer"),
+		Tools:      mustAdvancedCustomRawMessage(t, []map[string]any{{"type": "web_search"}}),
+		ToolChoice: mustAdvancedCustomRawMessage(t, map[string]any{"type": "web_search"}),
+	})
+	require.ErrorContains(t, err, "forced hosted tool choice")
+
+	var events []model.ToolCompatibilityEvent
+	require.NoError(t, db.Find(&events).Error)
+	require.Len(t, events, 1)
+	assert.Equal(t, "web_search", events[0].ToolType)
+	assert.Equal(t, model.ToolCompatibilityEventTypePolicyReject, events[0].EventType)
+	assert.Equal(t, dto.AdvancedCustomResponsesToolChoicePolicyReject, events[0].CurrentPolicy)
+}
