@@ -25,6 +25,9 @@ const (
 	ResponsesToolPolicyFlatten  = "flatten"
 	ResponsesToolPolicyDrop     = "drop"
 	ResponsesToolPolicyReject   = "reject"
+
+	ResponsesToolChoicePolicyPreserve = "preserve"
+	ResponsesToolChoicePolicyReject   = "reject"
 )
 
 const (
@@ -54,6 +57,7 @@ type ResponsesRequestToChatOptions struct {
 	FlattenNamespaceTools bool
 	DropUnsupportedTools  bool
 	ToolPolicies          ResponsesToolPolicies
+	ToolChoicePolicies    ResponsesToolChoicePolicies
 	ToolPolicyResolver    ResponsesToolPolicyResolver
 	ToolNameMappings      map[string]dto.ResponsesToolNameMapping
 	// DropResponseFields lists Responses request field names that must be
@@ -86,6 +90,21 @@ type ResponsesToolPolicies struct {
 	ToolSearch      string
 	ImageGeneration string
 	Unknown         string
+}
+
+type ResponsesToolChoicePolicies struct {
+	WebSearch string
+}
+
+// ResponsesToolChoiceCompatibilityError identifies a converter policy that
+// rejects an explicit hosted tool choice before it reaches the upstream.
+type ResponsesToolChoiceCompatibilityError struct {
+	ToolType string
+	Policy   string
+}
+
+func (e *ResponsesToolChoiceCompatibilityError) Error() string {
+	return fmt.Sprintf("responses forced hosted tool choice %q is not supported by this converter route (policy=%q); remove tool_choice or use \"auto\"", e.ToolType, e.Policy)
 }
 
 type ResponsesToolPolicyResolver func(toolType string, toolName string) string
@@ -1076,6 +1095,9 @@ func responsesRequestToolChoiceToChat(raw json.RawMessage, options ResponsesRequ
 	}
 	toolType := strings.TrimSpace(common.Interface2String(choice["type"]))
 	policies := normalizeResponsesToolPolicies(options)
+	if policy := responsesToolChoicePolicyForType(options.ToolChoicePolicies, toolType); policy == ResponsesToolChoicePolicyReject {
+		return nil, &ResponsesToolChoiceCompatibilityError{ToolType: normalizeResponsesToolChoiceType(toolType), Policy: policy}
+	}
 
 	if toolType == "function" {
 		name := strings.TrimSpace(common.Interface2String(choice["name"]))
@@ -1138,6 +1160,22 @@ func responsesRequestToolChoiceToChat(raw json.RawMessage, options ResponsesRequ
 		}
 	}
 	return choice, nil
+}
+
+func normalizeResponsesToolChoiceType(toolType string) string {
+	switch strings.TrimSpace(toolType) {
+	case "web_search", "web_search_preview":
+		return "web_search"
+	default:
+		return strings.TrimSpace(toolType)
+	}
+}
+
+func responsesToolChoicePolicyForType(policies ResponsesToolChoicePolicies, toolType string) string {
+	if normalizeResponsesToolChoiceType(toolType) == "web_search" && strings.TrimSpace(policies.WebSearch) == ResponsesToolChoicePolicyReject {
+		return ResponsesToolChoicePolicyReject
+	}
+	return ResponsesToolChoicePolicyPreserve
 }
 
 func hasChatFunctionTool(tools []dto.ToolCallRequest, name string) bool {

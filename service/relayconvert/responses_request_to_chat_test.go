@@ -1548,3 +1548,78 @@ func TestResponsesRequestToChatCompletionsRequestReplaysCustomToolState(t *testi
 	assert.Equal(t, "call_patch", got.Messages[1].ToolCallId)
 	assert.Equal(t, "applied", got.Messages[1].StringContent())
 }
+
+func TestResponsesRequestToChatCompletionsRequestRejectsConfiguredForcedWebSearchChoice(t *testing.T) {
+	got, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
+		Model: "glm-5.2",
+		Input: mustRawMessage(t, "search for the answer"),
+		Tools: mustRawMessage(t, []map[string]any{{
+			"type": "web_search",
+		}}),
+		ToolChoice: mustRawMessage(t, map[string]any{"type": "web_search"}),
+	}, ResponsesRequestToChatOptions{
+		ToolChoicePolicies: ResponsesToolChoicePolicies{
+			WebSearch: ResponsesToolChoicePolicyReject,
+		},
+	})
+
+	require.Nil(t, got)
+	require.ErrorContains(t, err, "forced hosted tool choice")
+	require.ErrorContains(t, err, "web_search")
+}
+
+func TestResponsesRequestToChatCompletionsRequestKeepsAutoWebSearchWhenForcedChoiceIsRejected(t *testing.T) {
+	got, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
+		Model: "glm-5.2",
+		Input: mustRawMessage(t, "search for the answer"),
+		Tools: mustRawMessage(t, []map[string]any{{
+			"type": "web_search",
+		}}),
+		ToolChoice: mustRawMessage(t, "auto"),
+	}, ResponsesRequestToChatOptions{
+		ToolChoicePolicies: ResponsesToolChoicePolicies{
+			WebSearch: ResponsesToolChoicePolicyReject,
+		},
+	})
+
+	require.NoError(t, err)
+	require.Len(t, got.Tools, 1)
+	assert.Equal(t, "web_search", got.Tools[0].Type)
+	assert.Equal(t, "auto", got.ToolChoice)
+}
+
+func TestResponsesRequestToChatCompletionsRequestPreservesUnconfiguredForcedWebSearchChoice(t *testing.T) {
+	choice := map[string]any{"type": "web_search"}
+	got, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
+		Model: "chat-compatible-model",
+		Input: mustRawMessage(t, "search for the answer"),
+		Tools: mustRawMessage(t, []map[string]any{{
+			"type": "web_search",
+		}}),
+		ToolChoice: mustRawMessage(t, choice),
+	}, ResponsesRequestToChatOptions{})
+
+	require.NoError(t, err)
+	assert.Equal(t, choice, got.ToolChoice)
+}
+
+func TestResponsesRequestToChatCompletionsRequestRejectsConfiguredForcedWebSearchPreviewChoice(t *testing.T) {
+	got, err := ResponsesRequestToChatCompletionsRequestWithOptions(&dto.OpenAIResponsesRequest{
+		Model: "glm-5.2",
+		Input: mustRawMessage(t, "search for the answer"),
+		Tools: mustRawMessage(t, []map[string]any{{
+			"type": "web_search_preview",
+		}}),
+		ToolChoice: mustRawMessage(t, map[string]any{"type": "web_search_preview"}),
+	}, ResponsesRequestToChatOptions{
+		ToolChoicePolicies: ResponsesToolChoicePolicies{
+			WebSearch: ResponsesToolChoicePolicyReject,
+		},
+	})
+
+	require.Nil(t, got)
+	var compatibilityErr *ResponsesToolChoiceCompatibilityError
+	require.ErrorAs(t, err, &compatibilityErr)
+	assert.Equal(t, "web_search", compatibilityErr.ToolType)
+	assert.Equal(t, ResponsesToolChoicePolicyReject, compatibilityErr.Policy)
+}

@@ -859,3 +859,53 @@ func TestAdvancedCustomValidateResponsesToolStateReplay(t *testing.T) {
 	}}}
 	require.ErrorContains(t, config.Validate(), "responses_tool_state_replay.ttl_seconds must be positive when enabled")
 }
+
+func TestAdvancedCustomResponsesToolChoiceCompatibilityUsesModelOverride(t *testing.T) {
+	options := &AdvancedCustomConverterOptions{
+		ResponsesToolChoice: &AdvancedCustomResponsesToolChoiceCompatibility{
+			WebSearch: AdvancedCustomResponsesToolChoicePolicyPreserve,
+		},
+		ResponsesToolModelOverrides: []AdvancedCustomResponsesToolModelOverride{{
+			Models: []string{"glm-5.2"},
+			ResponsesToolChoice: &AdvancedCustomResponsesToolChoiceCompatibility{
+				WebSearch: AdvancedCustomResponsesToolChoicePolicyReject,
+			},
+		}},
+	}
+
+	assert.Equal(t, AdvancedCustomResponsesToolChoicePolicyReject,
+		ResolveAdvancedCustomResponsesToolChoicePolicy(options, "glm-5.2", "provider-glm-5.2", "web_search"))
+	assert.Equal(t, AdvancedCustomResponsesToolChoicePolicyPreserve,
+		ResolveAdvancedCustomResponsesToolChoicePolicy(options, "other-model", "provider-other", "web_search"))
+	assert.Equal(t, AdvancedCustomResponsesToolChoicePolicyPreserve,
+		ResolveAdvancedCustomResponsesToolChoicePolicy(options, "glm-5.2", "provider-glm-5.2", "computer"))
+}
+
+func TestAdvancedCustomValidateResponsesToolChoiceCompatibility(t *testing.T) {
+	valid := &AdvancedCustomConfig{Routes: []AdvancedCustomRoute{{
+		IncomingPath: "/v1/responses",
+		UpstreamPath: "/v1/chat/completions",
+		Converter:    AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions,
+		ConverterOptions: &AdvancedCustomConverterOptions{
+			ResponsesToolChoice: &AdvancedCustomResponsesToolChoiceCompatibility{
+				WebSearch: AdvancedCustomResponsesToolChoicePolicyReject,
+			},
+		},
+	}}}
+	require.NoError(t, valid.Validate())
+
+	invalidPolicy := *valid
+	invalidPolicyRoute := valid.Routes[0]
+	invalidPolicyRoute.ConverterOptions = &AdvancedCustomConverterOptions{
+		ResponsesToolChoice: &AdvancedCustomResponsesToolChoiceCompatibility{WebSearch: "required"},
+	}
+	invalidPolicy.Routes = []AdvancedCustomRoute{invalidPolicyRoute}
+	require.ErrorContains(t, invalidPolicy.Validate(), "responses_tool_choice.web_search is invalid")
+
+	passthrough := *valid
+	passthroughRoute := valid.Routes[0]
+	passthroughRoute.Converter = AdvancedCustomConverterNone
+	passthroughRoute.UpstreamPath = "/v1/responses"
+	passthrough.Routes = []AdvancedCustomRoute{passthroughRoute}
+	require.ErrorContains(t, passthrough.Validate(), "responses_tool_choice requires Responses to Chat conversion")
+}
