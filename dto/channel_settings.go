@@ -130,6 +130,9 @@ type AdvancedCustomConverterOptions struct {
 	// ResponsesToolParameters configures safe, tool-specific compatibility
 	// rewrites after a Responses request is converted to Chat Completions.
 	ResponsesToolParameters *AdvancedCustomResponsesToolParameters `json:"responses_tool_parameters,omitempty"`
+	// ResponsesToolChoice configures compatibility for explicit Responses
+	// tool_choice objects after converting to a Chat Completions upstream.
+	ResponsesToolChoice *AdvancedCustomResponsesToolChoiceCompatibility `json:"responses_tool_choice,omitempty"`
 	// ResponsesToolContinuation configures an opt-in user continuation for
 	// pure Responses tool-output follow-ups sent to Chat Completions upstreams.
 	ResponsesToolContinuation *AdvancedCustomResponsesToolContinuation `json:"responses_tool_continuation,omitempty"`
@@ -153,17 +156,22 @@ type AdvancedCustomResponsesToolsOptions struct {
 }
 
 type AdvancedCustomResponsesToolModelOverride struct {
-	Models                       []string                                 `json:"models,omitempty"`
-	ResponsesTools               *AdvancedCustomResponsesToolsOptions     `json:"responses_tools,omitempty"`
-	ToolNames                    []AdvancedCustomResponsesToolNamePolicy  `json:"responses_tool_names,omitempty"`
-	ResponsesImplicitHostedTools []string                                 `json:"responses_implicit_hosted_tools,omitempty"`
-	ResponsesToolParameters      *AdvancedCustomResponsesToolParameters   `json:"responses_tool_parameters,omitempty"`
-	ResponsesToolContinuation    *AdvancedCustomResponsesToolContinuation `json:"responses_tool_continuation,omitempty"`
-	ResponsesToolStateReplay     *AdvancedCustomResponsesToolStateReplay  `json:"responses_tool_state_replay,omitempty"`
+	Models                       []string                                        `json:"models,omitempty"`
+	ResponsesTools               *AdvancedCustomResponsesToolsOptions            `json:"responses_tools,omitempty"`
+	ToolNames                    []AdvancedCustomResponsesToolNamePolicy         `json:"responses_tool_names,omitempty"`
+	ResponsesImplicitHostedTools []string                                        `json:"responses_implicit_hosted_tools,omitempty"`
+	ResponsesToolParameters      *AdvancedCustomResponsesToolParameters          `json:"responses_tool_parameters,omitempty"`
+	ResponsesToolChoice          *AdvancedCustomResponsesToolChoiceCompatibility `json:"responses_tool_choice,omitempty"`
+	ResponsesToolContinuation    *AdvancedCustomResponsesToolContinuation        `json:"responses_tool_continuation,omitempty"`
+	ResponsesToolStateReplay     *AdvancedCustomResponsesToolStateReplay         `json:"responses_tool_state_replay,omitempty"`
 }
 
 type AdvancedCustomResponsesToolParameters struct {
 	WebSearch *AdvancedCustomWebSearchParameterCompatibility `json:"web_search,omitempty"`
+}
+
+type AdvancedCustomResponsesToolChoiceCompatibility struct {
+	WebSearch string `json:"web_search,omitempty"`
 }
 
 const AdvancedCustomResponsesToolContinuationAppendUser = "append_user_continuation"
@@ -521,6 +529,11 @@ func validateAdvancedCustomConverterOptions(index int, incomingPath string, conv
 			return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options.responses_tool_parameters requires Responses to Chat conversion", index)
 		}
 	}
+	if options.ResponsesToolChoice != nil || advancedCustomResponsesModelOverridesHaveToolChoice(options.ResponsesToolModelOverrides) {
+		if converter != AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions {
+			return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options.responses_tool_choice requires Responses to Chat conversion", index)
+		}
+	}
 	if options.ResponsesToolContinuation != nil || advancedCustomResponsesModelOverridesHaveToolContinuation(options.ResponsesToolModelOverrides) {
 		if converter != AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions {
 			return fmt.Errorf("advanced_custom.advanced_routes[%d].converter_options.responses_tool_continuation requires Responses to Chat conversion", index)
@@ -532,6 +545,9 @@ func validateAdvancedCustomConverterOptions(index int, incomingPath string, conv
 		}
 	}
 	if err := validateAdvancedCustomResponsesToolParameters(index, "converter_options.responses_tool_parameters", options.ResponsesToolParameters); err != nil {
+		return err
+	}
+	if err := validateAdvancedCustomResponsesToolChoice(index, "converter_options.responses_tool_choice", options.ResponsesToolChoice); err != nil {
 		return err
 	}
 	if err := validateAdvancedCustomResponsesToolContinuation(index, "converter_options.responses_tool_continuation", options.ResponsesToolContinuation); err != nil {
@@ -556,6 +572,7 @@ func advancedCustomConverterOptionsPresent(options *AdvancedCustomConverterOptio
 		strings.TrimSpace(options.ResponsesToolConflictPolicy) != "" ||
 		len(options.ResponsesImplicitHostedTools) > 0 ||
 		options.ResponsesToolParameters != nil ||
+		options.ResponsesToolChoice != nil ||
 		options.ResponsesToolContinuation != nil ||
 		options.ResponsesToolStateReplay != nil ||
 		len(options.ResponsesToolModelOverrides) > 0
@@ -564,6 +581,15 @@ func advancedCustomConverterOptionsPresent(options *AdvancedCustomConverterOptio
 func advancedCustomResponsesModelOverridesHaveToolParameters(overrides []AdvancedCustomResponsesToolModelOverride) bool {
 	for _, override := range overrides {
 		if override.ResponsesToolParameters != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func advancedCustomResponsesModelOverridesHaveToolChoice(overrides []AdvancedCustomResponsesToolModelOverride) bool {
+	for _, override := range overrides {
+		if override.ResponsesToolChoice != nil {
 			return true
 		}
 	}
