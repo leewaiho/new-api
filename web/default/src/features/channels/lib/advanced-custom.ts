@@ -106,7 +106,7 @@ export const ADVANCED_CUSTOM_RESPONSES_TOOL_POLICY_OPTIONS: Array<{
     value: 'flatten',
     label: 'Flatten',
     description:
-      'Only valid for namespace, custom, or tool_search after Responses to Chat conversion.',
+      'Only valid for namespace, custom, shell_command, or tool_search after Responses to Chat conversion.',
   },
   {
     value: 'drop',
@@ -1291,11 +1291,9 @@ function validateRouteConverterOptions(
   if (routeParameterError) return routeParameterError
   if (
     route.converter === 'none' &&
-    (
-      tools?.namespace === 'flatten' ||
+    (tools?.namespace === 'flatten' ||
       tools?.custom === 'flatten' ||
-      tools?.tool_search === 'flatten'
-    )
+      tools?.tool_search === 'flatten')
   ) {
     return 'Native forwarding does not support namespace, custom, or tool_search flatten'
   }
@@ -1362,7 +1360,8 @@ function validateRouteConverterOptions(
               'openai_responses_to_openai_chat_completions' ||
               (toolType !== 'tool_search' &&
                 toolType !== 'namespace' &&
-                toolType !== 'custom')))
+                toolType !== 'custom' &&
+                toolType !== 'shell_command')))
         ) {
           return 'Tool name rule policy is invalid'
         }

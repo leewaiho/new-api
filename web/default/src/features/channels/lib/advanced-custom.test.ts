@@ -128,7 +128,9 @@ describe('tool search flatten validation', () => {
   test('allows only Responses to Chat routes', () => {
     const route: AdvancedCustomRoute = {
       ...validResponsesRoute,
-      converter_options: { responses_tools: { tool_search: 'flatten' as const } },
+      converter_options: {
+        responses_tools: { tool_search: 'flatten' as const },
+      },
     }
     const flattened: AdvancedCustomConfig = {
       advanced_routes: [route],
@@ -144,14 +146,15 @@ describe('tool search flatten validation', () => {
   })
 })
 
-
 describe('custom flatten validation', () => {
   test('allows Responses to Chat custom flatten but rejects native forwarding', () => {
     const routePolicy: AdvancedCustomConfig = {
       advanced_routes: [
         {
           ...validResponsesRoute,
-          converter_options: { responses_tools: { custom: 'flatten' as const } },
+          converter_options: {
+            responses_tools: { custom: 'flatten' as const },
+          },
         },
       ],
     }
@@ -181,11 +184,13 @@ describe('custom flatten validation', () => {
     }
     assert.equal(validateAdvancedCustomConfig(modelOverride), null)
 
-    routePolicy.advanced_routes![0].converter = 'none'
-    routePolicy.advanced_routes![0].upstream_path = '/v1/responses'
+    const nativeRoutePolicy = routePolicy.advanced_routes?.[0]
+    assert.ok(nativeRoutePolicy)
+    nativeRoutePolicy.converter = 'none'
+    nativeRoutePolicy.upstream_path = '/v1/responses'
     assert.match(
       validateAdvancedCustomConfig(routePolicy)?.message || '',
-      /custom flatten/
+      /custom.*flatten/
     )
 
     const nativeModelOverride: AdvancedCustomConfig = {
@@ -216,6 +221,34 @@ describe('custom flatten validation', () => {
       validateAdvancedCustomConfig(nativeModelOverride)?.message || '',
       /Tool name rule policy is invalid|custom flatten/
     )
+  })
+})
+
+describe('native shell command flatten validation', () => {
+  test('allows unnamed shell_command flatten on Responses to Chat routes', () => {
+    const config: AdvancedCustomConfig = {
+      advanced_routes: [
+        {
+          ...validResponsesRoute,
+          converter_options: {
+            responses_tool_model_overrides: [
+              {
+                models: ['glm-5.2'],
+                responses_tool_names: [
+                  {
+                    tool_type: 'shell_command',
+                    tool_name: '',
+                    policy: 'flatten',
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+    }
+
+    assert.equal(validateAdvancedCustomConfig(config), null)
   })
 })
 
